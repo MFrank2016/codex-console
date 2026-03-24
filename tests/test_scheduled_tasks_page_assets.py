@@ -98,6 +98,16 @@ def test_scheduled_tasks_template_contains_run_center_hooks():
     assert 'id="run-log-copy-btn"' in template
     assert 'id="run-log-clear-btn"' in template
     assert 'id="run-log-wrap-input"' in template
+    assert "scheduled-run-log-modal-content" in template
+    assert 'id="run-log-modal"' in template
+    run_log_modal_match = re.search(
+        r'(<div id="run-log-modal" class="modal">\s*<div class="([^"]+)")',
+        template,
+        re.S,
+    )
+    assert run_log_modal_match is not None
+    assert "max-width: 960px" not in run_log_modal_match.group(1)
+    assert "scheduled-run-log-modal-content" in run_log_modal_match.group(2).split()
 
 
 def test_scheduled_tasks_run_center_filter_panel_uses_shared_shell_classes():
@@ -449,9 +459,12 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert ".scheduled-run-summary" in stylesheet
     assert ".scheduled-run-detail-head" in stylesheet
     assert ".scheduled-run-log-panel" in stylesheet
+    assert ".scheduled-run-log-modal-content" in stylesheet
     assert ".scheduled-run-console-shell" in stylesheet
     assert ".scheduled-run-console-toolbar" in stylesheet
     assert ".scheduled-run-log-line" in stylesheet
+    assert ".scheduled-run-log-timestamp" in stylesheet
+    assert ".scheduled-run-log-message" in stylesheet
     assert ".scheduled-run-log-level-error" in stylesheet
 
 
