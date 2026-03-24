@@ -1,16 +1,32 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import hmac
+import secrets
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import desc, func
 
+from ...config.settings import get_settings
 from ...database import crud
 from ...database.models import Account, RegistrationTask, ScheduledPlan, ScheduledRun
 from ...database.session import get_db
 from ...scheduler.time_utils import SCHEDULER_TZ
 
 router = APIRouter()
+
+
+def _auth_token(password: str) -> str:
+    secret = get_settings().webui_secret_key.get_secret_value().encode("utf-8")
+    return hmac.new(secret, password.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _require_dashboard_auth(request: Request) -> None:
+    cookie = request.cookies.get("webui_auth")
+    expected = _auth_token(get_settings().webui_access_password.get_secret_value())
+    if not cookie or not secrets.compare_digest(cookie, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _count_rows_by_status(db, model, status_column) -> dict[str, int]:
@@ -164,7 +180,8 @@ def _scheduler_day_start_utc_naive(now: datetime | None = None) -> datetime:
 
 
 @router.get("/summary")
-async def get_dashboard_summary():
+async def get_dashboard_summary(request: Request):
+    _require_dashboard_auth(request)
     with get_db() as db:
         return {
             "registration": _build_registration_summary(db),

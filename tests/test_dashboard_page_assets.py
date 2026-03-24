@@ -27,6 +27,8 @@ def test_dashboard_page_requires_auth_and_renders_dashboard_hooks():
         response = client.get("/")
         assert response.status_code == 200
         assert 'data-page-key="dashboard"' in response.text
+        assert 'id="workspace-theme-toggle"' in response.text
+        assert 'href="/logout"' in response.text
         assert "/static/js/dashboard.js?v=" in response.text
 
 
@@ -45,7 +47,16 @@ def test_dashboard_script_loads_summary_endpoint_and_render_helpers():
     assert "registration.total_tasks" in script
 
 
-def test_dashboard_summary_api_returns_expected_nested_contract():
+def test_dashboard_summary_api_requires_auth():
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/dashboard/summary")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}
+
+
+def test_dashboard_summary_api_returns_expected_nested_contract_for_authenticated_user():
     app = create_app()
     with TestClient(app) as client:
         task_uuid = str(uuid4())
@@ -55,6 +66,14 @@ def test_dashboard_summary_api_returns_expected_nested_contract():
                 task_uuid=task_uuid,
                 pipeline_key="current_pipeline",
             )
+
+        password = get_settings().webui_access_password.get_secret_value()
+        login_response = client.post(
+            "/login",
+            data={"password": password, "next": "/"},
+            follow_redirects=False,
+        )
+        assert login_response.status_code == 302
 
         response = client.get("/api/dashboard/summary")
 

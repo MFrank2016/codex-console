@@ -9,21 +9,33 @@ def test_shared_stylesheet_defines_workspace_shell_selectors():
     assert ".workspace-shell" in stylesheet
     assert ".workspace-sidebar" in stylesheet
     assert ".workspace-rail" in stylesheet
+    assert ".workspace-sidebar-toggle" in stylesheet
+    assert ".workspace-brand-link" in stylesheet
+    assert ".workspace-nav" in stylesheet
+    assert ".workspace-nav-group" in stylesheet
+    assert ".workspace-nav-link" in stylesheet
     assert ".page-head" in stylesheet
+    assert ".workspace-grid" in stylesheet
+    assert ".metric-value" in stylesheet
+    assert ".metric-hint" in stylesheet
     assert ".workspace-sidebar-collapsed .workspace-rail" in stylesheet
     assert ".workspace-sidebar-collapsed .workspace-main" in stylesheet
 
 
-def test_workspace_script_defines_sidebar_storage_and_toggle_helpers():
+def test_workspace_script_defines_sidebar_and_theme_helpers():
     script = Path("static/js/workspace.js").read_text(encoding="utf-8")
     assert "WORKSPACE_SIDEBAR_STORAGE_KEY" in script
     assert "toggleWorkspaceSidebar" in script
+    assert "WORKSPACE_THEME_STORAGE_KEY" in script
+    assert "toggleWorkspaceTheme" in script
 
 
-def test_workspace_base_template_wires_sidebar_and_rendered_workspace_script_version():
+def test_workspace_base_template_wires_sidebar_shell_actions_and_rendered_workspace_script_version():
     base_template = Path("templates/_workspace_base.html").read_text(encoding="utf-8")
     assert '{% include "_workspace_sidebar.html" %}' in base_template
     assert 'id="workspace-sidebar-toggle"' in base_template
+    assert 'id="workspace-theme-toggle"' in base_template
+    assert 'href="/logout"' in base_template
     assert 'data-page-key="{{ page_key }}"' in base_template
     assert "/static/js/workspace.js?v={{ static_version }}" not in base_template
 
@@ -41,6 +53,8 @@ def test_workspace_base_template_wires_sidebar_and_rendered_workspace_script_ver
         ],
     )
     assert "/static/js/workspace.js?v=" in rendered_html
+    assert 'id="workspace-theme-toggle"' in rendered_html
+    assert 'href="/logout"' in rendered_html
 
 
 def test_page_shell_navigation_groups_match_approved_workspace_map():
