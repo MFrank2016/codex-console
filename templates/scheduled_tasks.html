@@ -1,152 +1,115 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>定时任务 - OpenAI 注册系统</title>
-    <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏰</text></svg>">
-</head>
-<body>
-    <div class="container">
-        <nav class="navbar">
-            <div class="nav-brand">
-                <h1>OpenAI 注册系统</h1>
-            </div>
-            <div class="nav-links">
-                <a href="/" class="nav-link">注册</a>
-                <a href="/accounts" class="nav-link">账号管理</a>
-                <a href="/email-services" class="nav-link">邮箱服务</a>
-                <a href="/scheduled-tasks" class="nav-link active">定时任务</a>
-                <a href="/payment" class="nav-link">支付</a>
-                <a href="/settings" class="nav-link">设置</a>
-                <a href="/logout" class="nav-link">退出</a>
-            </div>
-            <button class="theme-toggle" onclick="theme.toggle()" title="切换主题">
-                🌙
-            </button>
-        </nav>
+{% extends "_workspace_base.html" %}
 
-        <main class="main-content">
-            <div class="page-header">
-                <h2>定时任务</h2>
-                <p class="subtitle">查看定时计划状态、执行记录和运行日志</p>
-            </div>
-
-            <div class="card">
-                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-                    <h3>计划列表</h3>
-                    <div style="display:flex;gap:8px;align-items:center;">
-                        <button class="btn btn-primary btn-sm" id="create-plan-btn" data-action="create-plan">➕ 新建计划</button>
-                        <button class="btn btn-secondary btn-sm" id="refresh-plans-btn" data-action="refresh-plans">🔄 刷新</button>
+{% block page_content %}
+<div class="workspace-side-stack">
+    <section class="workspace-panel workspace-table-panel"><div class="card">
+                    <div class="card-header workspace-toolbar page-head-actions">
+                        <h3>计划列表</h3>
+                        <div class="workspace-toolbar">
+                            <button class="btn btn-primary btn-sm" id="create-plan-btn" data-action="create-plan">➕ 新建计划</button>
+                            <button class="btn btn-secondary btn-sm" id="refresh-plans-btn" data-action="refresh-plans">🔄 刷新</button>
+                        </div>
                     </div>
-                </div>
-                <div class="card-body" style="padding:0;">
-                    <div class="table-container table-shell">
-                        <table id="scheduled-plans-table" class="data-table">
-                            <thead>
-                                <tr>
-                                    <th style="width: 70px;">ID</th>
-                                    <th>计划名称</th>
-                                    <th style="width: 110px;">任务类型</th>
-                                    <th style="width: 120px;">触发方式</th>
-                                    <th style="width: 180px;">下次执行</th>
-                                    <th style="width: 100px;">状态</th>
-                                    <th style="width: 180px;">最近运行</th>
-                                    <th style="width: 240px;">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="scheduled-plans-table-body">
-                                <tr>
-                                    <td colspan="8">
-                                        <div class="empty-state">
-                                            <div class="empty-state-icon">⏳</div>
-                                            <div class="empty-state-title">加载中</div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card" id="scheduled-runs-card">
-                <div class="card-header filter-panel">
-                    <h3>运行中心</h3>
-                    <div class="filter-panel-grid">
-                        <select id="scheduled-run-filter-task-type" class="form-select">
-                            <option value="">全部任务类型</option>
-                            <option value="cpa_cleanup">CPA 清理</option>
-                            <option value="cpa_refill">CPA 补量</option>
-                            <option value="account_refresh">账号刷新</option>
-                        </select>
-                        <select id="scheduled-run-filter-status" class="form-select">
-                            <option value="">全部状态</option>
-                            <option value="running">运行中</option>
-                            <option value="success">成功</option>
-                            <option value="failed">失败</option>
-                            <option value="skipped">已跳过</option>
-                            <option value="cancelled">已取消</option>
-                        </select>
-                        <input type="datetime-local" id="scheduled-run-filter-started-from" class="form-input" title="开始时间从">
-                        <input type="datetime-local" id="scheduled-run-filter-started-to" class="form-input" title="开始时间到">
-                    </div>
-                    <div class="filter-panel-actions">
-                        <button class="btn btn-secondary btn-sm" id="scheduled-run-filter-apply-btn">筛选</button>
-                        <button class="btn btn-secondary btn-sm" id="scheduled-run-filter-reset-btn">重置</button>
-                    </div>
-                </div>
-                <div class="card-body" style="padding:0;">
-                    <div class="table-container table-shell">
-                        <table id="scheduled-runs-table" class="data-table">
-                            <thead>
-                                <tr>
-                                    <th style="width: 70px;">Run ID</th>
-                                    <th style="width: 180px;">计划</th>
-                                    <th style="width: 110px;">任务类型</th>
-                                    <th style="width: 90px;">触发源</th>
-                                    <th style="width: 100px;">状态</th>
-                                    <th style="width: 180px;">开始时间</th>
-                                    <th style="width: 180px;">结束时间</th>
-                                    <th>摘要</th>
-                                    <th style="width: 180px;">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="scheduled-runs-table-body">
-                                <tr>
-                                    <td colspan="9">
-                                        <div class="empty-state">
-                                            <div class="empty-state-icon">⏳</div>
-                                            <div class="empty-state-title">运行记录加载中</div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="pagination-panel">
-                        <div id="scheduled-run-pagination-summary">第 1 / 1 页 · 共 0 条</div>
-                        <div class="pagination-jump">
-                            <button class="btn btn-secondary btn-sm" id="scheduled-run-prev-page">上一页</button>
-                            <button class="btn btn-secondary btn-sm" id="scheduled-run-next-page">下一页</button>
-                            <label for="scheduled-run-page-jump-input">跳转到</label>
-                            <input
-                                type="number"
-                                id="scheduled-run-page-jump-input"
-                                class="form-input pagination-jump-input"
-                                min="1"
-                                step="1"
-                                inputmode="numeric"
-                                placeholder="页码"
-                            >
-                            <button class="btn btn-secondary btn-sm" id="scheduled-run-page-jump-btn">前往</button>
+                    <div class="card-body" style="padding:0;">
+                        <div class="table-container table-shell">
+                            <table id="scheduled-plans-table" class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 70px;">ID</th>
+                                        <th>计划名称</th>
+                                        <th style="width: 110px;">任务类型</th>
+                                        <th style="width: 120px;">触发方式</th>
+                                        <th style="width: 180px;">下次执行</th>
+                                        <th style="width: 100px;">状态</th>
+                                        <th style="width: 180px;">最近运行</th>
+                                        <th style="width: 240px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scheduled-plans-table-body">
+                                    <tr>
+                                        <td colspan="8">
+                                            <div class="empty-state">
+                                                <div class="empty-state-icon">⏳</div>
+                                                <div class="empty-state-title">加载中</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
-            </div>
-        </main>
-    </div>
+
+                </section>
+    <section class="workspace-panel workspace-table-panel"><div class="card" id="scheduled-runs-card">
+                    <div class="card-header filter-panel">
+                        <h3>运行中心</h3>
+                        <div class="filter-panel-grid">
+                            <select id="scheduled-run-filter-task-type" class="form-select">
+                                <option value="">全部任务类型</option>
+                                <option value="cpa_cleanup">CPA 清理</option>
+                                <option value="cpa_refill">CPA 补量</option>
+                                <option value="account_refresh">账号刷新</option>
+                            </select>
+                            <select id="scheduled-run-filter-status" class="form-select">
+                                <option value="">全部状态</option>
+                                <option value="running">运行中</option>
+                                <option value="success">成功</option>
+                                <option value="failed">失败</option>
+                                <option value="skipped">已跳过</option>
+                                <option value="cancelled">已取消</option>
+                            </select>
+                            <input type="datetime-local" id="scheduled-run-filter-started-from" class="form-input" title="开始时间从">
+                            <input type="datetime-local" id="scheduled-run-filter-started-to" class="form-input" title="开始时间到">
+                        </div>
+                        <div class="filter-panel-actions">
+                            <button class="btn btn-secondary btn-sm" id="scheduled-run-filter-apply-btn">筛选</button>
+                            <button class="btn btn-secondary btn-sm" id="scheduled-run-filter-reset-btn">重置</button>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="table-container table-shell">
+                            <table id="scheduled-runs-table" class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 70px;">Run ID</th>
+                                        <th style="width: 180px;">计划</th>
+                                        <th style="width: 110px;">任务类型</th>
+                                        <th style="width: 90px;">触发源</th>
+                                        <th style="width: 100px;">状态</th>
+                                        <th style="width: 180px;">开始时间</th>
+                                        <th style="width: 180px;">结束时间</th>
+                                        <th>摘要</th>
+                                        <th style="width: 180px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scheduled-runs-table-body">
+                                    <tr>
+                                        <td colspan="9">
+                                            <div class="empty-state">
+                                                <div class="empty-state-icon">⏳</div>
+                                                <div class="empty-state-title">运行记录加载中</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-panel">
+                            <div id="scheduled-run-pagination-summary">第 1 / 1 页 · 共 0 条</div>
+                            <div class="pagination-jump">
+                                <button class="btn btn-secondary btn-sm" id="scheduled-run-prev-page">上一页</button>
+                                <button class="btn btn-secondary btn-sm" id="scheduled-run-next-page">下一页</button>
+                                <label for="scheduled-run-page-jump-input">跳转到</label>
+                                <input type="number" id="scheduled-run-page-jump-input" class="form-input pagination-jump-input" min="1" step="1" inputmode="numeric" placeholder="页码">
+                                <button class="btn btn-secondary btn-sm" id="scheduled-run-page-jump-btn">前往</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+</div>
 
     <div id="plan-form-modal" class="modal">
         <div class="modal-content" style="max-width: 1080px;">
@@ -326,8 +289,10 @@
             </div>
         </div>
     </div>
+</div>
+{% endblock %}
 
-    <script src="/static/js/utils.js?v={{ static_version }}"></script>
+{% block page_scripts %}
+<script src="/static/js/utils.js?v={{ static_version }}"></script>
     <script src="/static/js/scheduled_tasks.js?v={{ static_version }}"></script>
-</body>
-</html>
+{% endblock %}

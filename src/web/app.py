@@ -26,6 +26,7 @@ from ..scheduler.engine import SchedulerEngine
 from .routes import api_router
 from .routes.websocket import router as ws_router
 from .task_manager import task_manager
+from .page_shell import build_page_shell
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,25 @@ def create_app() -> FastAPI:
     def _redirect_to_login(request: Request) -> RedirectResponse:
         return RedirectResponse(url=f"/login?next={request.url.path}", status_code=302)
 
+    def _workspace_context(
+        request: Request,
+        *,
+        page_key: str,
+        page_title: str,
+        page_subtitle: str,
+        **extra_context: object,
+    ) -> dict[str, object]:
+        context = {
+            "request": request,
+            **build_page_shell(
+                page_key=page_key,
+                page_title=page_title,
+                page_subtitle=page_subtitle,
+            ),
+        }
+        context.update(extra_context)
+        return context
+
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request, next: Optional[str] = "/"):
         """登录页面"""
@@ -142,57 +162,126 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
-        """首页 - 注册页面"""
+    async def dashboard_page(request: Request):
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("index.html", {"request": request})
+        return templates.TemplateResponse(
+            "dashboard.html",
+            _workspace_context(
+                request,
+                page_key="dashboard",
+                page_title="控制台总览",
+                page_subtitle="查看系统状态、任务健康、快捷入口与最近活动。",
+            ),
+        )
+
+    @app.get("/registration-workbench", response_class=HTMLResponse)
+    async def registration_workbench_page(request: Request):
+        """注册工作台页面"""
+        if not _is_authenticated(request):
+            return _redirect_to_login(request)
+        return templates.TemplateResponse("index.html", _workspace_context(
+            request,
+            page_key="registration_workbench",
+            page_title="注册工作台",
+            page_subtitle="配置参数并执行批量注册任务。",
+        ))
 
     @app.get("/accounts", response_class=HTMLResponse)
     async def accounts_page(request: Request):
         """账号管理页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("accounts.html", {"request": request})
+        return templates.TemplateResponse(
+            "accounts.html",
+            _workspace_context(
+                request,
+                page_key="accounts",
+                page_title="账号管理",
+                page_subtitle="检索账号状态并执行维护操作。",
+            ),
+        )
 
     @app.get("/email-services", response_class=HTMLResponse)
     async def email_services_page(request: Request):
         """邮箱服务管理页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("email_services.html", {"request": request})
+        return templates.TemplateResponse(
+            "email_services.html",
+            _workspace_context(
+                request,
+                page_key="email_services",
+                page_title="邮箱服务",
+                page_subtitle="管理可用邮箱渠道与服务配置。",
+            ),
+        )
 
     @app.get("/scheduled-tasks", response_class=HTMLResponse)
     async def scheduled_tasks_page(request: Request):
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("scheduled_tasks.html", {"request": request})
+        return templates.TemplateResponse(
+            "scheduled_tasks.html",
+            _workspace_context(
+                request,
+                page_key="scheduled_tasks",
+                page_title="定时任务",
+                page_subtitle="创建和监控周期性执行任务。",
+            ),
+        )
 
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         """设置页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("settings.html", {"request": request})
+        return templates.TemplateResponse(
+            "settings.html",
+            _workspace_context(
+                request,
+                page_key="settings",
+                page_title="系统设置",
+                page_subtitle="调整系统配置、代理与运行参数。",
+            ),
+        )
 
     @app.get("/payment", response_class=HTMLResponse)
     async def payment_page(request: Request):
         """支付页面"""
-        return templates.TemplateResponse("payment.html", {"request": request})
+        return templates.TemplateResponse(
+            "payment.html",
+            _workspace_context(
+                request,
+                page_key="payment",
+                page_title="支付升级",
+                page_subtitle="为账号生成 Plus 或 Team 订阅支付链接。",
+            ),
+        )
 
     @app.get("/registration-experiments", response_class=HTMLResponse)
     async def registration_experiments_page(request: Request):
         """实验对比页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("registration_experiments.html", {"request": request})
+        return templates.TemplateResponse("registration_experiments.html", _workspace_context(
+            request,
+            page_key="registration_experiments",
+            page_title="注册实验",
+            page_subtitle="对比不同流水线策略的效果表现。",
+        ))
 
     @app.get("/registration-batch-stats", response_class=HTMLResponse)
     async def registration_batch_stats_page(request: Request):
         """注册批次统计页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("registration_batch_stats.html", {"request": request})
+        return templates.TemplateResponse("registration_batch_stats.html", _workspace_context(
+            request,
+            page_key="registration_batch_stats",
+            page_title="批次统计",
+            page_subtitle="查看批次维度的注册表现和趋势。",
+        ))
 
     @app.on_event("startup")
     async def startup_event():

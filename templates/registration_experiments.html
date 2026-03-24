@@ -1,74 +1,62 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>实验对比看板 - OpenAI 注册系统</title>
-    <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
-</head>
-<body>
-    <div class="container">
-        <nav class="navbar">
-            <div class="nav-brand">
-                <h1>OpenAI 注册系统</h1>
-            </div>
-            <div class="nav-links">
-                <a href="/" class="nav-link">注册</a>
-                <a href="/registration-experiments" class="nav-link active">实验对比</a>
-                <a href="/registration-batch-stats" class="nav-link">批次统计</a>
-                <a href="/accounts" class="nav-link">账号管理</a>
-                <a href="/email-services" class="nav-link">邮箱服务</a>
-                <a href="/scheduled-tasks" class="nav-link">定时任务</a>
-                <a href="/payment" class="nav-link">支付</a>
-                <a href="/settings" class="nav-link">设置</a>
-                <a href="/logout" class="nav-link">退出</a>
-            </div>
-        </nav>
+{% extends "_workspace_base.html" %}
 
-        <main class="main-content experiment-dashboard">
-            <div class="page-header">
-                <h2>实验对比 + 存活看板</h2>
-                <p class="subtitle">查看实验批次概览、步骤对比与存活统计</p>
+{% block page_content %}
+<div class="experiment-dashboard analysis-dashboard">
+    <section class="workspace-panel analysis-toolbar-panel">
+        <div class="page-head-actions analysis-panel-head">
+            <div>
+                <h3>实验对比 + 存活看板</h3>
+                <p class="panel-subtitle">输入实验批次 ID，查看实验概览、步骤对比与存活统计。</p>
             </div>
+        </div>
 
-            <div class="card">
-                <div class="card-body">
-                    <div class="form-row experiment-toolbar">
-                        <div class="form-group">
-                            <label for="experiment-id-input">实验批次 ID</label>
-                            <input type="number" id="experiment-id-input" min="1" placeholder="输入实验 ID">
-                        </div>
-                        <div class="form-group experiment-toolbar-actions">
-                            <label>&nbsp;</label>
-                            <button type="button" class="btn btn-primary" id="load-experiment-btn">加载看板</button>
-                        </div>
-                    </div>
-                </div>
+        <div class="form-row experiment-toolbar">
+            <div class="form-group">
+                <label for="experiment-id-input">实验批次 ID</label>
+                <input type="number" id="experiment-id-input" min="1" placeholder="输入实验 ID">
             </div>
+            <div class="form-group experiment-toolbar-actions">
+                <label>&nbsp;</label>
+                <button type="button" class="btn btn-primary" id="load-experiment-btn">加载看板</button>
+            </div>
+        </div>
+    </section>
 
-            <div class="experiment-summary-grid" id="experiment-summary"></div>
+    <section class="workspace-panel analysis-summary-panel">
+        <div class="page-head-actions analysis-panel-head">
+            <div>
+                <h3>实验概览</h3>
+                <p class="panel-subtitle">汇总当前流水线、任务规模与关键实验指标。</p>
+            </div>
+        </div>
+        <div class="experiment-summary-grid" id="experiment-summary"></div>
+    </section>
 
-            <div class="card">
-                <div class="card-header">
+    <div class="analysis-dual-grid">
+        <section class="workspace-panel analysis-content-panel">
+            <div class="page-head-actions analysis-panel-head">
+                <div>
                     <h3>步骤对比</h3>
-                </div>
-                <div class="card-body">
-                    <div id="experiment-step-compare"></div>
+                    <p class="panel-subtitle">对比实验批次中各步骤的成功率、耗时与执行表现。</p>
                 </div>
             </div>
+            <div id="experiment-step-compare"></div>
+        </section>
 
-            <div class="card">
-                <div class="card-header">
+        <section class="workspace-panel analysis-content-panel">
+            <div class="page-head-actions analysis-panel-head">
+                <div>
                     <h3>存活摘要</h3>
-                </div>
-                <div class="card-body">
-                    <div class="survival-summary-grid" id="survival-summary"></div>
+                    <p class="panel-subtitle">查看实验批次关联账号的健康状态与存活分布。</p>
                 </div>
             </div>
-        </main>
+            <div class="survival-summary-grid" id="survival-summary"></div>
+        </section>
     </div>
+</div>
+{% endblock %}
 
-    <script src="/static/js/utils.js?v={{ static_version }}"></script>
-    <script src="/static/js/registration_experiments.js?v={{ static_version }}"></script>
-</body>
-</html>
+{% block page_scripts %}
+<script src="/static/js/utils.js?v={{ static_version }}"></script>
+<script src="/static/js/registration_experiments.js?v={{ static_version }}"></script>
+{% endblock %}

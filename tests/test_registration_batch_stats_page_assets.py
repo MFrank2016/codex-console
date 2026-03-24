@@ -13,6 +13,8 @@ def test_registration_batch_stats_template_contains_required_dashboard_container
     template_path = Path("templates/registration_batch_stats.html")
     assert template_path.exists()
     template = template_path.read_text(encoding="utf-8")
+    assert '{% extends "_workspace_base.html" %}' in template
+    assert "page-head" in template
     assert 'id="batch-stats-list"' in template
     assert 'id="batch-stats-detail"' in template
     assert 'id="batch-stats-compare"' in template
@@ -23,6 +25,12 @@ def test_registration_batch_stats_template_references_dashboard_script():
     assert template_path.exists()
     template = template_path.read_text(encoding="utf-8")
     assert '/static/js/registration_batch_stats.js' in template
+
+
+def test_login_template_uses_redesigned_card_shell_tokens():
+    template = Path("templates/login.html").read_text(encoding="utf-8")
+    assert "login-card" in template
+    assert "warm-surface" in Path("static/css/style.css").read_text(encoding="utf-8")
 
 
 def test_web_app_registers_registration_batch_stats_page_route():

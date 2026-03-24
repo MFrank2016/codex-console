@@ -1,68 +1,51 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>注册批次统计 - OpenAI 注册系统</title>
-    <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
-</head>
-<body>
-    <div class="container">
-        <nav class="navbar">
-            <div class="nav-brand">
-                <h1>OpenAI 注册系统</h1>
-            </div>
-            <div class="nav-links">
-                <a href="/" class="nav-link">注册</a>
-                <a href="/registration-experiments" class="nav-link">实验对比</a>
-                <a href="/registration-batch-stats" class="nav-link active">批次统计</a>
-                <a href="/accounts" class="nav-link">账号管理</a>
-                <a href="/email-services" class="nav-link">邮箱服务</a>
-                <a href="/scheduled-tasks" class="nav-link">定时任务</a>
-                <a href="/payment" class="nav-link">支付</a>
-                <a href="/settings" class="nav-link">设置</a>
-                <a href="/logout" class="nav-link">退出</a>
-            </div>
-        </nav>
+{% extends "_workspace_base.html" %}
 
-        <main class="main-content batch-stats-dashboard">
-            <div class="page-header">
-                <h2>注册批次统计</h2>
-                <p class="subtitle">查看批次统计明细与双批次对比</p>
+{% block page_content %}
+<div class="batch-stats-dashboard analysis-dashboard">
+    <section class="workspace-panel analysis-toolbar-panel">
+        <div class="page-head-actions analysis-panel-head">
+            <div>
+                <h3>注册批次统计</h3>
+                <p class="panel-subtitle">浏览批次列表，按单批次查看详情，或选择两个批次进行对比。</p>
             </div>
+        </div>
+    </section>
 
-            <div class="batch-stats-layout">
-                <section class="card batch-stats-list">
-                    <div class="card-header">
-                        <h3>批次列表</h3>
-                    </div>
-                    <div class="card-body">
-                        <div id="batch-stats-list"></div>
-                    </div>
-                </section>
-
-                <section class="card batch-stats-detail">
-                    <div class="card-header">
-                        <h3>批次详情</h3>
-                    </div>
-                    <div class="card-body">
-                        <div id="batch-stats-detail"></div>
-                    </div>
-                </section>
-
-                <section class="card batch-stats-compare">
-                    <div class="card-header">
-                        <h3>批次对比</h3>
-                    </div>
-                    <div class="card-body">
-                        <div id="batch-stats-compare"></div>
-                    </div>
-                </section>
+    <div class="batch-stats-layout">
+        <section class="workspace-panel batch-stats-list analysis-content-panel">
+            <div class="page-head-actions analysis-panel-head">
+                <div>
+                    <h3>批次列表</h3>
+                    <p class="panel-subtitle">选择一个批次查看详情，选择两个批次生成对比。</p>
+                </div>
             </div>
-        </main>
+            <div id="batch-stats-list"></div>
+        </section>
+
+        <section class="workspace-panel batch-stats-detail analysis-content-panel">
+            <div class="page-head-actions analysis-panel-head">
+                <div>
+                    <h3>批次详情</h3>
+                    <p class="panel-subtitle">查看当前所选批次的指标、摘要与步骤表现。</p>
+                </div>
+            </div>
+            <div id="batch-stats-detail"></div>
+        </section>
+
+        <section class="workspace-panel batch-stats-compare analysis-content-panel" id="batch-compare-panel">
+            <div class="page-head-actions analysis-panel-head">
+                <div>
+                    <h3>批次对比</h3>
+                    <p class="panel-subtitle">并排比较两个批次的成功率、目标量与耗时差异。</p>
+                </div>
+            </div>
+            <div id="batch-stats-compare"></div>
+        </section>
     </div>
+</div>
+{% endblock %}
 
-    <script src="/static/js/utils.js?v={{ static_version }}"></script>
-    <script src="/static/js/registration_batch_stats.js?v={{ static_version }}"></script>
-</body>
-</html>
+{% block page_scripts %}
+<script src="/static/js/utils.js?v={{ static_version }}"></script>
+<script src="/static/js/registration_batch_stats.js?v={{ static_version }}"></script>
+{% endblock %}

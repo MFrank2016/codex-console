@@ -1,7 +1,36 @@
 from pathlib import Path
 import re
 
+from fastapi.testclient import TestClient
+
+from src.config.settings import get_settings
+from src.web.app import create_app
 from tests_runtime.app_js_harness import run_app_js_scenario
+
+
+def test_registration_workbench_page_requires_auth_and_renders_workspace_shell_hooks():
+    app = create_app()
+    with TestClient(app) as client:
+        unauthenticated = client.get("/registration-workbench", follow_redirects=False)
+        assert unauthenticated.status_code == 302
+        assert unauthenticated.headers["location"] == "/login?next=/registration-workbench"
+
+        password = get_settings().webui_access_password.get_secret_value()
+        login_response = client.post(
+            "/login",
+            data={"password": password, "next": "/registration-workbench"},
+            follow_redirects=False,
+        )
+        assert login_response.status_code == 302
+
+        response = client.get("/registration-workbench")
+        assert response.status_code == 200
+        assert 'data-page-key="registration_workbench"' in response.text
+        assert 'id="registration-form"' in response.text
+        assert 'id="task-step-waterfall"' in response.text
+        assert 'href="/registration-workbench"' in response.text
+        assert 'href="/logout"' in response.text
+        assert 'class="theme-toggle"' in response.text
 
 
 def test_registration_template_contains_unlimited_mode_and_domain_stats_container():
@@ -19,9 +48,11 @@ def test_registration_template_contains_pipeline_selector_and_task_step_waterfal
     assert 'id="task-step-waterfall"' in template
 
 
-def test_registration_template_nav_contains_scheduled_tasks_link():
+def test_registration_template_uses_workbench_layout_classes():
     template = Path("templates/index.html").read_text(encoding="utf-8")
-    assert 'href="/scheduled-tasks"' in template
+    assert "registration-workbench-layout" in template
+    assert "registration-workbench-main" in template
+    assert "registration-workbench-side" in template
 
 
 def test_registration_template_recent_accounts_uses_shared_table_shell():
@@ -84,6 +115,33 @@ def test_app_js_restore_unlimited_task_uses_batch_endpoint():
     result = run_app_js_scenario("restore_unlimited_task")
     assert result["api_get_paths"] == ["/registration/batch/batch-unlimited-01"]
     assert result["batch_progress_display"] == "block"
+
+
+def test_execution_and_configuration_templates_extend_workspace_shell():
+    for path in [
+        "templates/accounts.html",
+        "templates/scheduled_tasks.html",
+        "templates/email_services.html",
+        "templates/settings.html",
+        "templates/payment.html",
+    ]:
+        template = Path(path).read_text(encoding="utf-8")
+        assert '{% extends "_workspace_base.html" %}' in template
+
+
+def test_payment_page_uses_centralized_workspace_shell_context():
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/payment")
+
+    assert response.status_code == 200
+    assert 'data-page-key="payment"' in response.text
+    assert "支付升级" in response.text
+    assert 'href="/payment"' in response.text
+
+    template = Path("templates/payment.html").read_text(encoding="utf-8")
+    assert "page_key is not defined" not in template
+    assert "workspace_nav is not defined" not in template
 
 
 def test_accounts_template_contains_pagination_jump_controls():
@@ -452,3 +510,9 @@ def test_accounts_script_update_pagination_does_not_override_focused_input_and_s
     assert result["focusedValue"] == "42"
     assert result["blurredValue"] == "4"
     assert result["maxAfterFocused"] == "5"
+
+
+def test_web_app_registers_registration_workbench_page_route():
+    app_source = Path("src/web/app.py").read_text(encoding="utf-8")
+    assert '@app.get("/registration-workbench", response_class=HTMLResponse)' in app_source
+    assert 'templates.TemplateResponse("index.html"' in app_source

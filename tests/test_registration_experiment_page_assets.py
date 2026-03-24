@@ -11,6 +11,8 @@ from tests_runtime.registration_experiments_js_harness import (
 
 def test_registration_experiments_template_contains_required_dashboard_containers():
     template = Path("templates/registration_experiments.html").read_text(encoding="utf-8")
+    assert '{% extends "_workspace_base.html" %}' in template
+    assert "page-head" in template
     assert 'id="experiment-summary"' in template
     assert 'id="experiment-step-compare"' in template
     assert 'id="survival-summary"' in template

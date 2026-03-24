@@ -80,6 +80,13 @@ def test_scheduled_tasks_script_defines_escape_html_helper():
     assert script.count("escapeHtml(") >= 2
 
 
+def test_scheduled_tasks_template_extends_workspace_shell_and_exposes_page_layout_classes():
+    template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
+    assert '{% extends "_workspace_base.html" %}' in template
+    assert "page-head" in template
+    assert "workspace-panel" in template
+
+
 def test_scheduled_tasks_template_contains_plan_management_hooks():
     template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
     assert 'id="create-plan-btn"' in template
