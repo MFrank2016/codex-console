@@ -10,6 +10,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ...application import SettingsService
 from ...config.settings import get_settings, update_settings
 from ...core.ip_location import lookup_locations
 from ...core.proxy_import import (
@@ -25,6 +26,10 @@ from ...database.session import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _build_settings_service(db) -> SettingsService:
+    return SettingsService(db)
 
 
 # ============== Pydantic Models ==============
@@ -147,16 +152,8 @@ class DynamicProxySettings(BaseModel):
 @router.post("/proxy/dynamic")
 async def update_dynamic_proxy_settings(request: DynamicProxySettings):
     """更新动态代理设置"""
-    update_dict = {
-        "proxy_dynamic_enabled": request.enabled,
-        "proxy_dynamic_api_url": request.api_url,
-        "proxy_dynamic_api_key_header": request.api_key_header,
-        "proxy_dynamic_result_field": request.result_field,
-    }
-    if request.api_key is not None:
-        update_dict["proxy_dynamic_api_key"] = request.api_key
-
-    update_settings(**update_dict)
+    with get_db() as db:
+        _build_settings_service(db).update_dynamic_proxy_settings(request.model_dump())
     return {"success": True, "message": "动态代理设置已更新"}
 
 
@@ -224,13 +221,8 @@ async def get_registration_settings():
 @router.post("/registration")
 async def update_registration_settings(request: RegistrationSettings):
     """更新注册设置"""
-    update_settings(
-        registration_max_retries=request.max_retries,
-        registration_timeout=request.timeout,
-        registration_default_password_length=request.default_password_length,
-        registration_sleep_min=request.sleep_min,
-        registration_sleep_max=request.sleep_max,
-    )
+    with get_db() as db:
+        _build_settings_service(db).update_registration_settings(request.model_dump())
 
     return {"success": True, "message": "注册设置已更新"}
 
@@ -238,17 +230,8 @@ async def update_registration_settings(request: RegistrationSettings):
 @router.post("/webui")
 async def update_webui_settings(request: WebUISettings):
     """更新 Web UI 设置"""
-    update_dict = {}
-    if request.host is not None:
-        update_dict["webui_host"] = request.host
-    if request.port is not None:
-        update_dict["webui_port"] = request.port
-    if request.debug is not None:
-        update_dict["debug"] = request.debug
-    if request.access_password:
-        update_dict["webui_access_password"] = request.access_password
-
-    update_settings(**update_dict)
+    with get_db() as db:
+        _build_settings_service(db).update_webui_settings(request.model_dump())
     return {"success": True, "message": "Web UI 设置已更新"}
 
 
@@ -414,12 +397,8 @@ async def get_tempmail_settings():
 @router.post("/tempmail")
 async def update_tempmail_settings(request: TempmailSettings):
     """更新临时邮箱设置"""
-    update_dict = {}
-
-    if request.api_url:
-        update_dict["tempmail_base_url"] = request.api_url
-
-    update_settings(**update_dict)
+    with get_db() as db:
+        _build_settings_service(db).update_tempmail_settings(request.model_dump())
 
     return {"success": True, "message": "临时邮箱设置已更新"}
 
@@ -439,16 +418,11 @@ async def get_email_code_settings():
 @router.post("/email-code")
 async def update_email_code_settings(request: EmailCodeSettings):
     """更新验证码等待设置"""
-    # 验证参数范围
-    if request.timeout < 30 or request.timeout > 600:
-        raise HTTPException(status_code=400, detail="超时时间必须在 30-600 秒之间")
-    if request.poll_interval < 1 or request.poll_interval > 30:
-        raise HTTPException(status_code=400, detail="轮询间隔必须在 1-30 秒之间")
-
-    update_settings(
-        email_code_timeout=request.timeout,
-        email_code_poll_interval=request.poll_interval,
-    )
+    try:
+        with get_db() as db:
+            _build_settings_service(db).update_email_code_settings(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"success": True, "message": "验证码等待设置已更新"}
 

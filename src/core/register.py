@@ -131,6 +131,7 @@ class RegistrationEngine:
         self.session: Optional[cffi_requests.Session] = None
         self.session_token: Optional[str] = None  # 会话令牌
         self.logs: list = []
+        self._pending_task_logs: list[str] = []
         self._otp_sent_at: Optional[float] = None  # OTP 发送时间戳
         self._is_existing_account: bool = False  # 是否为已注册账号（用于自动登录）
         self._token_acquisition_requires_login: bool = False  # 新注册账号需要二次登录拿 token
@@ -145,18 +146,11 @@ class RegistrationEngine:
 
         # 添加到日志列表
         self.logs.append(log_message)
+        self._pending_task_logs.append(log_message)
 
         # 调用回调函数
         if self.callback_logger:
             self.callback_logger(log_message)
-
-        # 记录到数据库（如果有关联任务）
-        if self.task_uuid:
-            try:
-                with get_db() as db:
-                    crud.append_task_log(db, self.task_uuid, log_message)
-            except Exception as e:
-                logger.warning(f"记录任务日志失败: {e}")
 
         # 根据级别记录到日志系统
         if level == "error":
@@ -165,6 +159,29 @@ class RegistrationEngine:
             logger.warning(message)
         else:
             logger.info(message)
+
+    def flush_task_logs(self, db=None) -> bool:
+        """将缓冲日志批量落到任务记录。"""
+        if not self.task_uuid or not self._pending_task_logs:
+            return False
+
+        pending = list(self._pending_task_logs)
+        try:
+            if db is not None:
+                persisted = crud.append_task_logs(db, self.task_uuid, pending)
+                if persisted:
+                    self._pending_task_logs.clear()
+                return persisted
+
+            with get_db() as session:
+                persisted = crud.append_task_logs(session, self.task_uuid, pending)
+                if persisted:
+                    session.commit()
+                    self._pending_task_logs.clear()
+                return persisted
+        except Exception as e:
+            logger.warning(f"批量记录任务日志失败: {e}")
+            return False
 
     def _generate_password(self, length: int = DEFAULT_PASSWORD_LENGTH) -> str:
         """生成随机密码"""
@@ -1195,8 +1212,11 @@ class RegistrationEngine:
                 )
 
                 self._log(f"账户已存进数据库，落袋为安，ID: {account.id}")
+                self.flush_task_logs(db)
+                db.commit()
                 return True
 
         except Exception as e:
             self._log(f"保存到数据库失败: {e}", "error")
+            self.flush_task_logs()
             return False

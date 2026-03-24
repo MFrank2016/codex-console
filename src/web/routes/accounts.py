@@ -5,12 +5,11 @@ import io
 import json
 import logging
 import zipfile
-from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ...config.constants import AccountStatus
 from ...config.settings import get_settings
@@ -24,6 +23,7 @@ from ...core.dynamic_proxy import get_proxy_url_for_task
 from ...database import crud
 from ...database.models import Account
 from ...database.session import get_db
+from ...core.time import utc_now, utc_now_naive
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -68,8 +68,7 @@ class AccountResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AccountListResponse(BaseModel):
@@ -794,7 +793,7 @@ async def upload_account_to_cpa(account_id: int, request: Optional[CPAUploadRequ
 
         if success:
             account.cpa_uploaded = True
-            account.cpa_uploaded_at = datetime.utcnow()
+            account.cpa_uploaded_at = utc_now_naive()
             db.commit()
             return {"success": True, "message": message}
         else:

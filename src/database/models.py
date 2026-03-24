@@ -2,15 +2,20 @@
 SQLAlchemy ORM 模型定义
 """
 
-from datetime import datetime
 from typing import Optional, Dict, Any
 import json
 from sqlalchemy import Column, Integer, Float, String, Text, Boolean, DateTime, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.types import TypeDecorator
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
+
 
 Base = declarative_base()
+
+
+def _utc_now_naive():
+    from ..core.time import utc_now_naive
+
+    return utc_now_naive()
 
 
 class JSONEncodedDict(TypeDecorator):
@@ -45,7 +50,7 @@ class Account(Base):
     email_service = Column(String(50), nullable=False)  # 'tempmail', 'outlook', 'moe_mail'
     email_service_id = Column(String(255))  # 邮箱服务中的ID
     proxy_used = Column(String(255))
-    registered_at = Column(DateTime, default=datetime.utcnow)
+    registered_at = Column(DateTime, default=_utc_now_naive)
     last_refresh = Column(DateTime)  # 最后刷新时间
     expires_at = Column(DateTime)  # Token 过期时间
     status = Column(String(20), default='active')  # 'active', 'expired', 'banned', 'failed'
@@ -59,8 +64,8 @@ class Account(Base):
     subscription_type = Column(String(20))  # None / 'plus' / 'team'
     subscription_at = Column(DateTime)  # 订阅开通时间
     cookies = Column(Text)  # 完整 cookie 字符串，用于支付请求
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -101,8 +106,8 @@ class EmailService(Base):
     enabled = Column(Boolean, default=True)
     priority = Column(Integer, default=0)  # 使用优先级
     last_used = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
 
 class RegistrationTask(Base):
@@ -127,13 +132,48 @@ class RegistrationTask(Base):
     logs = Column(Text)  # 注册过程日志
     result = Column(JSONEncodedDict)  # 注册结果
     error_message = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
 
     # 关系
     email_service = relationship('EmailService')
     experiment_batch = relationship('ExperimentBatch', back_populates='registration_tasks')
+
+
+class RegistrationRun(Base):
+    """注册任务持久化运行态主表。"""
+    __tablename__ = 'registration_runs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_uuid = Column(String(36), nullable=False, unique=True, index=True)
+    batch_id = Column(String(36), index=True)
+    trigger_source = Column(String(32), nullable=False)
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+
+    events = relationship(
+        'RegistrationRunEvent',
+        back_populates='run',
+        cascade='all, delete-orphan',
+        order_by=lambda: RegistrationRunEvent.id,
+    )
+
+
+class RegistrationRunEvent(Base):
+    """注册任务运行事件追加表。"""
+    __tablename__ = 'registration_run_events'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey('registration_runs.id'), nullable=False, index=True)
+    level = Column(String(16), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=_utc_now_naive)
+
+    run = relationship('RegistrationRun', back_populates='events')
 
 
 class PipelineStepRun(Base):
@@ -147,7 +187,7 @@ class PipelineStepRun(Base):
     step_order = Column(Integer, nullable=False)
     step_impl = Column(String(100))
     status = Column(String(20), nullable=False, default='pending')
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=_utc_now_naive)
     completed_at = Column(DateTime)
     duration_ms = Column(Integer)
     input_summary = Column(Text)
@@ -155,7 +195,7 @@ class PipelineStepRun(Base):
     error_code = Column(String(64))
     error_message = Column(Text)
     metadata_json = Column(JSONEncodedDict)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
 
 
 class ExperimentBatch(Base):
@@ -172,7 +212,7 @@ class ExperimentBatch(Base):
     proxy_strategy_snapshot = Column(JSONEncodedDict)
     target_count = Column(Integer, default=0)
     notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
 
@@ -201,7 +241,7 @@ class RegistrationBatchStat(Base):
     avg_duration_ms = Column(Float)
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
 
     email_service = relationship('EmailService')
     step_stats = relationship(
@@ -226,7 +266,7 @@ class RegistrationBatchStepStat(Base):
     avg_duration_ms = Column(Float)
     p50_duration_ms = Column(Integer)
     p90_duration_ms = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
 
     batch_stat = relationship('RegistrationBatchStat', back_populates='step_stats')
 
@@ -242,7 +282,7 @@ class RegistrationBatchStageStat(Base):
     avg_duration_ms = Column(Float)
     p50_duration_ms = Column(Integer)
     p90_duration_ms = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
 
     batch_stat = relationship('RegistrationBatchStat', back_populates='stage_stats')
 
@@ -255,11 +295,11 @@ class ProxyCheckRun(Base):
     scope_type = Column(String(32), nullable=False, index=True)
     scope_id = Column(String(64), index=True)
     status = Column(String(20), nullable=False, default='pending', index=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=_utc_now_naive)
     completed_at = Column(DateTime)
     total_count = Column(Integer, default=0)
     available_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
 
     results = relationship('ProxyCheckResult', back_populates='run', cascade='all, delete-orphan')
 
@@ -277,7 +317,7 @@ class ProxyCheckResult(Base):
     country_code = Column(String(8))
     ip_address = Column(String(64))
     error_message = Column(Text)
-    checked_at = Column(DateTime, default=datetime.utcnow)
+    checked_at = Column(DateTime, default=_utc_now_naive)
 
     run = relationship('ProxyCheckRun', back_populates='results')
     proxy = relationship('Proxy')
@@ -294,12 +334,12 @@ class AccountSurvivalCheck(Base):
     experiment_batch_id = Column(Integer, ForeignKey('experiment_batches.id'), index=True)
     check_source = Column(String(16), nullable=False)
     check_stage = Column(String(16), nullable=False)
-    checked_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    checked_at = Column(DateTime, nullable=False, default=_utc_now_naive)
     result_level = Column(String(16), nullable=False, index=True)
     signal_type = Column(String(64))
     latency_ms = Column(Integer)
     detail_json = Column(JSONEncodedDict)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
 
     account = relationship('Account')
     experiment_batch = relationship('ExperimentBatch', back_populates='survival_checks')
@@ -313,7 +353,7 @@ class Setting(Base):
     value = Column(Text)
     description = Column(Text)
     category = Column(String(50), default='general')  # 'general', 'email', 'proxy', 'openai'
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
 
 class CpaService(Base):
@@ -326,8 +366,8 @@ class CpaService(Base):
     api_token = Column(Text, nullable=False)  # API Token
     enabled = Column(Boolean, default=True)
     priority = Column(Integer, default=0)  # 优先级
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
 
 class ScheduledPlan(Base):
@@ -351,8 +391,8 @@ class ScheduledPlan(Base):
     last_run_status = Column(String(20))
     last_success_at = Column(DateTime)
     auto_disabled_reason = Column(String(120))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
     cpa_service = relationship('CpaService')
     runs = relationship('ScheduledRun', back_populates='plan', cascade='all, delete-orphan')
@@ -367,7 +407,7 @@ class ScheduledRun(Base):
     task_type = Column(String(32), index=True)
     trigger_source = Column(String(16), nullable=False)  # scheduled / manual
     status = Column(String(20), nullable=False, default='running')  # running / success / failed / skipped
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=_utc_now_naive)
     finished_at = Column(DateTime)
     stop_requested_at = Column(DateTime)
     stop_requested_by = Column(String(64))
@@ -377,7 +417,7 @@ class ScheduledRun(Base):
     summary = Column(JSONEncodedDict)
     error_message = Column(Text)
     logs = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
 
     plan = relationship('ScheduledPlan', back_populates='runs')
 
@@ -392,8 +432,8 @@ class Sub2ApiService(Base):
     api_key = Column(Text, nullable=False)  # x-api-key
     enabled = Column(Boolean, default=True)
     priority = Column(Integer, default=0)  # 优先级
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
 
 class TeamManagerService(Base):
@@ -406,8 +446,8 @@ class TeamManagerService(Base):
     api_key = Column(Text, nullable=False)  # X-API-Key
     enabled = Column(Boolean, default=True)
     priority = Column(Integer, default=0)  # 优先级
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
 
 class Proxy(Base):
@@ -427,8 +467,8 @@ class Proxy(Base):
     is_default = Column(Boolean, default=False)  # 是否为默认代理
     priority = Column(Integer, default=0)  # 优先级（保留字段）
     last_used = Column(DateTime)  # 最后使用时间
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
     def to_dict(self, include_password: bool = False) -> Dict[str, Any]:
         """转换为字典"""

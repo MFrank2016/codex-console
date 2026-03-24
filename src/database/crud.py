@@ -460,6 +460,21 @@ def update_registration_task(
     **kwargs
 ) -> Optional[RegistrationTask]:
     """更新注册任务状态"""
+    db_task = update_registration_task_fields(db, task_uuid, **kwargs)
+    if not db_task:
+        return None
+
+    db.commit()
+    db.refresh(db_task)
+    return db_task
+
+
+def update_registration_task_fields(
+    db: Session,
+    task_uuid: str,
+    **kwargs
+) -> Optional[RegistrationTask]:
+    """更新注册任务字段但不提交事务。"""
     db_task = get_registration_task_by_uuid(db, task_uuid)
     if not db_task:
         return None
@@ -468,23 +483,37 @@ def update_registration_task(
         if hasattr(db_task, key):
             setattr(db_task, key, value)
 
-    db.commit()
-    db.refresh(db_task)
+    db.flush()
     return db_task
 
 
 def append_task_log(db: Session, task_uuid: str, log_message: str) -> bool:
     """追加任务日志"""
+    appended = append_task_logs(db, task_uuid, [log_message])
+    if not appended:
+        return False
+
+    db.commit()
+    return True
+
+
+def append_task_logs(db: Session, task_uuid: str, log_messages: List[str]) -> bool:
+    """批量追加任务日志但不提交事务。"""
+    messages = [str(message) for message in log_messages if str(message)]
+    if not messages:
+        return True
+
     db_task = get_registration_task_by_uuid(db, task_uuid)
     if not db_task:
         return False
 
+    payload = "\n".join(messages)
     if db_task.logs:
-        db_task.logs += f"\n{log_message}"
+        db_task.logs += f"\n{payload}"
     else:
-        db_task.logs = log_message
+        db_task.logs = payload
 
-    db.commit()
+    db.flush()
     return True
 
 

@@ -6,11 +6,10 @@ import asyncio
 import logging
 import uuid
 import random
-from datetime import datetime
 from typing import Any, List, Optional, Dict, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ...database import crud
 from ...database.session import get_db
@@ -18,7 +17,9 @@ from ...database.models import RegistrationTask, Proxy
 from ...core.registration_batch_metrics import apply_task_outcome, build_domain_stats
 from ...core.registration_batch_stats import finalize_batch_statistics
 from ...core.registration_job import run_registration_job
+from ...application import BatchRegistrationService, RegistrationService
 from ...services import EmailServiceType
+from ...core.time import utc_now, utc_now_naive
 from ..task_manager import task_manager
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,31 @@ router = APIRouter()
 running_tasks: dict = {}
 # 批量任务存储
 batch_tasks: Dict[str, dict] = {}
+
+
+def _build_registration_service() -> RegistrationService:
+    return RegistrationService(
+        db_factory=get_db,
+        task_manager=task_manager,
+        job_runner=run_registration_job,
+        proxy_resolver=get_proxy_for_registration,
+        proxy_usage_updater=update_proxy_usage,
+        utc_now_provider=utc_now_naive,
+    )
+
+
+def _build_batch_registration_service() -> BatchRegistrationService:
+    return BatchRegistrationService(
+        db_factory=get_db,
+        task_manager=task_manager,
+        batch_tasks_store=batch_tasks,
+        registration_task_runner=run_registration_task,
+        batch_domain_stats_finalizer=_finalize_batch_domain_stats,
+        domain_stats_builder=build_domain_stats,
+        batch_outcome_applier=apply_task_outcome,
+        batch_statistics_finalizer=finalize_batch_statistics,
+        utc_now_provider=utc_now_naive,
+    )
 
 
 # ============== Proxy Helper Functions ==============
@@ -120,8 +146,7 @@ class RegistrationTaskResponse(BaseModel):
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BatchRegistrationResponse(BaseModel):
@@ -233,254 +258,40 @@ def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = No
 
 
 def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None):
-    """
-    在线程池中执行的同步注册任务
-
-    这个函数会被 run_in_executor 调用，运行在独立线程中
-    """
-    with get_db() as db:
-        try:
-            # 检查是否已取消
-            if task_manager.is_cancelled(task_uuid):
-                logger.info(f"任务 {task_uuid} 已取消，跳过执行")
-                return
-
-            # 更新任务状态为运行中
-            task = crud.update_registration_task(
-                db, task_uuid,
-                status="running",
-                pipeline_status="running",
-                started_at=datetime.utcnow()
-            )
-
-            if not task:
-                logger.error(f"任务不存在: {task_uuid}")
-                return
-
-            # 更新 TaskManager 状态
-            task_manager.update_status(task_uuid, "running")
-
-            # 确定使用的代理
-            # 如果前端传入了代理参数，使用传入的
-            # 否则从代理列表或系统设置中获取
-            actual_proxy_url = proxy
-            proxy_id = None
-
-            if not actual_proxy_url:
-                actual_proxy_url, proxy_id = get_proxy_for_registration(db)
-                if actual_proxy_url:
-                    logger.info(f"任务 {task_uuid} 使用代理: {actual_proxy_url[:50]}...")
-
-            # 更新任务的代理记录
-            crud.update_registration_task(db, task_uuid, proxy=actual_proxy_url)
-            effective_pipeline_key = pipeline_key or task.pipeline_key or "current_pipeline"
-            if task.pipeline_key != effective_pipeline_key:
-                task = crud.update_registration_task(db, task_uuid, pipeline_key=effective_pipeline_key) or task
-
-            # 创建注册引擎 - 使用 TaskManager 的日志回调
-            log_callback = task_manager.create_log_callback(task_uuid, prefix=log_prefix, batch_id=batch_id)
-            job_result = run_registration_job(
-                db=db,
-                email_service_type=email_service_type,
-                email_service_id=email_service_id,
-                proxy=actual_proxy_url,
-                email_service_config=email_service_config,
-                pipeline_key=effective_pipeline_key,
-                callback_logger=log_callback,
-                task_uuid=task_uuid,
-            )
-
-            if job_result.email:
-                crud.update_registration_task(db, task_uuid, email_address=job_result.email)
-
-            if job_result.email_service_id:
-                crud.update_registration_task(db, task_uuid, email_service_id=job_result.email_service_id)
-
-            if job_result.success:
-                # 更新代理使用时间
-                update_proxy_usage(db, proxy_id)
-
-                from ...database.models import Account as AccountModel
-                saved_account = None
-                if job_result.account_id:
-                    saved_account = db.query(AccountModel).filter_by(id=job_result.account_id).first()
-                elif job_result.email:
-                    saved_account = db.query(AccountModel).filter_by(email=job_result.email).first()
-
-                # 自动上传到 CPA（可多服务）
-                if auto_upload_cpa:
-                    try:
-                        from ...core.upload.cpa_upload import upload_to_cpa, generate_token_json
-                        if saved_account and saved_account.access_token:
-                            token_data = generate_token_json(saved_account)
-                            _cpa_ids = cpa_service_ids or []
-                            if not _cpa_ids:
-                                # 未指定则取所有启用的服务
-                                _cpa_ids = [s.id for s in crud.get_cpa_services(db, enabled=True)]
-                            if not _cpa_ids:
-                                log_callback("[CPA] 无可用 CPA 服务，跳过上传")
-                            for _sid in _cpa_ids:
-                                try:
-                                    _svc = crud.get_cpa_service_by_id(db, _sid)
-                                    if not _svc:
-                                        continue
-                                    log_callback(f"[CPA] 正在把账号打包发往服务站: {_svc.name}")
-                                    _ok, _msg = upload_to_cpa(token_data, api_url=_svc.api_url, api_token=_svc.api_token)
-                                    if _ok:
-                                        saved_account.cpa_uploaded = True
-                                        saved_account.cpa_uploaded_at = datetime.utcnow()
-                                        db.commit()
-                                        log_callback(f"[CPA] 投递成功，服务站已签收: {_svc.name}")
-                                    else:
-                                        log_callback(f"[CPA] 上传失败({_svc.name}): {_msg}")
-                                except Exception as _e:
-                                    log_callback(f"[CPA] 异常({_sid}): {_e}")
-                    except Exception as cpa_err:
-                        log_callback(f"[CPA] 上传异常: {cpa_err}")
-
-                # 自动上传到 Sub2API（可多服务）
-                if auto_upload_sub2api:
-                    try:
-                        from ...core.upload.sub2api_upload import upload_to_sub2api
-                        if saved_account and saved_account.access_token:
-                            _s2a_ids = sub2api_service_ids or []
-                            if not _s2a_ids:
-                                _s2a_ids = [s.id for s in crud.get_sub2api_services(db, enabled=True)]
-                            if not _s2a_ids:
-                                log_callback("[Sub2API] 无可用 Sub2API 服务，跳过上传")
-                            for _sid in _s2a_ids:
-                                try:
-                                    _svc = crud.get_sub2api_service_by_id(db, _sid)
-                                    if not _svc:
-                                        continue
-                                    log_callback(f"[Sub2API] 正在把账号发往服务站: {_svc.name}")
-                                    _ok, _msg = upload_to_sub2api([saved_account], _svc.api_url, _svc.api_key)
-                                    log_callback(f"[Sub2API] {'成功' if _ok else '失败'}({_svc.name}): {_msg}")
-                                except Exception as _e:
-                                    log_callback(f"[Sub2API] 异常({_sid}): {_e}")
-                    except Exception as s2a_err:
-                        log_callback(f"[Sub2API] 上传异常: {s2a_err}")
-
-                # 自动上传到 Team Manager（可多服务）
-                if auto_upload_tm:
-                    try:
-                        from ...core.upload.team_manager_upload import upload_to_team_manager
-                        if saved_account and saved_account.access_token:
-                            _tm_ids = tm_service_ids or []
-                            if not _tm_ids:
-                                _tm_ids = [s.id for s in crud.get_tm_services(db, enabled=True)]
-                            if not _tm_ids:
-                                log_callback("[TM] 无可用 Team Manager 服务，跳过上传")
-                            for _sid in _tm_ids:
-                                try:
-                                    _svc = crud.get_tm_service_by_id(db, _sid)
-                                    if not _svc:
-                                        continue
-                                    log_callback(f"[TM] 正在把账号发往服务站: {_svc.name}")
-                                    _ok, _msg = upload_to_team_manager(saved_account, _svc.api_url, _svc.api_key)
-                                    log_callback(f"[TM] {'成功' if _ok else '失败'}({_svc.name}): {_msg}")
-                                except Exception as _e:
-                                    log_callback(f"[TM] 异常({_sid}): {_e}")
-                    except Exception as tm_err:
-                        log_callback(f"[TM] 上传异常: {tm_err}")
-
-                # 更新任务状态
-                crud.update_registration_task(
-                    db, task_uuid,
-                    status="completed",
-                    pipeline_status="completed",
-                    completed_at=datetime.utcnow(),
-                    result=job_result.result_payload or {
-                        "success": True,
-                        "email": job_result.email,
-                        "account_id": job_result.account_id,
-                    },
-                )
-
-                # 更新 TaskManager 状态
-                task_manager.update_status(task_uuid, "completed", email=job_result.email)
-                if hasattr(task_manager, "clear_task_steps"):
-                    task_manager.clear_task_steps(task_uuid)
-
-                logger.info(f"注册任务完成: {task_uuid}, 邮箱: {job_result.email}")
-            else:
-                # 更新任务状态为失败
-                crud.update_registration_task(
-                    db, task_uuid,
-                    status="failed",
-                    pipeline_status="failed",
-                    completed_at=datetime.utcnow(),
-                    error_message=job_result.error_message
-                )
-
-                # 更新 TaskManager 状态
-                task_manager.update_status(task_uuid, "failed", error=job_result.error_message)
-                if hasattr(task_manager, "clear_task_steps"):
-                    task_manager.clear_task_steps(task_uuid)
-
-                logger.warning(f"注册任务失败: {task_uuid}, 原因: {job_result.error_message}")
-
-        except Exception as e:
-            logger.error(f"注册任务异常: {task_uuid}, 错误: {e}")
-
-            try:
-                with get_db() as db:
-                    crud.update_registration_task(
-                        db, task_uuid,
-                        status="failed",
-                        pipeline_status="failed",
-                        completed_at=datetime.utcnow(),
-                        error_message=str(e)
-                    )
-
-                # 更新 TaskManager 状态
-                task_manager.update_status(task_uuid, "failed", error=str(e))
-                if hasattr(task_manager, "clear_task_steps"):
-                    task_manager.clear_task_steps(task_uuid)
-            except:
-                pass
-
+    return _build_registration_service().run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type=email_service_type,
+        proxy=proxy,
+        email_service_config=email_service_config,
+        email_service_id=email_service_id,
+        log_prefix=log_prefix,
+        batch_id=batch_id,
+        auto_upload_cpa=auto_upload_cpa,
+        cpa_service_ids=cpa_service_ids or [],
+        auto_upload_sub2api=auto_upload_sub2api,
+        sub2api_service_ids=sub2api_service_ids or [],
+        auto_upload_tm=auto_upload_tm,
+        tm_service_ids=tm_service_ids or [],
+        pipeline_key=pipeline_key,
+    )
 
 async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None):
-    """
-    异步执行注册任务
-
-    使用 run_in_executor 将同步任务放入线程池执行，避免阻塞主事件循环
-    """
-    loop = task_manager.get_loop()
-    if loop is None:
-        loop = asyncio.get_event_loop()
-        task_manager.set_loop(loop)
-
-    # 初始化 TaskManager 状态
-    task_manager.update_status(task_uuid, "pending")
-    task_manager.add_log(task_uuid, f"{log_prefix} [系统] 任务 {task_uuid[:8]} 已加入队列" if log_prefix else f"[系统] 任务 {task_uuid[:8]} 已加入队列")
-
-    try:
-        # 在线程池中执行同步任务（传入 log_prefix 和 batch_id 供回调使用）
-        await loop.run_in_executor(
-            task_manager.executor,
-            _run_sync_registration_task,
-            task_uuid,
-            email_service_type,
-            proxy,
-            email_service_config,
-            email_service_id,
-            log_prefix,
-            batch_id,
-            auto_upload_cpa,
-            cpa_service_ids or [],
-            auto_upload_sub2api,
-            sub2api_service_ids or [],
-            auto_upload_tm,
-            tm_service_ids or [],
-            pipeline_key,
-        )
-    except Exception as e:
-        logger.error(f"线程池执行异常: {task_uuid}, 错误: {e}")
-        task_manager.add_log(task_uuid, f"[错误] 线程池执行异常: {str(e)}")
-        task_manager.update_status(task_uuid, "failed", error=str(e))
-
+    return await _build_registration_service().run_single_task(
+        task_uuid=task_uuid,
+        email_service_type=email_service_type,
+        proxy=proxy,
+        email_service_config=email_service_config,
+        email_service_id=email_service_id,
+        log_prefix=log_prefix,
+        batch_id=batch_id,
+        auto_upload_cpa=auto_upload_cpa,
+        cpa_service_ids=cpa_service_ids or [],
+        auto_upload_sub2api=auto_upload_sub2api,
+        sub2api_service_ids=sub2api_service_ids or [],
+        auto_upload_tm=auto_upload_tm,
+        tm_service_ids=tm_service_ids or [],
+        pipeline_key=pipeline_key,
+    )
 
 def _init_batch_state(
     batch_id: str,
@@ -490,67 +301,19 @@ def _init_batch_state(
     total: Optional[int] = None,
     statistics_context: Optional[dict] = None,
 ):
-    """初始化批量任务内存状态"""
-    computed_total = 0 if is_unlimited else (total if total is not None else len(task_uuids))
-    task_manager.init_batch(
+    _build_batch_registration_service().init_batch_state(
         batch_id,
-        computed_total,
+        task_uuids,
         is_unlimited=is_unlimited,
-        consecutive_failures=0,
-        max_consecutive_failures=10,
-        stop_reason=None,
-        domain_stats=[],
+        total=total,
+        statistics_context=statistics_context,
     )
-    batch_tasks[batch_id] = {
-        "total": computed_total,
-        "completed": 0,
-        "success": 0,
-        "failed": 0,
-        "cancelled": False,
-        "task_uuids": list(task_uuids),
-        "current_index": 0,
-        "logs": [],
-        "finished": False,
-        "is_unlimited": is_unlimited,
-        "consecutive_failures": 0,
-        "max_consecutive_failures": 10,
-        "stop_reason": None,
-        "domain_stats": [],
-        "statistics_context": statistics_context,
-    }
-
 
 def _make_batch_helpers(batch_id: str):
-    """返回 add_batch_log 和 update_batch_status 辅助函数"""
-    def add_batch_log(msg: str):
-        batch_tasks[batch_id]["logs"].append(msg)
-        task_manager.add_batch_log(batch_id, msg)
-
-    def update_batch_status(**kwargs):
-        for key, value in kwargs.items():
-            if key in batch_tasks[batch_id]:
-                batch_tasks[batch_id][key] = value
-        task_manager.update_batch_status(batch_id, **kwargs)
-
-    return add_batch_log, update_batch_status
-
+    return _build_batch_registration_service().make_batch_helpers(batch_id)
 
 def _finalize_batch_domain_stats(batch_id: str, task_uuids: List[str]) -> None:
-    with get_db() as db:
-        tasks = (
-            db.query(RegistrationTask)
-            .filter(RegistrationTask.task_uuid.in_(task_uuids))
-            .filter(RegistrationTask.status.in_(["completed", "failed"]))
-            .all()
-        )
-
-    stats = build_domain_stats(tasks)
-
-    if batch_id in batch_tasks:
-        batch_tasks[batch_id]["domain_stats"] = stats
-
-    task_manager.update_batch_status(batch_id, domain_stats=stats)
-
+    _build_batch_registration_service().finalize_batch_domain_stats(batch_id, task_uuids)
 
 def _build_batch_statistics_context(
     *,
@@ -565,40 +328,21 @@ def _build_batch_statistics_context(
     interval_max: Optional[int],
     concurrency: int,
 ) -> dict:
-    return {
-        "batch_id": batch_id,
-        "mode": mode,
-        "pipeline_key": pipeline_key or "current_pipeline",
-        "email_service_type": email_service_type,
-        "email_service_id": email_service_id,
-        "config_snapshot": {
-            "proxy": proxy,
-            "interval_min": interval_min,
-            "interval_max": interval_max,
-            "concurrency": concurrency,
-        },
-        "started_at": datetime.utcnow(),
-        "task_uuids": list(task_uuids),
-        "target_count": len(task_uuids),
-    }
-
+    return _build_batch_registration_service().build_batch_statistics_context(
+        batch_id=batch_id,
+        task_uuids=task_uuids,
+        mode=mode,
+        pipeline_key=pipeline_key,
+        email_service_type=email_service_type,
+        email_service_id=email_service_id,
+        proxy=proxy,
+        interval_min=interval_min,
+        interval_max=interval_max,
+        concurrency=concurrency,
+    )
 
 def _finalize_ordinary_batch_statistics(*, batch_id: str, status: str) -> None:
-    context = batch_tasks.get(batch_id, {}).get("statistics_context")
-    if not context:
-        logger.warning("Batch %s missing statistics context; skipping stats finalization.", batch_id)
-        return
-
-    payload = dict(context)
-    payload["status"] = status
-    payload["completed_at"] = datetime.utcnow()
-
-    with get_db() as db:
-        try:
-            finalize_batch_statistics(db, batch_context=payload)
-        except Exception:
-            logger.exception("Failed to finalize batch statistics for batch %s", batch_id)
-
+    _build_batch_registration_service().finalize_ordinary_batch_statistics(batch_id=batch_id, status=status)
 
 async def run_unlimited_batch_registration(
     batch_id: str,
@@ -618,107 +362,24 @@ async def run_unlimited_batch_registration(
     tm_service_ids: List[int] = None,
     pipeline_key: Optional[str] = None,
 ):
-    """无限注册模式：持续创建任务直到取消或连续失败超过阈值。"""
-    if batch_id not in batch_tasks:
-        _init_batch_state(batch_id, [], is_unlimited=True, total=0)
-
-    add_batch_log, update_batch_status = _make_batch_helpers(batch_id)
-    semaphore = asyncio.Semaphore(concurrency)
-    counter_lock = asyncio.Lock()
-    running: set[asyncio.Task] = set()
-    task_uuids: List[str] = []
-    next_index = 0
-    add_batch_log(f"[系统] 无限模式启动，并发数: {concurrency}，模式: {mode}")
-
-    async def _spawn_one(index: int):
-        task_uuid = str(uuid.uuid4())
-        task_uuids.append(task_uuid)
-        batch_tasks[batch_id]["task_uuids"].append(task_uuid)
-
-        with get_db() as db:
-            crud.create_registration_task(db, task_uuid=task_uuid, proxy=proxy, pipeline_key=pipeline_key)
-
-        async with semaphore:
-            await run_registration_task(
-                task_uuid,
-                email_service_type,
-                proxy,
-                email_service_config,
-                email_service_id,
-                log_prefix=f"[任务{index}]",
-                batch_id=batch_id,
-                auto_upload_cpa=auto_upload_cpa,
-                cpa_service_ids=cpa_service_ids or [],
-                auto_upload_sub2api=auto_upload_sub2api,
-                sub2api_service_ids=sub2api_service_ids or [],
-                auto_upload_tm=auto_upload_tm,
-                tm_service_ids=tm_service_ids or [],
-                pipeline_key=pipeline_key,
-            )
-
-        with get_db() as db:
-            task = crud.get_registration_task(db, task_uuid)
-
-        if not task:
-            return
-
-        async with counter_lock:
-            apply_task_outcome(batch_tasks[batch_id], task.status)
-            update_batch_status(
-                completed=batch_tasks[batch_id]["completed"],
-                success=batch_tasks[batch_id]["success"],
-                failed=batch_tasks[batch_id]["failed"],
-                consecutive_failures=batch_tasks[batch_id]["consecutive_failures"],
-                current_index=index,
-            )
-
-            if task.status == "completed":
-                add_batch_log(f"[任务{index}] [成功] 注册成功")
-            elif task.status == "failed":
-                add_batch_log(f"[任务{index}] [失败] 注册失败: {task.error_message}")
-
-            if batch_tasks[batch_id]["consecutive_failures"] > batch_tasks[batch_id]["max_consecutive_failures"]:
-                batch_tasks[batch_id]["stop_reason"] = "too_many_consecutive_failures"
-                update_batch_status(stop_reason="too_many_consecutive_failures")
-                add_batch_log("[停止] 连续失败次数过多，停止创建新任务")
-
-    try:
-        while not task_manager.is_batch_cancelled(batch_id) and batch_tasks[batch_id]["stop_reason"] is None:
-            next_index += 1
-            running.add(asyncio.create_task(_spawn_one(next_index)))
-
-            if mode == "pipeline":
-                await asyncio.sleep(random.randint(interval_min, interval_max))
-
-            if len(running) >= concurrency:
-                done, pending = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
-                for completed_task in done:
-                    await completed_task
-                running = set(pending)
-
-        if running:
-            await asyncio.gather(*running)
-
-        _finalize_batch_domain_stats(batch_id, task_uuids)
-
-        if task_manager.is_batch_cancelled(batch_id):
-            update_batch_status(finished=True, status="cancelled")
-        else:
-            update_batch_status(finished=True, status="completed")
-    except Exception as e:
-        logger.error(f"无限批量任务 {batch_id} 异常: {e}")
-        add_batch_log(f"[错误] 批量任务异常: {str(e)}")
-        if running:
-            for running_task in running:
-                if not running_task.done():
-                    running_task.cancel()
-            await asyncio.gather(*running, return_exceptions=True)
-            running.clear()
-        _finalize_batch_domain_stats(batch_id, task_uuids)
-        update_batch_status(finished=True, status="failed")
-    finally:
-        batch_tasks[batch_id]["finished"] = True
-
+    return await _build_batch_registration_service().run_unlimited_batch_registration(
+        batch_id=batch_id,
+        email_service_type=email_service_type,
+        proxy=proxy,
+        email_service_config=email_service_config,
+        email_service_id=email_service_id,
+        interval_min=interval_min,
+        interval_max=interval_max,
+        concurrency=concurrency,
+        mode=mode,
+        auto_upload_cpa=auto_upload_cpa,
+        cpa_service_ids=cpa_service_ids or [],
+        auto_upload_sub2api=auto_upload_sub2api,
+        sub2api_service_ids=sub2api_service_ids or [],
+        auto_upload_tm=auto_upload_tm,
+        tm_service_ids=tm_service_ids or [],
+        pipeline_key=pipeline_key,
+    )
 
 async def run_batch_parallel(
     batch_id: str,
@@ -739,77 +400,25 @@ async def run_batch_parallel(
     pipeline_key: Optional[str] = None,
     enable_stats_finalization: bool = True,
 ):
-    """
-    并行模式：所有任务同时提交，Semaphore 控制最大并发数
-    """
-    statistics_context = None
-    if enable_stats_finalization:
-        statistics_context = _build_batch_statistics_context(
-            batch_id=batch_id,
-            task_uuids=task_uuids,
-            mode="parallel",
-            pipeline_key=pipeline_key,
-            email_service_type=email_service_type,
-            email_service_id=email_service_id,
-            proxy=proxy,
-            interval_min=interval_min,
-            interval_max=interval_max,
-            concurrency=concurrency,
-        )
-    _init_batch_state(batch_id, task_uuids, statistics_context=statistics_context)
-    add_batch_log, update_batch_status = _make_batch_helpers(batch_id)
-    semaphore = asyncio.Semaphore(concurrency)
-    counter_lock = asyncio.Lock()
-    add_batch_log(f"[系统] 并行模式启动，并发数: {concurrency}，总任务: {len(task_uuids)}")
-
-    async def _run_one(idx: int, uuid: str):
-        prefix = f"[任务{idx + 1}]"
-        async with semaphore:
-            await run_registration_task(
-                uuid, email_service_type, proxy, email_service_config, email_service_id,
-                log_prefix=prefix, batch_id=batch_id,
-                auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids or [],
-                auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids or [],
-                auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids or [],
-                pipeline_key=pipeline_key,
-            )
-        with get_db() as db:
-            t = crud.get_registration_task(db, uuid)
-            if t:
-                async with counter_lock:
-                    apply_task_outcome(batch_tasks[batch_id], t.status)
-                    if t.status == "completed":
-                        add_batch_log(f"{prefix} [成功] 注册成功")
-                    elif t.status == "failed":
-                        add_batch_log(f"{prefix} [失败] 注册失败: {t.error_message}")
-                    update_batch_status(
-                        completed=batch_tasks[batch_id]["completed"],
-                        success=batch_tasks[batch_id]["success"],
-                        failed=batch_tasks[batch_id]["failed"],
-                        consecutive_failures=batch_tasks[batch_id]["consecutive_failures"],
-                    )
-
-    try:
-        await asyncio.gather(*[_run_one(i, u) for i, u in enumerate(task_uuids)], return_exceptions=True)
-        _finalize_batch_domain_stats(batch_id, task_uuids)
-        if not task_manager.is_batch_cancelled(batch_id):
-            add_batch_log(f"[完成] 批量任务完成！成功: {batch_tasks[batch_id]['success']}, 失败: {batch_tasks[batch_id]['failed']}")
-            terminal_status = "completed"
-        else:
-            terminal_status = "cancelled"
-        if enable_stats_finalization:
-            _finalize_ordinary_batch_statistics(batch_id=batch_id, status=terminal_status)
-        update_batch_status(finished=True, status=terminal_status)
-    except Exception as e:
-        logger.error(f"批量任务 {batch_id} 异常: {e}")
-        add_batch_log(f"[错误] 批量任务异常: {str(e)}")
-        _finalize_batch_domain_stats(batch_id, task_uuids)
-        if enable_stats_finalization:
-            _finalize_ordinary_batch_statistics(batch_id=batch_id, status="failed")
-        update_batch_status(finished=True, status="failed")
-    finally:
-        batch_tasks[batch_id]["finished"] = True
-
+    return await _build_batch_registration_service().run_batch_parallel(
+        batch_id=batch_id,
+        task_uuids=task_uuids,
+        email_service_type=email_service_type,
+        proxy=proxy,
+        email_service_config=email_service_config,
+        email_service_id=email_service_id,
+        concurrency=concurrency,
+        interval_min=interval_min,
+        interval_max=interval_max,
+        auto_upload_cpa=auto_upload_cpa,
+        cpa_service_ids=cpa_service_ids or [],
+        auto_upload_sub2api=auto_upload_sub2api,
+        sub2api_service_ids=sub2api_service_ids or [],
+        auto_upload_tm=auto_upload_tm,
+        tm_service_ids=tm_service_ids or [],
+        pipeline_key=pipeline_key,
+        enable_stats_finalization=enable_stats_finalization,
+    )
 
 async def run_batch_pipeline(
     batch_id: str,
@@ -830,103 +439,25 @@ async def run_batch_pipeline(
     pipeline_key: Optional[str] = None,
     enable_stats_finalization: bool = True,
 ):
-    """
-    流水线模式：每隔 interval 秒启动一个新任务，Semaphore 限制最大并发数
-    """
-    statistics_context = None
-    if enable_stats_finalization:
-        statistics_context = _build_batch_statistics_context(
-            batch_id=batch_id,
-            task_uuids=task_uuids,
-            mode="pipeline",
-            pipeline_key=pipeline_key,
-            email_service_type=email_service_type,
-            email_service_id=email_service_id,
-            proxy=proxy,
-            interval_min=interval_min,
-            interval_max=interval_max,
-            concurrency=concurrency,
-        )
-    _init_batch_state(batch_id, task_uuids, statistics_context=statistics_context)
-    add_batch_log, update_batch_status = _make_batch_helpers(batch_id)
-    semaphore = asyncio.Semaphore(concurrency)
-    counter_lock = asyncio.Lock()
-    running_tasks_list = []
-    add_batch_log(f"[系统] 流水线模式启动，并发数: {concurrency}，总任务: {len(task_uuids)}")
-
-    async def _run_and_release(idx: int, uuid: str, pfx: str):
-        try:
-            await run_registration_task(
-                uuid, email_service_type, proxy, email_service_config, email_service_id,
-                log_prefix=pfx, batch_id=batch_id,
-                auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids or [],
-                auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids or [],
-                auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids or [],
-                pipeline_key=pipeline_key,
-            )
-            with get_db() as db:
-                t = crud.get_registration_task(db, uuid)
-                if t:
-                    async with counter_lock:
-                        apply_task_outcome(batch_tasks[batch_id], t.status)
-                        if t.status == "completed":
-                            add_batch_log(f"{pfx} [成功] 注册成功")
-                        elif t.status == "failed":
-                            add_batch_log(f"{pfx} [失败] 注册失败: {t.error_message}")
-                        update_batch_status(
-                            completed=batch_tasks[batch_id]["completed"],
-                            success=batch_tasks[batch_id]["success"],
-                            failed=batch_tasks[batch_id]["failed"],
-                            consecutive_failures=batch_tasks[batch_id]["consecutive_failures"],
-                        )
-        finally:
-            semaphore.release()
-
-    try:
-        for i, task_uuid in enumerate(task_uuids):
-            if task_manager.is_batch_cancelled(batch_id) or batch_tasks[batch_id]["cancelled"]:
-                with get_db() as db:
-                    for remaining_uuid in task_uuids[i:]:
-                        crud.update_registration_task(db, remaining_uuid, status="cancelled")
-                add_batch_log("[取消] 批量任务已取消")
-                update_batch_status(status="cancelled")
-                break
-
-            update_batch_status(current_index=i)
-            await semaphore.acquire()
-            prefix = f"[任务{i + 1}]"
-            add_batch_log(f"{prefix} 开始注册...")
-            t = asyncio.create_task(_run_and_release(i, task_uuid, prefix))
-            running_tasks_list.append(t)
-
-            if i < len(task_uuids) - 1 and not task_manager.is_batch_cancelled(batch_id):
-                wait_time = random.randint(interval_min, interval_max)
-                logger.info(f"批量任务 {batch_id}: 等待 {wait_time} 秒后启动下一个任务")
-                await asyncio.sleep(wait_time)
-
-        if running_tasks_list:
-            await asyncio.gather(*running_tasks_list, return_exceptions=True)
-
-        _finalize_batch_domain_stats(batch_id, task_uuids)
-
-        if task_manager.is_batch_cancelled(batch_id) or batch_tasks[batch_id]["cancelled"]:
-            terminal_status = "cancelled"
-        else:
-            add_batch_log(f"[完成] 批量任务完成！成功: {batch_tasks[batch_id]['success']}, 失败: {batch_tasks[batch_id]['failed']}")
-            terminal_status = "completed"
-        if enable_stats_finalization:
-            _finalize_ordinary_batch_statistics(batch_id=batch_id, status=terminal_status)
-        update_batch_status(finished=True, status=terminal_status)
-    except Exception as e:
-        logger.error(f"批量任务 {batch_id} 异常: {e}")
-        add_batch_log(f"[错误] 批量任务异常: {str(e)}")
-        _finalize_batch_domain_stats(batch_id, task_uuids)
-        if enable_stats_finalization:
-            _finalize_ordinary_batch_statistics(batch_id=batch_id, status="failed")
-        update_batch_status(finished=True, status="failed")
-    finally:
-        batch_tasks[batch_id]["finished"] = True
-
+    return await _build_batch_registration_service().run_batch_pipeline(
+        batch_id=batch_id,
+        task_uuids=task_uuids,
+        email_service_type=email_service_type,
+        proxy=proxy,
+        email_service_config=email_service_config,
+        email_service_id=email_service_id,
+        interval_min=interval_min,
+        interval_max=interval_max,
+        concurrency=concurrency,
+        auto_upload_cpa=auto_upload_cpa,
+        cpa_service_ids=cpa_service_ids or [],
+        auto_upload_sub2api=auto_upload_sub2api,
+        sub2api_service_ids=sub2api_service_ids or [],
+        auto_upload_tm=auto_upload_tm,
+        tm_service_ids=tm_service_ids or [],
+        pipeline_key=pipeline_key,
+        enable_stats_finalization=enable_stats_finalization,
+    )
 
 async def run_batch_registration(
     batch_id: str,
@@ -948,31 +479,26 @@ async def run_batch_registration(
     pipeline_key: Optional[str] = None,
     enable_stats_finalization: bool = True,
 ):
-    """根据 mode 分发到并行或流水线执行"""
-    if mode == "parallel":
-        await run_batch_parallel(
-            batch_id, task_uuids, email_service_type, proxy,
-            email_service_config, email_service_id, concurrency,
-            interval_min=interval_min,
-            interval_max=interval_max,
-            auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids,
-            auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids,
-            auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids,
-            pipeline_key=pipeline_key,
-            enable_stats_finalization=enable_stats_finalization,
-        )
-    else:
-        await run_batch_pipeline(
-            batch_id, task_uuids, email_service_type, proxy,
-            email_service_config, email_service_id,
-            interval_min, interval_max, concurrency,
-            auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids,
-            auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids,
-            auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids,
-            pipeline_key=pipeline_key,
-            enable_stats_finalization=enable_stats_finalization,
-        )
-
+    return await _build_batch_registration_service().run_batch_registration(
+        batch_id=batch_id,
+        task_uuids=task_uuids,
+        email_service_type=email_service_type,
+        proxy=proxy,
+        email_service_config=email_service_config,
+        email_service_id=email_service_id,
+        interval_min=interval_min,
+        interval_max=interval_max,
+        concurrency=concurrency,
+        mode=mode,
+        auto_upload_cpa=auto_upload_cpa,
+        cpa_service_ids=cpa_service_ids or [],
+        auto_upload_sub2api=auto_upload_sub2api,
+        sub2api_service_ids=sub2api_service_ids or [],
+        auto_upload_tm=auto_upload_tm,
+        tm_service_ids=tm_service_ids or [],
+        pipeline_key=pipeline_key,
+        enable_stats_finalization=enable_stats_finalization,
+    )
 
 # ============== API Endpoints ==============
 
@@ -999,14 +525,12 @@ async def start_registration(
 
     # 创建任务
     task_uuid = str(uuid.uuid4())
-
-    with get_db() as db:
-        task = crud.create_registration_task(
-            db,
-            task_uuid=task_uuid,
-            proxy=request.proxy,
-            pipeline_key=request.pipeline_key,
-        )
+    task = _build_registration_service().create_task(
+        task_uuid=task_uuid,
+        proxy=request.proxy,
+        pipeline_key=request.pipeline_key,
+        email_service_id=request.email_service_id,
+    )
 
     # 在后台运行注册任务
     background_tasks.add_task(
@@ -1098,22 +622,12 @@ async def start_batch_registration(
             tasks=[],
         )
 
-    task_uuids = []
-
-    with get_db() as db:
-        for _ in range(request.count):
-            task_uuid = str(uuid.uuid4())
-            task = crud.create_registration_task(
-                db,
-                task_uuid=task_uuid,
-                proxy=request.proxy,
-                pipeline_key=request.pipeline_key,
-            )
-            task_uuids.append(task_uuid)
-
-    # 获取所有任务
-    with get_db() as db:
-        tasks = [crud.get_registration_task(db, uuid) for uuid in task_uuids]
+    tasks = _build_batch_registration_service().create_batch_tasks(
+        count=request.count,
+        proxy=request.proxy,
+        pipeline_key=request.pipeline_key,
+    )
+    task_uuids = [task.task_uuid for task in tasks]
 
     # 在后台运行批量注册
     background_tasks.add_task(
@@ -1283,7 +797,7 @@ async def get_registration_stats():
         ).group_by(RegistrationTask.status).all()
 
         # 今日注册数
-        today = datetime.utcnow().date()
+        today = utc_now_naive().date()
         today_count = db.query(func.count(RegistrationTask.id)).filter(
             func.date(RegistrationTask.created_at) == today
         ).scalar()
@@ -1550,51 +1064,22 @@ async def run_outlook_batch_registration(
     auto_upload_tm: bool = False,
     tm_service_ids: List[int] = None,
 ):
-    """
-    异步执行 Outlook 批量注册任务，复用通用并发逻辑
-
-    将每个 service_id 映射为一个独立的 task_uuid，然后调用
-    run_batch_registration 的并发逻辑
-    """
-    loop = task_manager.get_loop()
-    if loop is None:
-        loop = asyncio.get_event_loop()
-        task_manager.set_loop(loop)
-
-    # 预先为每个 service_id 创建注册任务记录
-    task_uuids = []
-    with get_db() as db:
-        for service_id in service_ids:
-            task_uuid = str(uuid.uuid4())
-            crud.create_registration_task(
-                db,
-                task_uuid=task_uuid,
-                proxy=proxy,
-                email_service_id=service_id
-            )
-            task_uuids.append(task_uuid)
-
-    # 复用通用并发逻辑（outlook 服务类型，每个任务通过 email_service_id 定位账户）
-    await run_batch_registration(
+    return await _build_batch_registration_service().run_outlook_batch_registration(
         batch_id=batch_id,
-        task_uuids=task_uuids,
-        email_service_type="outlook",
+        service_ids=service_ids,
+        skip_registered=skip_registered,
         proxy=proxy,
-        email_service_config=None,
-        email_service_id=None,   # 每个任务已绑定了独立的 email_service_id
         interval_min=interval_min,
         interval_max=interval_max,
         concurrency=concurrency,
         mode=mode,
         auto_upload_cpa=auto_upload_cpa,
-        cpa_service_ids=cpa_service_ids,
+        cpa_service_ids=cpa_service_ids or [],
         auto_upload_sub2api=auto_upload_sub2api,
-        sub2api_service_ids=sub2api_service_ids,
+        sub2api_service_ids=sub2api_service_ids or [],
         auto_upload_tm=auto_upload_tm,
-        tm_service_ids=tm_service_ids,
-        enable_stats_finalization=False,
+        tm_service_ids=tm_service_ids or [],
     )
-
 
 @router.post("/outlook-batch", response_model=OutlookBatchRegistrationResponse)
 async def start_outlook_batch_registration(

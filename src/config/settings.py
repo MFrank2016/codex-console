@@ -536,18 +536,6 @@ def _load_settings_from_db() -> Dict[str, Any]:
             env_url = os.environ.get("APP_DATABASE_URL") or os.environ.get("DATABASE_URL")
             if env_url:
                 settings_dict["database_url"] = _normalize_database_url(env_url)
-            env_host = os.environ.get("APP_HOST")
-            if env_host:
-                settings_dict["webui_host"] = env_host
-            env_port = os.environ.get("APP_PORT")
-            if env_port:
-                try:
-                    settings_dict["webui_port"] = int(env_port)
-                except ValueError:
-                    pass
-            env_password = os.environ.get("APP_ACCESS_PASSWORD")
-            if env_password:
-                settings_dict["webui_access_password"] = env_password
         return settings_dict
     except Exception as e:
         if "未初始化" not in str(e):
@@ -704,13 +692,13 @@ class Settings(BaseModel):
 _settings: Optional[Settings] = None
 
 
-def get_settings() -> Settings:
+def get_settings(*, force_reload: bool = False) -> Settings:
     """
     获取全局配置实例（单例模式）
     完全从数据库加载配置
     """
     global _settings
-    if _settings is None:
+    if force_reload or _settings is None:
         # 先初始化默认设置（如果数据库中没有的话）
         init_default_settings()
         # 从数据库加载所有设置

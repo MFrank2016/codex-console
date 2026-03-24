@@ -503,3 +503,16 @@ def test_sqlite_migrate_tables_adds_scheduled_run_center_columns(tmp_path):
     assert "stop_reason" in columns
     assert "last_log_at" in columns
     assert "log_version" in columns
+
+
+def test_create_tables_includes_registration_run_tables(tmp_path):
+    from sqlalchemy import inspect
+
+    db_path = tmp_path / "registration-runs-create-tables.db"
+    manager = DatabaseSessionManager(f"sqlite:///{db_path}")
+
+    manager.create_tables()
+
+    table_names = set(inspect(manager.engine).get_table_names())
+    assert "registration_runs" in table_names
+    assert "registration_run_events" in table_names
