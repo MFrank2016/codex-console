@@ -102,6 +102,11 @@ const elements = {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
+    const root = document.body?.dataset?.pageKey;
+    if (root !== 'registration_workbench') {
+        return;
+    }
+
     initEventListeners();
     loadAvailableServices();
     loadRecentAccounts();

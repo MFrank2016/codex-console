@@ -177,6 +177,7 @@ def create_app() -> FastAPI:
 
     @app.get("/registration-workbench", response_class=HTMLResponse)
     async def registration_workbench_page(request: Request):
+        """注册工作台页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse("index.html", _workspace_context(

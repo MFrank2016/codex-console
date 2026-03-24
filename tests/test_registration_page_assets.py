@@ -1,7 +1,34 @@
 from pathlib import Path
 import re
 
+from fastapi.testclient import TestClient
+
+from src.config.settings import get_settings
+from src.web.app import create_app
 from tests_runtime.app_js_harness import run_app_js_scenario
+
+
+def test_registration_workbench_page_requires_auth_and_renders_workspace_shell_hooks():
+    app = create_app()
+    with TestClient(app) as client:
+        unauthenticated = client.get("/registration-workbench", follow_redirects=False)
+        assert unauthenticated.status_code == 302
+        assert unauthenticated.headers["location"] == "/login?next=/registration-workbench"
+
+        password = get_settings().webui_access_password.get_secret_value()
+        login_response = client.post(
+            "/login",
+            data={"password": password, "next": "/registration-workbench"},
+            follow_redirects=False,
+        )
+        assert login_response.status_code == 302
+
+        response = client.get("/registration-workbench")
+        assert response.status_code == 200
+        assert 'data-page-key="registration_workbench"' in response.text
+        assert 'id="registration-form"' in response.text
+        assert 'id="task-step-waterfall"' in response.text
+        assert 'href="/registration-workbench"' in response.text
 
 
 def test_registration_template_contains_unlimited_mode_and_domain_stats_container():
@@ -19,9 +46,11 @@ def test_registration_template_contains_pipeline_selector_and_task_step_waterfal
     assert 'id="task-step-waterfall"' in template
 
 
-def test_registration_template_nav_contains_scheduled_tasks_link():
+def test_registration_template_uses_workbench_layout_classes():
     template = Path("templates/index.html").read_text(encoding="utf-8")
-    assert 'href="/scheduled-tasks"' in template
+    assert "registration-workbench-layout" in template
+    assert "registration-workbench-main" in template
+    assert "registration-workbench-side" in template
 
 
 def test_registration_template_recent_accounts_uses_shared_table_shell():
