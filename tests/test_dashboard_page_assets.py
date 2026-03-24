@@ -61,22 +61,39 @@ def test_dashboard_summary_api_returns_expected_nested_contract():
     assert response.status_code == 200
     payload = response.json()
     assert "total_tasks" in payload["registration"]
+    assert "running" in payload["registration"]
+    assert "failed" in payload["registration"]
+    assert "pending" in payload["registration"]
     assert "success_rate" in payload["registration"]
     assert isinstance(payload["registration"]["total_tasks"], int)
     assert payload["registration"]["total_tasks"] >= 1
+    assert isinstance(payload["registration"]["running"], int)
+    assert isinstance(payload["registration"]["failed"], int)
+    assert isinstance(payload["registration"]["pending"], int)
     assert payload["registration"]["success_rate"] is None or isinstance(payload["registration"]["success_rate"], float)
 
     assert "total" in payload["accounts"]
+    assert "active" in payload["accounts"]
     assert isinstance(payload["accounts"]["total"], int)
+    assert isinstance(payload["accounts"]["active"], int)
 
     assert "plans_total" in payload["scheduled"]
+    assert "plans_enabled" in payload["scheduled"]
+    assert "runs_today" in payload["scheduled"]
+    assert "runs_running" in payload["scheduled"]
+    assert "runs_failed" in payload["scheduled"]
     assert isinstance(payload["scheduled"]["plans_total"], int)
+    assert isinstance(payload["scheduled"]["plans_enabled"], int)
+    assert isinstance(payload["scheduled"]["runs_today"], int)
+    assert isinstance(payload["scheduled"]["runs_running"], int)
+    assert isinstance(payload["scheduled"]["runs_failed"], int)
 
     assert isinstance(payload["quick_links"], list)
     assert payload["quick_links"]
     quick_link = payload["quick_links"][0]
     assert "label" in quick_link
     assert "href" in quick_link
+    assert "description" in quick_link
 
     assert isinstance(payload["recent_activity"], list)
     assert payload["recent_activity"]
@@ -85,6 +102,7 @@ def test_dashboard_summary_api_returns_expected_nested_contract():
     assert "status" in activity
     assert "href" in activity
     assert "timestamp" in activity
+    assert "description" in activity
 
 
 def test_registration_workbench_page_requires_auth_and_renders_registration_hooks():
