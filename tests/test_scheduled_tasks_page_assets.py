@@ -837,12 +837,15 @@ global.api = {
         trigger_source: 'manual',
         started_at: '2026-03-23T10:00:00',
         finished_at: '2026-03-23T10:05:00',
+        duration_seconds: 300.5,
         error_message: null,
         summary: { invalid_items_found: 18, remote_deleted: 16 },
-        status: 'success',
+        status: 'cancelled',
         last_log_at: '2026-03-23T10:05:00',
         is_running: false,
-        stop_requested_at: null,
+        stop_requested_at: '2026-03-23T10:04:00',
+        stop_requested_by: 'reviewer',
+        stop_reason: 'manual_stop',
         can_stop: false,
       };
     }
@@ -873,6 +876,14 @@ async function main() {
   if (!detailBodyHtml.includes('scheduled-run-detail-grid')) throw new Error('missing detail grid hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('scheduled-run-summary')) throw new Error('missing summary hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('检测 18 · 清理 16')) throw new Error('missing concise summary: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('持续时长')) throw new Error('missing duration label: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('300.5 秒')) throw new Error('missing duration value: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('停止请求时间')) throw new Error('missing stop requested at label: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('2026-03-23T10:04:00')) throw new Error('missing stop requested at value: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('停止请求人')) throw new Error('missing stop requested by label: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('reviewer')) throw new Error('missing stop requested by value: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('停止原因')) throw new Error('missing stop reason label: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('manual_stop')) throw new Error('missing stop reason value: ' + detailBodyHtml);
   if (detailBodyHtml.includes('scheduled-run-log-panel')) throw new Error('detail modal should not include logs');
   if (detailBodyHtml.includes('scheduled-run-console-shell')) throw new Error('detail modal should not include console shell');
 }

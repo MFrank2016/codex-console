@@ -425,6 +425,28 @@ def test_run_logger_append_log_normalizes_level_to_supported_uppercase(temp_db):
     assert persisted.logs == "2025-01-02 03:04:05.123 [WARN] careful"
 
 
+def test_run_logger_append_log_expands_multiline_message_with_prefixed_physical_lines(temp_db):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    with session_module.get_db() as db:
+        run = crud.create_scheduled_run(db, plan_id=plan.id, trigger_source="manual", status="running")
+        run_id = run.id
+
+    logged_at = datetime(2025, 1, 2, 3, 4, 5, 123000)
+    assert run_logger.append_run_log(run_id, "line 1\nline 2\n\nline 4", level="ERROR", logged_at=logged_at) is True
+
+    temp_db.expire_all()
+    persisted = temp_db.query(ScheduledRun).filter(ScheduledRun.id == run_id).first()
+    assert persisted is not None
+    assert persisted.logs == "\n".join(
+        [
+            "2025-01-02 03:04:05.123 [ERROR] line 1",
+            "2025-01-02 03:04:05.123 [ERROR] line 2",
+            "2025-01-02 03:04:05.123 [ERROR] ",
+            "2025-01-02 03:04:05.123 [ERROR] line 4",
+        ]
+    )
+
+
 def test_run_logger_append_log_rejects_unknown_level(temp_db):
     plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
     with session_module.get_db() as db:

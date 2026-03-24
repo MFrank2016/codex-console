@@ -21,7 +21,8 @@ def _normalize_run_log_level(level: str) -> str:
 
 def _format_run_log_line(message: str, *, level: str, logged_at: datetime) -> str:
     stamp = logged_at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    return f"{stamp} [{level}] {message}"
+    normalized_message = message.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(f"{stamp} [{level}] {line}" for line in normalized_message.split("\n"))
 
 
 def append_run_log(

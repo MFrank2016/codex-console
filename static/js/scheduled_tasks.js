@@ -1525,6 +1525,13 @@ function renderScheduledRunStatusBar(detail) {
     `;
 }
 
+function formatScheduledRunDurationSeconds(durationSeconds) {
+    if (durationSeconds === null || durationSeconds === undefined || durationSeconds === '') {
+        return '-';
+    }
+    return `${escapeHtml(String(durationSeconds))} 秒`;
+}
+
 function renderScheduledRunDetailBody(detail) {
     if (!scheduledTaskElements.runDetailModalBody) return;
     scheduledTaskElements.runDetailModalBody.innerHTML = `
@@ -1541,7 +1548,11 @@ function renderScheduledRunDetailBody(detail) {
             <div class="info-item"><span class="label">状态</span><span class="value">${getRunStatusText(getScheduledRunUiStatus(detail))}</span></div>
             <div class="info-item"><span class="label">开始时间</span><span class="value">${format.date(detail.started_at)}</span></div>
             <div class="info-item"><span class="label">结束时间</span><span class="value">${format.date(detail.finished_at)}</span></div>
+            <div class="info-item"><span class="label">持续时长</span><span class="value">${formatScheduledRunDurationSeconds(detail.duration_seconds)}</span></div>
             <div class="info-item"><span class="label">错误信息</span><span class="value">${escapeHtml(detail.error_message || '-')}</span></div>
+            <div class="info-item"><span class="label">停止请求时间</span><span class="value">${format.date(detail.stop_requested_at)}</span></div>
+            <div class="info-item"><span class="label">停止请求人</span><span class="value">${escapeHtml(detail.stop_requested_by || '-')}</span></div>
+            <div class="info-item"><span class="label">停止原因</span><span class="value">${escapeHtml(detail.stop_reason || '-')}</span></div>
             <div class="info-item scheduled-run-summary"><span class="label">摘要</span><span class="value">${escapeHtml(summarizeScheduledRun(detail))}</span></div>
         </div>
     `;
