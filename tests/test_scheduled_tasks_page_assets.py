@@ -762,7 +762,7 @@ if (!html.includes('补号 3 · 原因：用户停止')) {
     assert completed.returncode == 0, completed.stderr
 
 
-def test_scheduled_tasks_open_run_detail_renders_structured_summary_and_log_sections():
+def test_scheduled_tasks_open_run_detail_renders_detail_only_content():
     node_script = r"""
 const fs = require('fs');
 const vm = require('vm');
@@ -775,6 +775,8 @@ function makeElement() {
     dataset: {},
     style: {},
     disabled: false,
+    value: '',
+    checked: false,
     setAttribute: () => {},
     removeAttribute: () => {},
     addEventListener: () => {},
@@ -792,21 +794,25 @@ function makeElement() {
 }
 
 const elements = new Map([
+  ['run-detail-modal', makeElement()],
+  ['run-detail-modal-body', makeElement()],
   ['run-log-modal', makeElement()],
   ['run-log-status-bar', makeElement()],
   ['run-log-modal-body', makeElement()],
+  ['run-log-refresh-btn', makeElement()],
+  ['run-log-auto-scroll', makeElement()],
+  ['run-log-stop-actions', makeElement()],
   ['run-log-stop-btn', makeElement()],
+  ['run-log-search-input', makeElement()],
+  ['run-log-level-filter', makeElement()],
+  ['run-log-copy-btn', makeElement()],
+  ['run-log-clear-btn', makeElement()],
+  ['run-log-wrap-input', makeElement()],
 ]);
 
 global.window = {};
 global.document = {
-  getElementById: (id) => {
-    if (id === 'scheduled-run-log-output') {
-      if (!elements.has(id)) elements.set(id, makeElement());
-      return elements.get(id);
-    }
-    return elements.get(id) ?? null;
-  },
+  getElementById: (id) => elements.get(id) ?? null,
   querySelectorAll: () => [],
   addEventListener: () => {},
   createElement: () => {
@@ -841,16 +847,7 @@ global.api = {
       };
     }
     if (url.startsWith('/scheduled-runs/123/logs?offset=')) {
-      return {
-        chunk: 'done',
-        next_offset: 4,
-        has_more: false,
-        is_running: false,
-        status: 'success',
-        stop_requested_at: null,
-        log_version: 1,
-        last_log_at: '2026-03-23T10:05:00',
-      };
+      throw new Error('detail flow should not request logs');
     }
     throw new Error('unexpected url: ' + url);
   },
@@ -867,17 +864,17 @@ vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
 
 async function main() {
   await window.openScheduledRunDetail(123);
-  const statusBarHtml = elements.get('run-log-status-bar').innerHTML;
-  const detailBodyHtml = elements.get('run-log-modal-body').innerHTML;
-  const logText = elements.get('scheduled-run-log-output').textContent;
+  const detailBodyHtml = elements.get('run-detail-modal-body').innerHTML;
 
-  if (!statusBarHtml.includes('scheduled-run-meta-bar')) throw new Error('missing status bar hook: ' + statusBarHtml);
+  if (!elements.get('run-detail-modal').classList.contains('active')) {
+    throw new Error('detail modal should be active');
+  }
   if (!detailBodyHtml.includes('scheduled-run-detail-head')) throw new Error('missing detail head hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('scheduled-run-detail-grid')) throw new Error('missing detail grid hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('scheduled-run-summary')) throw new Error('missing summary hook: ' + detailBodyHtml);
-  if (!detailBodyHtml.includes('scheduled-run-log-panel')) throw new Error('missing log panel hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('检测 18 · 清理 16')) throw new Error('missing concise summary: ' + detailBodyHtml);
-  if (logText !== 'done') throw new Error('expected final log text to be loaded');
+  if (detailBodyHtml.includes('scheduled-run-log-panel')) throw new Error('detail modal should not include logs');
+  if (detailBodyHtml.includes('scheduled-run-console-shell')) throw new Error('detail modal should not include console shell');
 }
 
 main().catch((err) => {
@@ -895,6 +892,381 @@ main().catch((err) => {
 
     assert completed.returncode == 0, completed.stderr
 
+
+def run_scheduled_tasks_log_console_scenario(name: str) -> dict:
+    script_source = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
+    node_script = rf"""
+const vm = require('vm');
+
+const scenarioName = {json.dumps(name)};
+const scriptSource = {json.dumps(script_source)};
+
+function createMockElement(id = '') {{
+  let html = '';
+  let text = '';
+  const classes = new Set();
+  return {{
+    id,
+    dataset: {{}},
+    style: {{}},
+    disabled: false,
+    value: '',
+    checked: false,
+    _listeners: {{}},
+    setAttribute() {{}},
+    removeAttribute() {{}},
+    addEventListener(type, handler) {{ this._listeners[type] = handler; }},
+    dispatchEvent(type, event = {{}}) {{
+      if (this._listeners[type]) return this._listeners[type](event);
+      return undefined;
+    }},
+    scrollIntoView() {{}},
+    reset() {{}},
+    classList: {{
+      add(name) {{ classes.add(name); }},
+      remove(name) {{ classes.delete(name); }},
+      contains(name) {{ return classes.has(name); }},
+      toggle(name) {{
+        if (classes.has(name)) {{
+          classes.delete(name);
+          return false;
+        }}
+        classes.add(name);
+        return true;
+      }},
+    }},
+    get innerHTML() {{ return html; }},
+    set innerHTML(next) {{ html = String(next ?? ''); }},
+    get textContent() {{ return text; }},
+    set textContent(next) {{ text = String(next ?? ''); }},
+    querySelectorAll() {{ return []; }},
+    querySelector() {{ return null; }},
+  }};
+}}
+
+const elementsById = new Map();
+function getElement(id) {{
+  if (!elementsById.has(id)) {{
+    elementsById.set(id, createMockElement(id));
+  }}
+  return elementsById.get(id);
+}}
+
+[
+  'run-detail-modal',
+  'run-detail-modal-body',
+  'run-log-modal',
+  'run-log-status-bar',
+  'run-log-refresh-btn',
+  'run-log-auto-scroll',
+  'run-log-stop-actions',
+  'run-log-stop-btn',
+  'run-log-modal-body',
+  'run-log-search-input',
+  'run-log-level-filter',
+  'run-log-copy-btn',
+  'run-log-clear-btn',
+  'run-log-wrap-input',
+  'refresh-plans-btn',
+  'create-plan-btn',
+  'scheduled-run-filter-apply-btn',
+  'scheduled-run-filter-reset-btn',
+  'scheduled-run-prev-page',
+  'scheduled-run-next-page',
+  'scheduled-run-page-jump-btn',
+  'scheduled-run-page-jump-input',
+  'plan-form',
+  'plan-trigger-type',
+  'plan-task-type',
+  'plan-config-mode-table',
+  'plan-config-mode-json',
+  'plan-config-add-entry-btn',
+  'plan-cpa-service-select',
+  'plan-config-editor-panel',
+  'plan-config-entries-body',
+  'plan-config-json-panel',
+  'plan-config-json',
+  'plan-enabled',
+  'plan-form-modal',
+  'plan-modal',
+].forEach((id) => getElement(id));
+getElement('run-log-auto-scroll').checked = true;
+getElement('run-log-wrap-input').checked = true;
+
+const domListeners = {{}};
+const document = {{
+  getElementById(id) {{ return getElement(id); }},
+  querySelectorAll() {{ return []; }},
+  querySelector() {{ return null; }},
+  addEventListener(type, handler) {{ domListeners[type] = handler; }},
+  createElement() {{
+    let value = '';
+    return {{
+      set textContent(next) {{ value = String(next ?? ''); }},
+      get textContent() {{ return value; }},
+      get innerHTML() {{ return value; }},
+      set innerHTML(next) {{ value = String(next ?? ''); }},
+    }};
+  }},
+}};
+
+let timerCallback = null;
+const runRequests = [];
+const logRequests = [];
+const detailIsRunning = scenarioName === 'second_chunk_reapplies_filters';
+
+const firstChunk = [
+  '2026-03-24 09:00:00.100 [INFO] startup ok',
+  '2026-03-24 09:00:00.200 [ERROR] boom first',
+  '2026-03-24 09:00:00.300 [WARN] warn once',
+].join('\n');
+const secondChunk = [
+  '2026-03-24 09:00:01.100 [INFO] boom info second',
+  '2026-03-24 09:00:01.200 [ERROR] boom second',
+].join('\n');
+
+const context = {{
+  console,
+  URLSearchParams,
+  setTimeout(cb) {{
+    timerCallback = cb;
+    return 1;
+  }},
+  clearTimeout() {{
+    timerCallback = null;
+  }},
+  setInterval() {{
+    throw new Error('expected self-scheduling polling, not setInterval');
+  }},
+  clearInterval() {{}},
+  document,
+  window: {{
+    navigator: {{
+      clipboard: {{
+        writeText: async () => {{}},
+      }},
+    }},
+  }},
+  navigator: {{
+    clipboard: {{
+      writeText: async () => {{}},
+    }},
+  }},
+  theme: {{ toggle() {{}} }},
+  format: {{ date(value) {{ return String(value ?? '-'); }} }},
+  toast: {{
+    warning() {{}},
+    error() {{}},
+    success() {{}},
+  }},
+  api: {{
+    async get(path) {{
+      if (path === '/scheduled-plans') return {{ items: [] }};
+      if (path === '/cpa-services') return [];
+      if (path.startsWith('/scheduled-runs?')) {{
+        runRequests.push(path);
+        return {{ items: [], total: 0, page: 1, page_size: 20 }};
+      }}
+      if (path === '/scheduled-runs/123') {{
+        return {{
+          id: 123,
+          plan_id: 1,
+          plan_name: 'nightly cleanup',
+          task_type: 'cpa_cleanup',
+          trigger_source: 'manual',
+          started_at: '2026-03-24T09:00:00',
+          finished_at: detailIsRunning ? null : '2026-03-24T09:05:00',
+          error_message: null,
+          summary: {{ invalid_items_found: 18, remote_deleted: 16 }},
+          status: detailIsRunning ? 'running' : 'success',
+          last_log_at: '2026-03-24T09:00:00',
+          is_running: detailIsRunning,
+          stop_requested_at: null,
+          can_stop: detailIsRunning,
+        }};
+      }}
+      if (path.startsWith('/scheduled-runs/123/logs?offset=')) {{
+        logRequests.push(path);
+        if (path.endsWith('offset=0')) {{
+          return {{
+            chunk: firstChunk,
+            next_offset: firstChunk.length,
+            has_more: false,
+            is_running: detailIsRunning,
+            status: detailIsRunning ? 'running' : 'success',
+            stop_requested_at: null,
+            log_version: 1,
+            last_log_at: '2026-03-24T09:00:00',
+          }};
+        }}
+        if (path.endsWith(`offset=${{firstChunk.length}}`)) {{
+          return {{
+            chunk: secondChunk,
+            next_offset: firstChunk.length + secondChunk.length,
+            has_more: false,
+            is_running: false,
+            status: 'success',
+            stop_requested_at: null,
+            log_version: 2,
+            last_log_at: '2026-03-24T09:00:01',
+          }};
+        }}
+        throw new Error('unexpected log request: ' + path);
+      }}
+      throw new Error('unexpected api path: ' + path);
+    }},
+    async post() {{ return {{}}; }},
+    async put() {{ return {{}}; }},
+  }},
+}};
+context.global = context;
+context.globalThis = context;
+
+vm.createContext(context);
+vm.runInContext(scriptSource, context);
+
+function trigger(type, element, event = {{}}) {{
+  const handler = element && element._listeners ? element._listeners[type] : null;
+  if (!handler) return;
+  return handler(event);
+}}
+
+async function flush() {{
+  await new Promise((resolve) => setImmediate(resolve));
+}}
+
+async function runScenario() {{
+  if (typeof domListeners.DOMContentLoaded !== 'function') {{
+    throw new Error('DOMContentLoaded listener missing');
+  }}
+
+  domListeners.DOMContentLoaded();
+  await flush();
+  await flush();
+
+  const searchInput = getElement('run-log-search-input');
+  const levelFilter = getElement('run-log-level-filter');
+  const logBody = getElement('run-log-modal-body');
+
+  switch (scenarioName) {{
+    case 'open_log_console': {{
+      await context.window.openScheduledRunLog(123);
+      return {{
+        logBodyHtml: logBody.innerHTML,
+        logRequests,
+        modalActive: getElement('run-log-modal').classList.contains('active'),
+      }};
+    }}
+    case 'search_enter': {{
+      await context.window.openScheduledRunLog(123);
+      const beforeHtml = logBody.innerHTML;
+      searchInput.value = 'boom';
+      let enterPrevented = false;
+      trigger('keydown', searchInput, {{ key: 'Enter', preventDefault() {{ enterPrevented = true; }} }});
+      return {{
+        beforeHtml,
+        afterHtml: logBody.innerHTML,
+        enterPrevented,
+      }};
+    }}
+    case 'level_filter': {{
+      await context.window.openScheduledRunLog(123);
+      const beforeHtml = logBody.innerHTML;
+      levelFilter.value = 'ERROR';
+      trigger('change', levelFilter, {{ target: levelFilter }});
+      return {{
+        beforeHtml,
+        afterHtml: logBody.innerHTML,
+      }};
+    }}
+    case 'second_chunk_reapplies_filters': {{
+      await context.window.openScheduledRunLog(123);
+      searchInput.value = 'boom';
+      trigger('keydown', searchInput, {{ key: 'Enter', preventDefault() {{}} }});
+      levelFilter.value = 'ERROR';
+      trigger('change', levelFilter, {{ target: levelFilter }});
+      const beforeHtml = logBody.innerHTML;
+      if (typeof timerCallback !== 'function') throw new Error('expected polling callback');
+      await timerCallback();
+      await flush();
+      return {{
+        beforeHtml,
+        afterHtml: logBody.innerHTML,
+        logRequests,
+      }};
+    }}
+    default:
+      throw new Error('unknown scenario: ' + scenarioName);
+  }}
+}}
+
+runScenario()
+  .then((result) => {{
+    console.log(JSON.stringify(result));
+  }})
+  .catch((error) => {{
+    console.error(error && error.stack ? error.stack : String(error));
+    process.exit(1);
+  }});
+"""
+    completed = subprocess.run(
+        ["node", "-e", node_script],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+def test_scheduled_tasks_open_run_log_renders_console_shell_and_loads_first_chunk():
+    result = run_scheduled_tasks_log_console_scenario("open_log_console")
+
+    assert result["modalActive"] is True
+    assert 'id="run-log-console"' in result["logBodyHtml"]
+    assert "scheduled-run-console-shell" in result["logBodyHtml"]
+    assert "[ERROR]" in result["logBodyHtml"]
+    assert "boom first" in result["logBodyHtml"]
+    assert "/scheduled-runs/123/logs?offset=0" in result["logRequests"]
+
+
+def test_scheduled_tasks_run_log_search_applies_only_on_enter():
+    result = run_scheduled_tasks_log_console_scenario("search_enter")
+
+    assert result["enterPrevented"] is True
+    assert "startup ok" in result["beforeHtml"]
+    assert "startup ok" not in result["afterHtml"]
+    assert "[ERROR]" in result["afterHtml"]
+    assert "boom first" in result["afterHtml"]
+
+
+def test_scheduled_tasks_run_log_level_filter_rerenders_matching_lines_only():
+    result = run_scheduled_tasks_log_console_scenario("level_filter")
+
+    assert "[INFO]" in result["beforeHtml"]
+    assert "startup ok" in result["beforeHtml"]
+    assert "[WARN]" in result["beforeHtml"]
+    assert "warn once" in result["beforeHtml"]
+    assert "startup ok" not in result["afterHtml"]
+    assert "warn once" not in result["afterHtml"]
+    assert "[ERROR]" in result["afterHtml"]
+    assert "boom first" in result["afterHtml"]
+
+
+def test_scheduled_tasks_run_log_reapplies_filters_after_new_chunk_arrives():
+    result = run_scheduled_tasks_log_console_scenario("second_chunk_reapplies_filters")
+
+    assert "[ERROR]" in result["beforeHtml"]
+    assert "boom first" in result["beforeHtml"]
+    assert "boom info second" not in result["beforeHtml"]
+    assert "[ERROR]" in result["afterHtml"]
+    assert "boom first" in result["afterHtml"]
+    assert "boom second" in result["afterHtml"]
+    assert "boom info second" not in result["afterHtml"]
+    assert "/scheduled-runs/123/logs?offset=0" in result["logRequests"]
+    assert any(request.endswith(f"offset={len('2026-03-24 09:00:00.100 [INFO] startup ok\n2026-03-24 09:00:00.200 [ERROR] boom first\n2026-03-24 09:00:00.300 [WARN] warn once')}") for request in result["logRequests"])
 
 def test_scheduled_tasks_script_drops_stale_builtin_keys_when_task_type_switches():
     node_script = r"""
@@ -1104,11 +1476,11 @@ vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
 });
 
 async function main() {
-  await window.openScheduledRunDetail(123);
-  const output = document.getElementById('scheduled-run-log-output');
+  await window.openScheduledRunLog(123);
   if (logCalls !== 2) throw new Error('expected 2 log calls, got ' + logCalls);
-  if (output.textContent !== 'ab') {
-    throw new Error('expected log output \"ab\", got: ' + JSON.stringify(output.textContent));
+  const html = elements.get('run-log-modal-body').innerHTML;
+  if (!html.includes('>ab<')) {
+    throw new Error('expected log output to include merged chunks, got: ' + JSON.stringify(html));
   }
 }
 
@@ -1257,7 +1629,7 @@ async function flush() {
 }
 
 async function main() {
-  await window.openScheduledRunDetail(123);
+  await window.openScheduledRunLog(123);
   if (typeof intervalCb !== 'function') throw new Error('expected polling timer callback to be registered');
 
   intervalCb();
@@ -1441,7 +1813,7 @@ vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
 });
 
 async function main() {
-  const openPromise = window.openScheduledRunDetail(123);
+  const openPromise = window.openScheduledRunLog(123);
 
   const closeButton = {
     dataset: { action: 'back-to-runs' },

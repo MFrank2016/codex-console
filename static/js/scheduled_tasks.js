@@ -40,6 +40,8 @@ const scheduledTaskElements = {
     planEnabledInput: document.getElementById('plan-enabled'),
     planModal: document.getElementById('plan-modal'),
     planModalBody: document.getElementById('plan-modal-body'),
+    runDetailModal: document.getElementById('run-detail-modal'),
+    runDetailModalBody: document.getElementById('run-detail-modal-body'),
     runLogModal: document.getElementById('run-log-modal'),
     runLogStatusBar: document.getElementById('run-log-status-bar'),
     runLogRefreshBtn: document.getElementById('run-log-refresh-btn'),
@@ -47,6 +49,11 @@ const scheduledTaskElements = {
     runLogStopActions: document.getElementById('run-log-stop-actions'),
     runLogStopBtn: document.getElementById('run-log-stop-btn'),
     runLogModalBody: document.getElementById('run-log-modal-body'),
+    runLogSearchInput: document.getElementById('run-log-search-input'),
+    runLogLevelFilter: document.getElementById('run-log-level-filter'),
+    runLogCopyBtn: document.getElementById('run-log-copy-btn'),
+    runLogClearBtn: document.getElementById('run-log-clear-btn'),
+    runLogWrapInput: document.getElementById('run-log-wrap-input'),
 };
 
 const CONFIG_EDITOR_MODE_TABLE = 'table';
@@ -205,6 +212,16 @@ let currentScheduledRunLogOffset = 0;
 let scheduledRunLogPollingTimer = null;
 let scheduledRunLogPollingInFlight = false;
 let scheduledRunLogLoadToken = 0;
+let scheduledRunConsoleState = {
+    rawText: '',
+    rawLines: [],
+    visibleLines: [],
+    searchTerm: '',
+    levelFilter: '',
+    wrap: Boolean(scheduledTaskElements.runLogWrapInput?.checked),
+    clearedView: false,
+};
+const SCHEDULED_RUN_LOG_LINE_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[(INFO|WARN|ERROR)\]\s?(.*)$/;
 
 function isScheduledRunLogRequestActive(runId, token) {
     return token === scheduledRunLogLoadToken && activeScheduledRunId === Number(runId);
@@ -1462,11 +1479,26 @@ function resetScheduledRunModalState() {
     activeScheduledRunDetail = null;
     currentScheduledRunLogOffset = 0;
     stopScheduledRunLogPolling();
+    scheduledRunConsoleState = {
+        rawText: '',
+        rawLines: [],
+        visibleLines: [],
+        searchTerm: '',
+        levelFilter: '',
+        wrap: Boolean(scheduledTaskElements.runLogWrapInput?.checked ?? true),
+        clearedView: false,
+    };
     if (scheduledTaskElements.runLogStatusBar) {
         scheduledTaskElements.runLogStatusBar.innerHTML = '<span>未选择运行记录</span>';
     }
-    if (scheduledTaskElements.runLogModalBody) {
-        scheduledTaskElements.runLogModalBody.innerHTML = '<div style="color: var(--text-muted);">暂无记录</div>';
+    if (scheduledTaskElements.runLogSearchInput) {
+        scheduledTaskElements.runLogSearchInput.value = '';
+    }
+    if (scheduledTaskElements.runLogLevelFilter) {
+        scheduledTaskElements.runLogLevelFilter.value = '';
+    }
+    if (scheduledTaskElements.runLogWrapInput) {
+        scheduledTaskElements.runLogWrapInput.checked = scheduledRunConsoleState.wrap;
     }
     if (scheduledTaskElements.runLogStopBtn) {
         scheduledTaskElements.runLogStopBtn.style.display = 'none';
@@ -1475,6 +1507,7 @@ function resetScheduledRunModalState() {
         scheduledTaskElements.runLogStopBtn.removeAttribute('data-run-id');
         scheduledTaskElements.runLogStopBtn.removeAttribute('data-stopping');
     }
+    renderScheduledRunConsole();
 }
 
 function renderScheduledRunStatusBar(detail) {
@@ -1493,13 +1526,13 @@ function renderScheduledRunStatusBar(detail) {
     `;
 }
 
-function renderScheduledRunDetailBody(detail, initialLogs = '') {
-    if (!scheduledTaskElements.runLogModalBody) return;
-    scheduledTaskElements.runLogModalBody.innerHTML = `
+function renderScheduledRunDetailBody(detail) {
+    if (!scheduledTaskElements.runDetailModalBody) return;
+    scheduledTaskElements.runDetailModalBody.innerHTML = `
         <div class="scheduled-run-detail-head">
             <strong>运行详情 #${detail.id}</strong>
             <div class="table-actions">
-                <button class="btn btn-secondary btn-sm" data-action="back-to-runs" onclick="handleRunLogAction(this)">返回运行中心</button>
+                <button class="btn btn-secondary btn-sm" data-close-modal="run-detail-modal" onclick="closeModal('run-detail-modal')">关闭</button>
             </div>
         </div>
         <div class="info-grid scheduled-run-detail-grid">
@@ -1512,22 +1545,125 @@ function renderScheduledRunDetailBody(detail, initialLogs = '') {
             <div class="info-item"><span class="label">错误信息</span><span class="value">${escapeHtml(detail.error_message || '-')}</span></div>
             <div class="info-item scheduled-run-summary"><span class="label">摘要</span><span class="value">${escapeHtml(summarizeScheduledRun(detail))}</span></div>
         </div>
-        <div class="scheduled-run-log-panel">
-            <div class="scheduled-run-log-title">实时日志</div>
-            <pre id="scheduled-run-log-output" class="scheduled-run-log-output">${escapeHtml(initialLogs || '暂无日志')}</pre>
+    `;
+}
+
+function parseScheduledRunLogLines(text) {
+    const normalized = String(text || '').replace(/\r\n/g, '\n');
+    if (!normalized) return [];
+    return normalized
+        .split('\n')
+        .filter((line, index, lines) => line !== '' || index < lines.length - 1)
+        .map((line) => {
+            const match = line.match(SCHEDULED_RUN_LOG_LINE_PATTERN);
+            if (!match) {
+                return {
+                    raw: line,
+                    timestamp: '',
+                    level: '',
+                    message: line,
+                };
+            }
+            return {
+                raw: line,
+                timestamp: match[1],
+                level: match[2],
+                message: match[3] || '',
+            };
+        });
+}
+
+function renderScheduledRunConsoleLine(line) {
+    if (!line.level) {
+        return `
+            <div class="scheduled-run-log-line">
+                <span>${escapeHtml(line.raw || '')}</span>
+            </div>
+        `;
+    }
+    const levelClass = `scheduled-run-log-level-${String(line.level).toLowerCase()}`;
+    return `
+        <div class="scheduled-run-log-line">
+            <span class="scheduled-run-log-timestamp">${escapeHtml(line.timestamp)}</span>
+            <span class="scheduled-run-log-level-badge ${levelClass}">[${escapeHtml(line.level)}]</span>
+            <span>${escapeHtml(line.message)}</span>
         </div>
     `;
 }
 
+function renderScheduledRunConsole() {
+    if (!scheduledTaskElements.runLogModalBody) return;
+    const wrapClass = scheduledRunConsoleState.wrap ? 'scheduled-run-log-wrap' : 'scheduled-run-log-nowrap';
+    const lines = scheduledRunConsoleState.visibleLines;
+    const visibleText = lines.length ? lines.map((line) => line.raw).join('\n') : '暂无记录';
+    const contentHtml = lines.length
+        ? lines.map((line) => renderScheduledRunConsoleLine(line)).join('')
+        : `
+            <div class="scheduled-run-log-line">
+                <span class="scheduled-run-log-level-badge">INFO</span>
+                <span>暂无记录</span>
+            </div>
+        `;
+    scheduledTaskElements.runLogModalBody.innerHTML = `
+        <div id="run-log-console" class="scheduled-run-console-shell ${wrapClass}" data-visible-text="${escapeHtml(visibleText)}">
+            ${contentHtml}
+        </div>
+    `;
+}
+
+function applyScheduledRunLogFilters() {
+    const searchTerm = scheduledRunConsoleState.searchTerm.trim().toLowerCase();
+    scheduledRunConsoleState.visibleLines = scheduledRunConsoleState.rawLines.filter((line) => {
+        const matchesLevel = !scheduledRunConsoleState.levelFilter || line.level === scheduledRunConsoleState.levelFilter;
+        const matchesSearch = !searchTerm || line.raw.toLowerCase().includes(searchTerm);
+        return matchesLevel && matchesSearch;
+    });
+    scheduledRunConsoleState.clearedView = false;
+    renderScheduledRunConsole();
+}
+
 function appendScheduledRunLogChunk(chunk, options = {}) {
-    const logOutput = document.getElementById('scheduled-run-log-output');
-    if (!logOutput) return;
     const reset = options.reset === true;
-    const nextText = reset ? String(chunk || '') : `${logOutput.textContent === '暂无日志' ? '' : logOutput.textContent}${chunk || ''}`;
-    logOutput.textContent = nextText || '暂无日志';
-    if (scheduledTaskElements.runLogAutoScrollInput?.checked) {
-        logOutput.scrollTop = logOutput.scrollHeight;
+    scheduledRunConsoleState.rawText = reset ? String(chunk || '') : `${scheduledRunConsoleState.rawText}${chunk || ''}`;
+    scheduledRunConsoleState.rawLines = parseScheduledRunLogLines(scheduledRunConsoleState.rawText);
+    applyScheduledRunLogFilters();
+}
+
+function handleScheduledRunLogSearchKeydown(event) {
+    if (event?.key !== 'Enter') return;
+    event.preventDefault();
+    scheduledRunConsoleState.searchTerm = String(scheduledTaskElements.runLogSearchInput?.value || '').trim();
+    applyScheduledRunLogFilters();
+}
+
+function handleScheduledRunLogLevelFilterChange() {
+    scheduledRunConsoleState.levelFilter = String(scheduledTaskElements.runLogLevelFilter?.value || '').trim();
+    applyScheduledRunLogFilters();
+}
+
+function handleScheduledRunLogWrapChange() {
+    scheduledRunConsoleState.wrap = Boolean(scheduledTaskElements.runLogWrapInput?.checked);
+    renderScheduledRunConsole();
+}
+
+async function copyScheduledRunVisibleLogs() {
+    const visibleText = scheduledRunConsoleState.visibleLines.map((line) => line.raw).join('\n');
+    if (!visibleText) {
+        toast.warning('暂无可复制日志');
+        return;
     }
+    if (typeof navigator?.clipboard?.writeText !== 'function') {
+        toast.warning('当前环境不支持复制');
+        return;
+    }
+    await navigator.clipboard.writeText(visibleText);
+    toast.success('已复制当前日志');
+}
+
+function clearScheduledRunConsoleView() {
+    scheduledRunConsoleState.visibleLines = [];
+    scheduledRunConsoleState.clearedView = true;
+    renderScheduledRunConsole();
 }
 
 function setScheduledRunStopButtonState(detail) {
@@ -1663,6 +1799,25 @@ async function loadScheduledRunLogChunk(runId, { reset = false, token = schedule
 }
 
 async function openScheduledRunDetail(runId) {
+    const targetId = Number(runId);
+    if (!Number.isInteger(targetId) || targetId <= 0) return;
+    if (scheduledTaskElements.runDetailModal) {
+        scheduledTaskElements.runDetailModal.classList.add('active');
+    }
+    if (scheduledTaskElements.runDetailModalBody) {
+        scheduledTaskElements.runDetailModalBody.innerHTML = '<div style="color: var(--text-muted);">运行详情加载中...</div>';
+    }
+    try {
+        const detail = await api.get(`/scheduled-runs/${targetId}`);
+        renderScheduledRunDetailBody(detail);
+    } catch (error) {
+        if (!scheduledTaskElements.runDetailModalBody) return;
+        scheduledTaskElements.runDetailModalBody.innerHTML = `<div style="color: var(--danger-color, #d9534f);">加载运行详情失败：${escapeHtml(error.message || '请求失败')}</div>`;
+        toast.error(`加载运行详情失败: ${error.message}`);
+    }
+}
+
+async function openScheduledRunLog(runId) {
     resetScheduledRunModalState();
     activeScheduledRunId = Number(runId);
     const token = scheduledRunLogLoadToken;
@@ -1677,7 +1832,7 @@ async function openScheduledRunDetail(runId) {
         }
         activeScheduledRunDetail = detail;
         renderScheduledRunStatusBar(detail);
-        renderScheduledRunDetailBody(detail, '');
+        renderScheduledRunConsole();
         setScheduledRunStopButtonState(detail);
         const logChunk = await loadScheduledRunLogChunk(runId, { reset: true, token });
         if (!isScheduledRunLogRequestActive(runId, token)) {
@@ -1691,13 +1846,12 @@ async function openScheduledRunDetail(runId) {
             return;
         }
         renderScheduledRunStatusBar(null);
-        scheduledTaskElements.runLogModalBody.innerHTML = `<div style="color: var(--danger-color, #d9534f);">加载运行详情失败：${escapeHtml(error.message || '请求失败')}</div>`;
-        toast.error(`加载运行详情失败: ${error.message}`);
+        if (scheduledTaskElements.runLogModalBody) {
+            scheduledTaskElements.runLogModalBody.innerHTML = `<div style="color: var(--danger-color, #d9534f);">加载运行日志失败：${escapeHtml(error.message || '请求失败')}</div>`;
+            scheduledTaskElements.runLogModalBody.textContent = `加载运行日志失败：${error.message || '请求失败'}`;
+        }
+        toast.error(`加载运行日志失败: ${error.message}`);
     }
-}
-
-async function openScheduledRunLog(runId) {
-    await openScheduledRunDetail(runId);
 }
 
 async function stopScheduledRun(runId) {
@@ -1922,7 +2076,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (scheduledTaskElements.runLogRefreshBtn) {
         scheduledTaskElements.runLogRefreshBtn.addEventListener('click', (event) => {
             if (!activeScheduledRunId) return;
-            void withButtonBusy(event.currentTarget, () => openScheduledRunDetail(activeScheduledRunId));
+            void withButtonBusy(event.currentTarget, () => openScheduledRunLog(activeScheduledRunId));
+        });
+    }
+
+    if (scheduledTaskElements.runLogSearchInput) {
+        scheduledTaskElements.runLogSearchInput.addEventListener('keydown', handleScheduledRunLogSearchKeydown);
+    }
+
+    if (scheduledTaskElements.runLogLevelFilter) {
+        scheduledTaskElements.runLogLevelFilter.addEventListener('change', handleScheduledRunLogLevelFilterChange);
+    }
+
+    if (scheduledTaskElements.runLogWrapInput) {
+        scheduledTaskElements.runLogWrapInput.addEventListener('change', handleScheduledRunLogWrapChange);
+    }
+
+    if (scheduledTaskElements.runLogCopyBtn) {
+        scheduledTaskElements.runLogCopyBtn.addEventListener('click', (event) => {
+            void withButtonBusy(event.currentTarget, () => copyScheduledRunVisibleLogs());
+        });
+    }
+
+    if (scheduledTaskElements.runLogClearBtn) {
+        scheduledTaskElements.runLogClearBtn.addEventListener('click', () => {
+            clearScheduledRunConsoleView();
         });
     }
 
@@ -1958,7 +2136,11 @@ window.openScheduledRunLog = openScheduledRunLog;
 window.viewRunLog = openScheduledRunLog;
 window.startScheduledRunLogPolling = startScheduledRunLogPolling;
 window.stopScheduledRunLogPolling = stopScheduledRunLogPolling;
+window.parseScheduledRunLogLines = parseScheduledRunLogLines;
+window.applyScheduledRunLogFilters = applyScheduledRunLogFilters;
+window.renderScheduledRunConsole = renderScheduledRunConsole;
 window.appendScheduledRunLogChunk = appendScheduledRunLogChunk;
+window.handleScheduledRunLogSearchKeydown = handleScheduledRunLogSearchKeydown;
 window.stopScheduledRun = stopScheduledRun;
 window.handlePlanAction = handlePlanAction;
 window.handleRunLogAction = handleRunLogAction;
