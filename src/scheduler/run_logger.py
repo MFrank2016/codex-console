@@ -9,6 +9,14 @@ from ..database.session import get_db
 USER_REQUESTED_STOP_ERROR_MESSAGE = "user requested stop"
 USER_STOP_REQUESTED_LOG = "收到停止请求"
 USER_STOP_COMPLETED_LOG = "任务已按请求停止"
+ALLOWED_LOG_LEVELS = {"INFO", "WARN", "ERROR"}
+
+
+def _normalize_run_log_level(level: str) -> str:
+    normalized = level.strip().upper()
+    if normalized not in ALLOWED_LOG_LEVELS:
+        raise ValueError(f"Unsupported run log level: {level}")
+    return normalized
 
 
 def _format_run_log_line(message: str, *, level: str, logged_at: datetime) -> str:
@@ -25,7 +33,8 @@ def append_run_log(
 ) -> bool:
     """Append a log line for a scheduled run."""
     actual_logged_at = logged_at or datetime.utcnow()
-    line = _format_run_log_line(message, level=level, logged_at=actual_logged_at)
+    normalized_level = _normalize_run_log_level(level)
+    line = _format_run_log_line(message, level=normalized_level, logged_at=actual_logged_at)
     with get_db() as db:
         return crud.append_scheduled_run_log(db, run_id, line, logged_at=actual_logged_at)
 
