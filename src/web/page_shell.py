@@ -15,27 +15,34 @@ WORKSPACE_NAV = [
                 "label": "注册工作台",
                 "href": "/registration-workbench",
             },
+            {"key": "accounts", "label": "账号管理", "href": "/accounts"},
             {
                 "key": "scheduled_tasks",
                 "label": "定时任务",
                 "href": "/scheduled-tasks",
             },
+            {"key": "payment", "label": "支付中心", "href": "/payment"},
         ],
     },
     {
         "group": "复盘",
         "items": [
-            {"key": "accounts", "label": "账号管理", "href": "/accounts"},
             {
                 "key": "registration_experiments",
                 "label": "注册实验",
                 "href": "/registration-experiments",
+            },
+            {
+                "key": "registration_batch_stats",
+                "label": "批次统计",
+                "href": "/registration-batch-stats",
             },
         ],
     },
     {
         "group": "配置",
         "items": [
+            {"key": "email_services", "label": "邮箱服务", "href": "/email-services"},
             {"key": "settings", "label": "系统设置", "href": "/settings"},
         ],
     },

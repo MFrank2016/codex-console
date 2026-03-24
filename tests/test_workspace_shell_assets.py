@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
+from src.web.page_shell import WORKSPACE_NAV, build_page_shell
 
 
 def test_shared_stylesheet_defines_workspace_shell_selectors():
@@ -9,6 +10,8 @@ def test_shared_stylesheet_defines_workspace_shell_selectors():
     assert ".workspace-sidebar" in stylesheet
     assert ".workspace-rail" in stylesheet
     assert ".page-head" in stylesheet
+    assert ".workspace-sidebar-collapsed .workspace-rail" in stylesheet
+    assert ".workspace-sidebar-collapsed .workspace-main" in stylesheet
 
 
 def test_workspace_script_defines_sidebar_storage_and_toggle_helpers():
@@ -40,15 +43,22 @@ def test_workspace_base_template_wires_sidebar_and_rendered_workspace_script_ver
     assert "/static/js/workspace.js?v=" in rendered_html
 
 
-def test_page_shell_source_defines_grouped_navigation_keys():
-    source = Path("src/web/page_shell.py").read_text(encoding="utf-8")
-    assert "WORKSPACE_NAV" in source
-    for key in (
-        "dashboard",
-        "registration_workbench",
-        "accounts",
-        "scheduled_tasks",
-        "registration_experiments",
-        "settings",
-    ):
-        assert key in source
+def test_page_shell_navigation_groups_match_approved_workspace_map():
+    expected_nav = {
+        "总览": ["dashboard"],
+        "执行": ["registration_workbench", "accounts", "scheduled_tasks", "payment"],
+        "复盘": ["registration_experiments", "registration_batch_stats"],
+        "配置": ["email_services", "settings"],
+    }
+    actual_nav = {
+        group["group"]: [item["key"] for item in group["items"]]
+        for group in WORKSPACE_NAV
+    }
+    assert actual_nav == expected_nav
+
+    page_shell = build_page_shell(
+        page_key="dashboard",
+        page_title="控制台总览",
+        page_subtitle="测试页面",
+    )
+    assert page_shell["workspace_nav"] == WORKSPACE_NAV

@@ -134,6 +134,8 @@ body {
 /* Workspace Shell Foundation */
 .workspace-shell {
     min-height: 100vh;
+    --workspace-rail-width: 260px;
+    --workspace-rail-collapsed-width: 96px;
 }
 
 .workspace-rail {
@@ -141,7 +143,7 @@ body {
     top: 0;
     left: 0;
     bottom: 0;
-    width: 260px;
+    width: var(--workspace-rail-width);
     padding: var(--spacing-lg) var(--spacing-md);
     border-right: 1px solid var(--border);
     background: var(--surface);
@@ -158,11 +160,11 @@ body {
 }
 
 .workspace-sidebar-collapsed .workspace-sidebar {
-    width: 72px;
+    width: 100%;
 }
 
 .workspace-main {
-    margin-left: 260px;
+    margin-left: var(--workspace-rail-width);
     min-height: 100vh;
     padding: var(--spacing-lg);
     display: flex;
@@ -170,8 +172,12 @@ body {
     gap: var(--spacing-lg);
 }
 
+.workspace-sidebar-collapsed .workspace-rail {
+    width: var(--workspace-rail-collapsed-width);
+}
+
 .workspace-sidebar-collapsed .workspace-main {
-    margin-left: 96px;
+    margin-left: var(--workspace-rail-collapsed-width);
 }
 
 .page-head {
