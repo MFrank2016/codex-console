@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from threading import Event
 
 import pytest
+from fastapi.testclient import TestClient
 
 from src.database import crud
 from src.database import session as session_module
@@ -502,7 +503,7 @@ def test_scheduler_engine_start_launches_single_background_poll_loop(monkeypatch
 
 
 def test_create_app_startup_shutdown_uses_isolated_scheduler_engine_instances(monkeypatch):
-    monkeypatch.setattr("src.database.init_db.initialize_database", lambda: None)
+    monkeypatch.setattr("src.boot.lifespan.initialize_database", lambda: None)
 
     app_one = create_app()
     app_two = create_app()
@@ -514,26 +515,16 @@ def test_create_app_startup_shutdown_uses_isolated_scheduler_engine_instances(mo
     assert engine_one._started is False
     assert engine_two._started is False
 
-    for handler in app_one.router.on_startup:
-        asyncio.run(handler())
-
-    assert engine_one._started is True
-    assert engine_two._started is False
-
-    for handler in app_one.router.on_shutdown:
-        asyncio.run(handler())
+    with TestClient(app_one):
+        assert engine_one._started is True
+        assert engine_two._started is False
 
     assert engine_one._started is False
     assert engine_two._started is False
 
-    for handler in app_two.router.on_startup:
-        asyncio.run(handler())
-
-    assert engine_one._started is False
-    assert engine_two._started is True
-
-    for handler in app_two.router.on_shutdown:
-        asyncio.run(handler())
+    with TestClient(app_two):
+        assert engine_one._started is False
+        assert engine_two._started is True
 
     assert engine_one._started is False
     assert engine_two._started is False

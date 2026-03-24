@@ -1,0 +1,482 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from ..core.registration_job import RegistrationJobResult, run_registration_job
+from ..core.time import utc_now_naive
+from ..database import crud
+from ..database.models import Account, RegistrationRun, RegistrationRunEvent, RegistrationTask
+from .registration_runs_service import RegistrationRunsService
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SingleTaskExecutionResult:
+    task: RegistrationTask | None
+    run: RegistrationRun | None
+    events: list[RegistrationRunEvent]
+    job_result: RegistrationJobResult | None = None
+
+
+class RegistrationService:
+    def __init__(
+        self,
+        *,
+        db_factory,
+        task_manager=None,
+        job_runner: Callable[..., RegistrationJobResult] = run_registration_job,
+        sync_runner: Callable[..., SingleTaskExecutionResult] | None = None,
+        proxy_resolver: Callable[[Any], tuple[str | None, int | None]] | None = None,
+        proxy_usage_updater: Callable[[Any, int | None], None] | None = None,
+        utc_now_provider: Callable[[], Any] = utc_now_naive,
+    ):
+        self.db_factory = db_factory
+        if task_manager is None:
+            from ..web.task_manager import task_manager as default_task_manager
+
+            task_manager = default_task_manager
+        self.task_manager = task_manager
+        self.job_runner = job_runner
+        self.sync_runner = sync_runner or self._run_single_task_sync_impl
+        self.proxy_resolver = proxy_resolver or self._resolve_proxy_for_registration
+        self.proxy_usage_updater = proxy_usage_updater or self._update_proxy_usage
+        self.utc_now_provider = utc_now_provider
+
+    def create_task(
+        self,
+        *,
+        task_uuid: str,
+        proxy: str | None = None,
+        pipeline_key: str | None = None,
+        email_service_id: int | None = None,
+    ) -> RegistrationTask:
+        with self.db_factory() as db:
+            return crud.create_registration_task(
+                db,
+                task_uuid=task_uuid,
+                proxy=proxy,
+                pipeline_key=pipeline_key,
+                email_service_id=email_service_id,
+            )
+
+    def build_result_for_task(
+        self,
+        task_uuid: str,
+        *,
+        db=None,
+        job_result: RegistrationJobResult | None = None,
+    ) -> SingleTaskExecutionResult:
+        if db is not None:
+            task = crud.get_registration_task(db, task_uuid)
+            runs_service = RegistrationRunsService(db)
+            run = runs_service.get_run_by_task_uuid(task_uuid)
+            events = runs_service.get_events(run.id) if run is not None else []
+            return SingleTaskExecutionResult(task=task, run=run, events=events, job_result=job_result)
+
+        with self.db_factory() as session:
+            return self.build_result_for_task(task_uuid, db=session, job_result=job_result)
+
+    async def run_single_task(
+        self,
+        task_uuid: str,
+        email_service_type: str,
+        proxy: str | None,
+        email_service_config: dict[str, Any] | None,
+        email_service_id: int | None = None,
+        log_prefix: str = "",
+        batch_id: str = "",
+        auto_upload_cpa: bool = False,
+        cpa_service_ids: list[int] | None = None,
+        auto_upload_sub2api: bool = False,
+        sub2api_service_ids: list[int] | None = None,
+        auto_upload_tm: bool = False,
+        tm_service_ids: list[int] | None = None,
+        pipeline_key: str | None = None,
+    ) -> SingleTaskExecutionResult:
+        loop = self.task_manager.get_loop()
+        if loop is None:
+            loop = asyncio.get_running_loop()
+            self.task_manager.set_loop(loop)
+
+        queued_message = (
+            f"{log_prefix} [系统] 任务 {task_uuid[:8]} 已加入队列"
+            if log_prefix
+            else f"[系统] 任务 {task_uuid[:8]} 已加入队列"
+        )
+        self.task_manager.update_status(task_uuid, "pending")
+        self.task_manager.add_log(task_uuid, queued_message)
+
+        payload = {
+            "service": self,
+            "task_uuid": task_uuid,
+            "email_service_type": email_service_type,
+            "proxy": proxy,
+            "email_service_config": email_service_config,
+            "email_service_id": email_service_id,
+            "log_prefix": log_prefix,
+            "batch_id": batch_id,
+            "auto_upload_cpa": auto_upload_cpa,
+            "cpa_service_ids": cpa_service_ids or [],
+            "auto_upload_sub2api": auto_upload_sub2api,
+            "sub2api_service_ids": sub2api_service_ids or [],
+            "auto_upload_tm": auto_upload_tm,
+            "tm_service_ids": tm_service_ids or [],
+            "pipeline_key": pipeline_key,
+            "utc_now_provider": self.utc_now_provider,
+        }
+
+        runner = self.sync_runner
+        if getattr(self.task_manager, "executor", None) is not None and runner is self._run_single_task_sync_impl:
+            result = await loop.run_in_executor(
+                self.task_manager.executor,
+                lambda: runner(**payload),
+            )
+        else:
+            result = runner(**payload)
+
+        if result is None:
+            result = self.build_result_for_task(task_uuid)
+
+        status_snapshot = getattr(self.task_manager, "get_status", lambda _task_uuid: None)(task_uuid) or {}
+        if result.task is not None and status_snapshot.get("status") == "pending":
+            extra: dict[str, Any] = {}
+            if result.task.status == "completed" and result.task.email_address:
+                extra["email"] = result.task.email_address
+            if result.task.status == "failed" and result.task.error_message:
+                extra["error"] = result.task.error_message
+            self.task_manager.update_status(task_uuid, result.task.status, **extra)
+
+        return result
+
+    def run_single_task_sync(
+        self,
+        task_uuid: str,
+        email_service_type: str,
+        proxy: str | None,
+        email_service_config: dict[str, Any] | None,
+        email_service_id: int | None = None,
+        log_prefix: str = "",
+        batch_id: str = "",
+        auto_upload_cpa: bool = False,
+        cpa_service_ids: list[int] | None = None,
+        auto_upload_sub2api: bool = False,
+        sub2api_service_ids: list[int] | None = None,
+        auto_upload_tm: bool = False,
+        tm_service_ids: list[int] | None = None,
+        pipeline_key: str | None = None,
+    ) -> SingleTaskExecutionResult:
+        return self.sync_runner(
+            service=self,
+            task_uuid=task_uuid,
+            email_service_type=email_service_type,
+            proxy=proxy,
+            email_service_config=email_service_config,
+            email_service_id=email_service_id,
+            log_prefix=log_prefix,
+            batch_id=batch_id,
+            auto_upload_cpa=auto_upload_cpa,
+            cpa_service_ids=cpa_service_ids or [],
+            auto_upload_sub2api=auto_upload_sub2api,
+            sub2api_service_ids=sub2api_service_ids or [],
+            auto_upload_tm=auto_upload_tm,
+            tm_service_ids=tm_service_ids or [],
+            pipeline_key=pipeline_key,
+            utc_now_provider=self.utc_now_provider,
+        )
+
+    def _run_single_task_sync_impl(
+        self,
+        *,
+        service: RegistrationService,
+        task_uuid: str,
+        email_service_type: str,
+        proxy: str | None,
+        email_service_config: dict[str, Any] | None,
+        email_service_id: int | None = None,
+        log_prefix: str = "",
+        batch_id: str = "",
+        auto_upload_cpa: bool = False,
+        cpa_service_ids: list[int] | None = None,
+        auto_upload_sub2api: bool = False,
+        sub2api_service_ids: list[int] | None = None,
+        auto_upload_tm: bool = False,
+        tm_service_ids: list[int] | None = None,
+        pipeline_key: str | None = None,
+        utc_now_provider: Callable[[], Any] | None = None,
+    ) -> SingleTaskExecutionResult:
+        now = utc_now_provider or service.utc_now_provider
+        cpa_service_ids = cpa_service_ids or []
+        sub2api_service_ids = sub2api_service_ids or []
+        tm_service_ids = tm_service_ids or []
+
+        try:
+            with service.db_factory() as db:
+                runs_service = RegistrationRunsService(db)
+                run = runs_service.create_run(
+                    task_uuid=task_uuid,
+                    batch_id=batch_id or None,
+                    trigger_source="batch" if batch_id else "manual",
+                )
+
+                if service.task_manager.is_cancelled(task_uuid):
+                    logger.info("任务 %s 已取消，跳过执行", task_uuid)
+                    crud.update_registration_task(
+                        db,
+                        task_uuid,
+                        status="cancelled",
+                        pipeline_status="cancelled",
+                        completed_at=now(),
+                    )
+                    runs_service.mark_cancelled(run.id, error_message="cancelled")
+                    runs_service.append_event(run.id, level="warning", message="cancelled")
+                    service.task_manager.update_status(task_uuid, "cancelled")
+                    if hasattr(service.task_manager, "clear_task_steps"):
+                        service.task_manager.clear_task_steps(task_uuid)
+                    return service.build_result_for_task(task_uuid, db=db)
+
+                task = crud.update_registration_task(
+                    db,
+                    task_uuid,
+                    status="running",
+                    pipeline_status="running",
+                    started_at=now(),
+                )
+                if task is None:
+                    logger.error("任务不存在: %s", task_uuid)
+                    runs_service.mark_failed(run.id, error_message="task missing")
+                    runs_service.append_event(run.id, level="error", message="failed")
+                    return service.build_result_for_task(task_uuid, db=db)
+
+                runs_service.mark_running(run.id)
+                runs_service.append_event(run.id, level="info", message="running")
+                service.task_manager.update_status(task_uuid, "running")
+
+                actual_proxy_url = proxy
+                proxy_id = None
+                if not actual_proxy_url:
+                    actual_proxy_url, proxy_id = service.proxy_resolver(db)
+                crud.update_registration_task(db, task_uuid, proxy=actual_proxy_url)
+
+                effective_pipeline_key = pipeline_key or task.pipeline_key or "current_pipeline"
+                if task.pipeline_key != effective_pipeline_key:
+                    task = crud.update_registration_task(
+                        db,
+                        task_uuid,
+                        pipeline_key=effective_pipeline_key,
+                    ) or task
+
+                log_callback = service.task_manager.create_log_callback(
+                    task_uuid,
+                    prefix=log_prefix,
+                    batch_id=batch_id,
+                )
+                job_result = service.job_runner(
+                    db=db,
+                    email_service_type=email_service_type,
+                    email_service_id=email_service_id,
+                    proxy=actual_proxy_url,
+                    email_service_config=email_service_config,
+                    pipeline_key=effective_pipeline_key,
+                    callback_logger=log_callback,
+                    task_uuid=task_uuid,
+                )
+
+                if job_result.email:
+                    crud.update_registration_task(db, task_uuid, email_address=job_result.email)
+
+                if job_result.email_service_id:
+                    crud.update_registration_task(db, task_uuid, email_service_id=job_result.email_service_id)
+
+                if job_result.success:
+                    service.proxy_usage_updater(db, proxy_id)
+                    service._run_auto_uploads(
+                        db,
+                        job_result=job_result,
+                        log_callback=log_callback,
+                        auto_upload_cpa=auto_upload_cpa,
+                        cpa_service_ids=cpa_service_ids,
+                        auto_upload_sub2api=auto_upload_sub2api,
+                        sub2api_service_ids=sub2api_service_ids,
+                        auto_upload_tm=auto_upload_tm,
+                        tm_service_ids=tm_service_ids,
+                        now=now,
+                    )
+                    crud.update_registration_task(
+                        db,
+                        task_uuid,
+                        status="completed",
+                        pipeline_status="completed",
+                        completed_at=now(),
+                        result=job_result.result_payload
+                        or {
+                            "success": True,
+                            "email": job_result.email,
+                            "account_id": job_result.account_id,
+                        },
+                    )
+                    runs_service.mark_completed(run.id)
+                    runs_service.append_event(run.id, level="info", message="completed")
+                    service.task_manager.update_status(task_uuid, "completed", email=job_result.email)
+                else:
+                    crud.update_registration_task(
+                        db,
+                        task_uuid,
+                        status="failed",
+                        pipeline_status="failed",
+                        completed_at=now(),
+                        error_message=job_result.error_message,
+                    )
+                    runs_service.mark_failed(run.id, error_message=job_result.error_message)
+                    runs_service.append_event(run.id, level="error", message="failed")
+                    service.task_manager.update_status(task_uuid, "failed", error=job_result.error_message)
+
+                if hasattr(service.task_manager, "clear_task_steps"):
+                    service.task_manager.clear_task_steps(task_uuid)
+
+                return service.build_result_for_task(task_uuid, db=db, job_result=job_result)
+        except Exception as exc:
+            logger.exception("注册任务异常: %s", task_uuid)
+            try:
+                with service.db_factory() as db:
+                    runs_service = RegistrationRunsService(db)
+                    run = runs_service.get_run_by_task_uuid(task_uuid)
+                    if run is None:
+                        run = runs_service.create_run(
+                            task_uuid=task_uuid,
+                            batch_id=batch_id or None,
+                            trigger_source="batch" if batch_id else "manual",
+                        )
+                    crud.update_registration_task(
+                        db,
+                        task_uuid,
+                        status="failed",
+                        pipeline_status="failed",
+                        completed_at=now(),
+                        error_message=str(exc),
+                    )
+                    runs_service.mark_failed(run.id, error_message=str(exc))
+                    runs_service.append_event(run.id, level="error", message="failed")
+            except Exception:
+                logger.exception("注册任务异常后写回失败: %s", task_uuid)
+
+            service.task_manager.update_status(task_uuid, "failed", error=str(exc))
+            if hasattr(service.task_manager, "clear_task_steps"):
+                service.task_manager.clear_task_steps(task_uuid)
+            failed_result = RegistrationJobResult(success=False, error_message=str(exc))
+            return service.build_result_for_task(task_uuid, job_result=failed_result)
+
+    def _resolve_proxy_for_registration(self, db) -> tuple[str | None, int | None]:
+        proxy = crud.get_random_proxy(db)
+        if proxy:
+            return proxy.proxy_url, proxy.id
+
+        from ..core.dynamic_proxy import get_proxy_url_for_task
+
+        proxy_url = get_proxy_url_for_task()
+        if proxy_url:
+            return proxy_url, None
+        return None, None
+
+    def _update_proxy_usage(self, db, proxy_id: int | None) -> None:
+        if proxy_id:
+            crud.update_proxy_last_used(db, proxy_id)
+
+    def _run_auto_uploads(
+        self,
+        db,
+        *,
+        job_result: RegistrationJobResult,
+        log_callback: Callable[[str], None],
+        auto_upload_cpa: bool,
+        cpa_service_ids: list[int],
+        auto_upload_sub2api: bool,
+        sub2api_service_ids: list[int],
+        auto_upload_tm: bool,
+        tm_service_ids: list[int],
+        now: Callable[[], Any],
+    ) -> None:
+        saved_account = None
+        if job_result.account_id:
+            saved_account = db.query(Account).filter_by(id=job_result.account_id).first()
+        elif job_result.email:
+            saved_account = db.query(Account).filter_by(email=job_result.email).first()
+
+        if not saved_account or not saved_account.access_token:
+            return
+
+        if auto_upload_cpa:
+            try:
+                from ..core.upload.cpa_upload import generate_token_json, upload_to_cpa
+
+                token_data = generate_token_json(saved_account)
+                service_ids = cpa_service_ids or [service.id for service in crud.get_cpa_services(db, enabled=True)]
+                if not service_ids:
+                    log_callback("[CPA] 无可用 CPA 服务，跳过上传")
+                for service_id in service_ids:
+                    try:
+                        service = crud.get_cpa_service_by_id(db, service_id)
+                        if service is None:
+                            continue
+                        log_callback(f"[CPA] 正在把账号打包发往服务站: {service.name}")
+                        ok, message = upload_to_cpa(
+                            token_data,
+                            api_url=service.api_url,
+                            api_token=service.api_token,
+                        )
+                        if ok:
+                            saved_account.cpa_uploaded = True
+                            saved_account.cpa_uploaded_at = now()
+                            db.commit()
+                            log_callback(f"[CPA] 投递成功，服务站已签收: {service.name}")
+                        else:
+                            log_callback(f"[CPA] 上传失败({service.name}): {message}")
+                    except Exception as exc:
+                        log_callback(f"[CPA] 异常({service_id}): {exc}")
+            except Exception as exc:
+                log_callback(f"[CPA] 上传异常: {exc}")
+
+        if auto_upload_sub2api:
+            try:
+                from ..core.upload.sub2api_upload import upload_to_sub2api
+
+                service_ids = sub2api_service_ids or [
+                    service.id for service in crud.get_sub2api_services(db, enabled=True)
+                ]
+                if not service_ids:
+                    log_callback("[Sub2API] 无可用 Sub2API 服务，跳过上传")
+                for service_id in service_ids:
+                    try:
+                        service = crud.get_sub2api_service_by_id(db, service_id)
+                        if service is None:
+                            continue
+                        log_callback(f"[Sub2API] 正在把账号发往服务站: {service.name}")
+                        ok, message = upload_to_sub2api([saved_account], service.api_url, service.api_key)
+                        log_callback(f"[Sub2API] {'成功' if ok else '失败'}({service.name}): {message}")
+                    except Exception as exc:
+                        log_callback(f"[Sub2API] 异常({service_id}): {exc}")
+            except Exception as exc:
+                log_callback(f"[Sub2API] 上传异常: {exc}")
+
+        if auto_upload_tm:
+            try:
+                from ..core.upload.team_manager_upload import upload_to_team_manager
+
+                service_ids = tm_service_ids or [service.id for service in crud.get_tm_services(db, enabled=True)]
+                if not service_ids:
+                    log_callback("[TM] 无可用 Team Manager 服务，跳过上传")
+                for service_id in service_ids:
+                    try:
+                        service = crud.get_tm_service_by_id(db, service_id)
+                        if service is None:
+                            continue
+                        log_callback(f"[TM] 正在把账号发往服务站: {service.name}")
+                        ok, message = upload_to_team_manager(saved_account, service.api_url, service.api_key)
+                        log_callback(f"[TM] {'成功' if ok else '失败'}({service.name}): {message}")
+                    except Exception as exc:
+                        log_callback(f"[TM] 异常({service_id}): {exc}")
+            except Exception as exc:
+                log_callback(f"[TM] 上传异常: {exc}")

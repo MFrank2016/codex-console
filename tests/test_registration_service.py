@@ -1,0 +1,190 @@
+import asyncio
+from contextlib import contextmanager
+
+import pytest
+
+from src.core.registration_job import RegistrationJobResult
+from src.database import crud
+from src.database.models import Base
+from src.database.session import DatabaseSessionManager
+
+
+@pytest.fixture
+def temp_db(tmp_path):
+    db_path = tmp_path / "registration-service.db"
+    manager = DatabaseSessionManager(f"sqlite:///{db_path}")
+    Base.metadata.create_all(bind=manager.engine)
+
+    session = manager.SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def db_factory(temp_db):
+    @contextmanager
+    def _factory():
+        yield temp_db
+
+    return _factory
+
+
+class FakeTaskManager:
+    def __init__(self):
+        self._task_status = {}
+        self._task_steps = {}
+        self._task_cancelled = {}
+        self._logs = {}
+        self._loop = None
+
+    def set_loop(self, loop):
+        self._loop = loop
+
+    def get_loop(self):
+        return self._loop
+
+    def is_cancelled(self, task_uuid):
+        return self._task_cancelled.get(task_uuid, False)
+
+    def update_status(self, task_uuid, status, **kwargs):
+        self._task_status.setdefault(task_uuid, {}).update({"status": status, **kwargs})
+
+    def get_status(self, task_uuid):
+        return self._task_status.get(task_uuid)
+
+    def add_log(self, task_uuid, message):
+        self._logs.setdefault(task_uuid, []).append(message)
+
+    def get_logs(self, task_uuid):
+        return list(self._logs.get(task_uuid, []))
+
+    def create_log_callback(self, task_uuid, prefix="", batch_id=""):
+        def _callback(message: str):
+            full = f"{prefix} {message}" if prefix else message
+            self.add_log(task_uuid, full)
+
+        return _callback
+
+    def clear_task_steps(self, task_uuid):
+        self._task_steps.pop(task_uuid, None)
+
+    def set_task_steps(self, task_uuid, steps):
+        self._task_steps[task_uuid] = list(steps or [])
+
+    @property
+    def executor(self):
+        return None
+
+
+
+def test_registration_service_creates_run_records_and_terminal_status(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-1", pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        assert kwargs["pipeline_key"] == "codexgen_pipeline"
+        kwargs["callback_logger"]("job-started")
+        return RegistrationJobResult(
+            success=True,
+            account_id=101,
+            email="success@example.com",
+            result_payload={"success": True, "email": "success@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid="task-1",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    assert result.run.task_uuid == "task-1"
+    assert result.run.status == "completed"
+    assert result.run.started_at is not None
+    assert result.run.completed_at is not None
+    assert [event.message for event in result.events] == ["running", "completed"]
+    assert task_manager.get_status("task-1")["status"] == "completed"
+    assert "job-started" in task_manager.get_logs("task-1")
+
+
+
+def test_registration_service_keeps_legacy_registration_task_in_sync(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-2", pipeline_key="current_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        return RegistrationJobResult(
+            success=False,
+            email="failed@example.com",
+            error_message="boom",
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid="task-2",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+    )
+
+    persisted = crud.get_registration_task(temp_db, "task-2")
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.pipeline_status == "failed"
+    assert persisted.email_address == "failed@example.com"
+    assert persisted.error_message == "boom"
+    assert result.task.status == "failed"
+    assert result.run.status == "failed"
+
+
+@pytest.mark.anyio
+async def test_registration_service_async_run_initializes_pending_status_and_queue_log(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-3")
+    task_manager = FakeTaskManager()
+    task_manager.set_loop(asyncio.get_running_loop())
+
+    def fake_sync_runner(**kwargs):
+        crud.update_registration_task(
+            temp_db,
+            kwargs["task_uuid"],
+            status="completed",
+            pipeline_status="completed",
+            completed_at=kwargs["utc_now_provider"](),
+        )
+        return kwargs["service"].build_result_for_task(kwargs["task_uuid"])
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        sync_runner=fake_sync_runner,
+    )
+
+    await service.run_single_task(
+        task_uuid="task-3",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+    )
+
+    assert task_manager.get_status("task-3")["status"] == "completed"
+    assert any("已加入队列" in line for line in task_manager.get_logs("task-3"))

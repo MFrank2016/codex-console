@@ -201,6 +201,7 @@ def run_registration_job(
     known_email: str | None = None
     known_service_id: int | None = email_service_id
     known_result_payload: dict[str, Any] | None = None
+    engine: RegistrationEngine | None = None
     try:
         service_type, config, resolved_service_id = _resolve_email_service(
             db=db,
@@ -260,6 +261,7 @@ def run_registration_job(
             known_result_payload = result_payload
 
             if not result.success:
+                engine.flush_task_logs()
                 return RegistrationJobResult(
                     success=False,
                     email=result.email or None,
@@ -300,6 +302,8 @@ def run_registration_job(
         )
     except Exception as exc:
         logger.error("run_registration_job failed: %s", exc)
+        if engine is not None:
+            engine.flush_task_logs()
         _update_registration_task_failure(
             db,
             task_uuid=task_uuid,
