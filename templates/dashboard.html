@@ -1,0 +1,14 @@
+{% extends "_workspace_base.html" %}
+
+{% block page_content %}
+<section class="hero-metrics" id="dashboard-hero"></section>
+<section class="workspace-grid">
+  <div class="workspace-panel" id="dashboard-task-health"></div>
+  <div class="workspace-panel" id="dashboard-quick-links"></div>
+</section>
+<section class="workspace-panel" id="dashboard-recent-activity"></section>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="{{ '/static/js/dashboard.js?v=' ~ static_version }}"></script>
+{% endblock %}

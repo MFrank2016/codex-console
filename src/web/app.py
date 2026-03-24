@@ -171,7 +171,7 @@ def create_app() -> FastAPI:
                 request,
                 page_key="dashboard",
                 page_title="控制台总览",
-                page_subtitle="查看系统状态、最近执行和关键指标。",
+                page_subtitle="查看系统状态、任务健康、快捷入口与最近活动。",
             ),
         )
 
