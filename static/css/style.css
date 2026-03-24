@@ -1447,6 +1447,91 @@ body {
     line-height: 1.65;
 }
 
+.scheduled-run-console-status {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--surface-hover);
+    margin-bottom: 12px;
+}
+
+.scheduled-run-console-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.scheduled-run-console-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.scheduled-run-console-shell {
+    min-height: 280px;
+    max-height: 420px;
+    overflow: auto;
+    padding: 12px;
+    border-radius: var(--radius);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: #0b1220;
+    color: #dbe7ff;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.65;
+}
+
+.scheduled-run-log-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.scheduled-run-log-level-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 52px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #334155;
+    color: #f8fafc;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.5;
+    text-transform: uppercase;
+}
+
+.scheduled-run-log-level-info {
+    color: #60a5fa;
+}
+
+.scheduled-run-log-level-warn {
+    color: #facc15;
+}
+
+.scheduled-run-log-level-error {
+    color: #f87171;
+}
+
+.scheduled-run-log-wrap {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.scheduled-run-log-nowrap {
+    white-space: pre;
+    overflow-x: auto;
+}
+
 /* ============================================
    导入区域
    ============================================ */

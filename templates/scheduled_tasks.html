@@ -266,6 +266,18 @@
         </div>
     </div>
 
+    <div id="run-detail-modal" class="modal">
+        <div class="modal-content" style="max-width: 960px;">
+            <div class="modal-header">
+                <h3>运行详情</h3>
+                <button class="modal-close" data-close-modal="run-detail-modal">&times;</button>
+            </div>
+            <div class="modal-body" id="run-detail-modal-body">
+                <div style="color: var(--text-muted);">未选择运行记录</div>
+            </div>
+        </div>
+    </div>
+
     <div id="run-log-modal" class="modal">
         <div class="modal-content" style="max-width: 960px;">
             <div class="modal-header">
@@ -273,23 +285,43 @@
                 <button class="modal-close" data-close-modal="run-log-modal">&times;</button>
             </div>
             <div class="modal-body">
-                <div id="run-log-status-bar" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:12px;border-radius:8px;background:var(--surface-hover);margin-bottom:12px;">
+                <div id="run-log-status-bar" class="scheduled-run-console-status">
                     <span>未选择运行记录</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+
+                <div class="scheduled-run-console-toolbar">
+                    <div class="scheduled-run-console-toolbar-group">
+                        <input id="run-log-search-input" class="form-input" type="search" placeholder="搜索日志">
+                        <select id="run-log-level-filter" class="form-select">
+                            <option value="">全部级别</option>
+                            <option value="INFO">INFO</option>
+                            <option value="WARN">WARN</option>
+                            <option value="ERROR">ERROR</option>
+                        </select>
                         <button class="btn btn-secondary btn-sm" id="run-log-refresh-btn">刷新</button>
+                        <button class="btn btn-secondary btn-sm" id="run-log-copy-btn">复制</button>
+                        <button class="btn btn-secondary btn-sm" id="run-log-clear-btn">清空</button>
                         <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);">
                             <input type="checkbox" id="run-log-auto-scroll" checked>
                             自动滚动
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);">
+                            <input type="checkbox" id="run-log-wrap-input" checked>
+                            自动换行
                         </label>
                     </div>
                     <div id="run-log-stop-actions">
                         <button class="btn btn-secondary btn-sm" id="run-log-stop-btn" data-action="stop-run" style="display:none;" onclick="handleRunLogAction(this)">停止运行</button>
                     </div>
                 </div>
+
                 <div id="run-log-modal-body">
-                    <div style="color: var(--text-muted);">暂无记录</div>
+                    <div id="run-log-console" class="scheduled-run-console-shell scheduled-run-log-wrap">
+                        <div class="scheduled-run-log-line">
+                            <span class="scheduled-run-log-level-badge">INFO</span>
+                            <span>暂无记录</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

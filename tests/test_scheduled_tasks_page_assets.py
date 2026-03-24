@@ -91,6 +91,13 @@ def test_scheduled_tasks_template_contains_run_center_hooks():
     assert 'id="run-log-auto-scroll"' in template
     assert 'id="run-log-stop-actions"' in template
     assert 'id="run-log-stop-btn"' in template
+    assert 'id="run-detail-modal"' in template
+    assert 'id="run-detail-modal-body"' in template
+    assert 'id="run-log-search-input"' in template
+    assert 'id="run-log-level-filter"' in template
+    assert 'id="run-log-copy-btn"' in template
+    assert 'id="run-log-clear-btn"' in template
+    assert 'id="run-log-wrap-input"' in template
 
 
 def test_scheduled_tasks_run_center_filter_panel_uses_shared_shell_classes():
@@ -442,6 +449,10 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert ".scheduled-run-summary" in stylesheet
     assert ".scheduled-run-detail-head" in stylesheet
     assert ".scheduled-run-log-panel" in stylesheet
+    assert ".scheduled-run-console-shell" in stylesheet
+    assert ".scheduled-run-console-toolbar" in stylesheet
+    assert ".scheduled-run-log-line" in stylesheet
+    assert ".scheduled-run-log-level-error" in stylesheet
 
 
 def test_scheduled_tasks_script_contains_create_edit_enable_disable_hooks():
