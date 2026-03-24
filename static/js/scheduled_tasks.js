@@ -221,7 +221,7 @@ let scheduledRunConsoleState = {
     levelFilter: '',
     wrap: Boolean(scheduledTaskElements.runLogWrapInput?.checked),
 };
-const SCHEDULED_RUN_LOG_LINE_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[(INFO|WARN|ERROR)\]\s?(.*)$/;
+const SCHEDULED_RUN_LOG_LINE_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{3})?) \[(INFO|WARN|ERROR)\]\s?(.*)$/;
 
 function isScheduledRunLogRequestActive(runId, token) {
     return token === scheduledRunLogLoadToken && activeScheduledRunId === Number(runId);
@@ -1626,6 +1626,10 @@ function updateScheduledRunConsoleShell() {
     return consoleElement;
 }
 
+function formatScheduledRunLogTimestamp(timestamp) {
+    return String(timestamp || '').slice(0, 19);
+}
+
 function renderScheduledRunConsoleLine(line) {
     if (!line.level) {
         return `
@@ -1637,9 +1641,9 @@ function renderScheduledRunConsoleLine(line) {
     const levelClass = `scheduled-run-log-level-${String(line.level).toLowerCase()}`;
     return `
         <div class="scheduled-run-log-line">
-            <span class="scheduled-run-log-timestamp">${escapeHtml(line.timestamp)}</span>
-            <span class="scheduled-run-log-level-badge ${levelClass}">[${escapeHtml(line.level)}]</span>
-            <span>${escapeHtml(line.message)}</span>
+            <span class="scheduled-run-log-timestamp">${escapeHtml(formatScheduledRunLogTimestamp(line.timestamp))}</span>
+            <span class="scheduled-run-log-level-badge ${levelClass}">${escapeHtml(line.level)}</span>
+            <span class="scheduled-run-log-message">${escapeHtml(line.message)}</span>
         </div>
     `;
 }
