@@ -1287,6 +1287,16 @@ async function runScenario() {{
         afterHtml: logConsole.innerHTML,
       }};
     }}
+    case 'wrap_toggle': {{
+      await context.window.openScheduledRunLog(123);
+      const beforeWrap = logConsole.classList.contains('scheduled-run-log-wrap');
+      const beforeNoWrap = logConsole.classList.contains('scheduled-run-log-nowrap');
+      getElement('run-log-wrap-input').checked = false;
+      trigger('change', getElement('run-log-wrap-input'), {{ target: getElement('run-log-wrap-input') }});
+      const afterWrap = logConsole.classList.contains('scheduled-run-log-wrap');
+      const afterNoWrap = logConsole.classList.contains('scheduled-run-log-nowrap');
+      return {{ beforeWrap, beforeNoWrap, afterWrap, afterNoWrap }};
+    }}
     case 'second_chunk_reapplies_filters': {{
       await context.window.openScheduledRunLog(123);
       searchInput.value = 'boom';
@@ -1406,6 +1416,15 @@ def test_scheduled_tasks_run_log_level_filter_rerenders_matching_lines_only():
     assert "warn once" not in result["afterHtml"]
     assert ">ERROR<" in result["afterHtml"]
     assert "boom first" in result["afterHtml"]
+
+
+def test_scheduled_tasks_run_log_wrap_toggle_switches_console_wrap_class():
+    result = run_scheduled_tasks_log_console_scenario("wrap_toggle")
+
+    assert result["beforeWrap"] is True
+    assert result["beforeNoWrap"] is False
+    assert result["afterWrap"] is False
+    assert result["afterNoWrap"] is True
 
 
 def test_scheduled_tasks_run_log_reapplies_filters_after_new_chunk_arrives():
