@@ -1,7 +1,10 @@
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from src.database import crud
+from src.database.session import get_db
 from src.config.settings import get_settings
 from src.web.app import create_app
 
@@ -39,18 +42,49 @@ def test_dashboard_script_loads_summary_endpoint_and_render_helpers():
     assert "/dashboard/summary" in script
     assert "renderDashboardHero" in script
     assert "renderDashboardTaskHealth" in script
+    assert "registration.total_tasks" in script
 
 
-def test_dashboard_summary_api_returns_expected_top_level_sections():
+def test_dashboard_summary_api_returns_expected_nested_contract():
     app = create_app()
     with TestClient(app) as client:
+        task_uuid = str(uuid4())
+        with get_db() as db:
+            crud.create_registration_task(
+                db,
+                task_uuid=task_uuid,
+                pipeline_key="current_pipeline",
+            )
+
         response = client.get("/api/dashboard/summary")
 
     assert response.status_code == 200
     payload = response.json()
-    assert "registration" in payload
-    assert "accounts" in payload
-    assert "scheduled" in payload
+    assert "total_tasks" in payload["registration"]
+    assert "success_rate" in payload["registration"]
+    assert isinstance(payload["registration"]["total_tasks"], int)
+    assert payload["registration"]["total_tasks"] >= 1
+    assert payload["registration"]["success_rate"] is None or isinstance(payload["registration"]["success_rate"], float)
+
+    assert "total" in payload["accounts"]
+    assert isinstance(payload["accounts"]["total"], int)
+
+    assert "plans_total" in payload["scheduled"]
+    assert isinstance(payload["scheduled"]["plans_total"], int)
+
+    assert isinstance(payload["quick_links"], list)
+    assert payload["quick_links"]
+    quick_link = payload["quick_links"][0]
+    assert "label" in quick_link
+    assert "href" in quick_link
+
+    assert isinstance(payload["recent_activity"], list)
+    assert payload["recent_activity"]
+    activity = payload["recent_activity"][0]
+    assert "title" in activity
+    assert "status" in activity
+    assert "href" in activity
+    assert "timestamp" in activity
 
 
 def test_registration_workbench_page_requires_auth_and_renders_registration_hooks():

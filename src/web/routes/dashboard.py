@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter
 from sqlalchemy import desc, func
 
 from ...database import crud
-from ...database.models import Account, RegistrationTask, ScheduledRun
+from ...database.models import Account, RegistrationTask, ScheduledPlan, ScheduledRun
 from ...database.session import get_db
+from ...scheduler.time_utils import SCHEDULER_TZ
 
 router = APIRouter()
 
@@ -35,6 +36,7 @@ def _build_registration_summary(db) -> dict[str, int | float | None]:
     success_rate = round((completed / finished) * 100, 1) if finished else None
 
     return {
+        "total_tasks": total,
         "total": total,
         "pending": pending,
         "running": running,
@@ -59,12 +61,18 @@ def _build_accounts_summary(db) -> dict[str, int]:
 
 
 def _build_scheduled_summary(db) -> dict[str, int]:
-    plans = crud.get_scheduled_plans(db)
-    start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    plans_total = int(db.query(func.count(ScheduledPlan.id)).scalar() or 0)
+    plans_enabled = int(
+        db.query(func.count(ScheduledPlan.id))
+        .filter(ScheduledPlan.enabled.is_(True))
+        .scalar()
+        or 0
+    )
+    start_of_day = _scheduler_day_start_utc_naive()
 
     return {
-        "plans_total": len(plans),
-        "plans_enabled": sum(1 for plan in plans if plan.enabled),
+        "plans_total": plans_total,
+        "plans_enabled": plans_enabled,
         "runs_total": crud.count_scheduled_runs(db),
         "runs_today": crud.count_scheduled_runs(db, started_after=start_of_day),
         "runs_running": crud.count_scheduled_runs(db, status="running"),
@@ -74,19 +82,32 @@ def _build_scheduled_summary(db) -> dict[str, int]:
 
 def _build_recent_activity(db, limit: int = 6) -> list[dict[str, str | None]]:
     registration_rows = (
-        db.query(RegistrationTask)
+        db.query(
+            RegistrationTask.task_uuid,
+            RegistrationTask.pipeline_key,
+            RegistrationTask.status,
+            RegistrationTask.created_at,
+        )
         .order_by(desc(RegistrationTask.created_at), desc(RegistrationTask.id))
         .limit(limit)
         .all()
     )
     scheduled_rows = (
-        db.query(ScheduledRun)
+        db.query(
+            ScheduledRun.id,
+            ScheduledRun.plan_id,
+            ScheduledRun.status,
+            ScheduledRun.started_at,
+            ScheduledRun.created_at,
+            ScheduledPlan.name.label("plan_name"),
+        )
+        .outerjoin(ScheduledPlan, ScheduledPlan.id == ScheduledRun.plan_id)
         .order_by(desc(ScheduledRun.started_at), desc(ScheduledRun.id))
         .limit(limit)
         .all()
     )
 
-    items: list[dict[str, str | None]] = []
+    items: list[dict[str, str | datetime | None]] = []
 
     for task in registration_rows:
         timestamp = task.created_at
@@ -98,7 +119,7 @@ def _build_recent_activity(db, limit: int = 6) -> list[dict[str, str | None]]:
                 "status": task.status or "unknown",
                 "href": "/registration-workbench",
                 "timestamp": timestamp.isoformat() if timestamp else None,
-                "_sort_key": timestamp.isoformat() if timestamp else "",
+                "_sort_ts": timestamp,
             }
         )
 
@@ -108,15 +129,15 @@ def _build_recent_activity(db, limit: int = 6) -> list[dict[str, str | None]]:
             {
                 "kind": "scheduled",
                 "title": f"定时运行 #{run.id}",
-                "description": run.plan.name if run.plan else f"计划 #{run.plan_id}",
+                "description": run.plan_name or f"计划 #{run.plan_id}",
                 "status": run.status,
                 "href": "/scheduled-tasks",
                 "timestamp": timestamp.isoformat() if timestamp else None,
-                "_sort_key": timestamp.isoformat() if timestamp else "",
+                "_sort_ts": timestamp,
             }
         )
 
-    items.sort(key=lambda item: item.get("_sort_key", ""), reverse=True)
+    items.sort(key=lambda item: item.get("_sort_ts") or datetime.min, reverse=True)
     compact_items = []
     for item in items[:limit]:
         compact_items.append(
@@ -130,6 +151,16 @@ def _build_recent_activity(db, limit: int = 6) -> list[dict[str, str | None]]:
             }
         )
     return compact_items
+
+
+def _scheduler_day_start_utc_naive(now: datetime | None = None) -> datetime:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    scheduler_now = current.astimezone(SCHEDULER_TZ)
+    scheduler_day_start = scheduler_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return scheduler_day_start.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("/summary")
@@ -162,5 +193,5 @@ async def get_dashboard_summary():
                 },
             ],
             "recent_activity": _build_recent_activity(db),
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }

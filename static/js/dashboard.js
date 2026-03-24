@@ -25,9 +25,10 @@ function renderDashboardHero(summary) {
   const accounts = summary.accounts || {};
   const scheduled = summary.scheduled || {};
   const successRate = registration.success_rate == null ? '—' : `${registration.success_rate}%`;
+  const totalTasks = registration.total_tasks ?? registration.total ?? 0;
 
   container.innerHTML = [
-    metricCard('注册任务总数', registration.total ?? 0, `运行中 ${registration.running ?? 0}`),
+    metricCard('注册任务总数', totalTasks, `运行中 ${registration.running ?? 0}`),
     metricCard('注册成功率', successRate, `失败 ${registration.failed ?? 0}`),
     metricCard('账号总数', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`),
     metricCard('定时计划', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`),
