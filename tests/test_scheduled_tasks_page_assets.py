@@ -98,6 +98,15 @@ def test_scheduled_tasks_template_contains_run_center_hooks():
     assert 'id="run-log-copy-btn"' in template
     assert 'id="run-log-clear-btn"' in template
     assert 'id="run-log-wrap-input"' in template
+    assert "scheduled-run-log-modal-content" in template
+    assert 'id="run-log-modal"' in template
+    run_log_modal_match = re.search(r'<div id="run-log-modal" class="modal">\s*(<div\b[^>]*>)', template, re.S)
+    assert run_log_modal_match is not None
+    run_log_modal_content_tag = run_log_modal_match.group(1)
+    assert "max-width: 960px" not in run_log_modal_content_tag
+    class_match = re.search(r'class\s*=\s*"([^"]+)"', run_log_modal_content_tag)
+    assert class_match is not None
+    assert "scheduled-run-log-modal-content" in class_match.group(1).split()
 
 
 def test_scheduled_tasks_run_center_filter_panel_uses_shared_shell_classes():
@@ -449,9 +458,12 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert ".scheduled-run-summary" in stylesheet
     assert ".scheduled-run-detail-head" in stylesheet
     assert ".scheduled-run-log-panel" in stylesheet
+    assert ".scheduled-run-log-modal-content" in stylesheet
     assert ".scheduled-run-console-shell" in stylesheet
     assert ".scheduled-run-console-toolbar" in stylesheet
     assert ".scheduled-run-log-line" in stylesheet
+    assert ".scheduled-run-log-timestamp" in stylesheet
+    assert ".scheduled-run-log-message" in stylesheet
     assert ".scheduled-run-log-level-error" in stylesheet
 
 
@@ -1031,17 +1043,33 @@ const document = {{
 let timerCallback = null;
 const runRequests = [];
 const logRequests = [];
+let copiedText = '';
 const detailIsRunning = scenarioName === 'second_chunk_reapplies_filters' || scenarioName === 'auto_scroll_disabled_preserves_position';
 
-const firstChunk = [
+const defaultFirstChunk = [
   '2026-03-24 09:00:00.100 [INFO] startup ok',
   '2026-03-24 09:00:00.200 [ERROR] boom first',
   '2026-03-24 09:00:00.300 [WARN] warn once',
 ].join('\n');
+const timestampNormalizationChunk = [
+  '2026-03-24 09:00:00.100 [INFO] startup ok',
+  '2026-03-24 09:00:02 [WARN] warn second precision',
+].join('\n');
+const copyRegressionChunk = [
+  '2026-03-24 09:00:00.100 [INFO] startup ok',
+  '2026-03-24 09:00:00.100 [ERROR] boom first',
+  '2026-03-24 09:00:00.300 [WARN] warn once',
+].join('\n');
+const firstChunk = scenarioName === 'timestamp_normalization'
+  ? timestampNormalizationChunk
+  : (scenarioName === 'copy_visible_logs_preserves_raw_text' ? copyRegressionChunk : defaultFirstChunk);
 const secondChunk = '\n' + [
   '2026-03-24 09:00:01.100 [INFO] boom info second',
   '2026-03-24 09:00:01.200 [ERROR] boom second',
 ].join('\n');
+const writeClipboard = async (value) => {{
+  copiedText = String(value ?? '');
+}};
 
 const context = {{
   console,
@@ -1061,13 +1089,13 @@ const context = {{
   window: {{
     navigator: {{
       clipboard: {{
-        writeText: async () => {{}},
+        writeText: writeClipboard,
       }},
     }},
   }},
   navigator: {{
     clipboard: {{
-      writeText: async () => {{}},
+      writeText: writeClipboard,
     }},
   }},
   theme: {{ toggle() {{}} }},
@@ -1180,6 +1208,12 @@ async function runScenario() {{
         modalActive: getElement('run-log-modal').classList.contains('active'),
       }};
     }}
+    case 'timestamp_normalization': {{
+      await context.window.openScheduledRunLog(123);
+      return {{
+        consoleHtml: logConsole.innerHTML,
+      }};
+    }}
     case 'search_enter': {{
       await context.window.openScheduledRunLog(123);
       const beforeHtml = logConsole.innerHTML;
@@ -1237,6 +1271,17 @@ async function runScenario() {{
         scrollHeight: logConsole.scrollHeight,
       }};
     }}
+    case 'copy_visible_logs_preserves_raw_text': {{
+      await context.window.openScheduledRunLog(123);
+      levelFilter.value = 'ERROR';
+      trigger('change', levelFilter, {{ target: levelFilter }});
+      trigger('click', getElement('run-log-copy-btn'), {{ preventDefault() {{}} }});
+      await flush();
+      await flush();
+      return {{
+        copiedText,
+      }};
+    }}
     default:
       throw new Error('unknown scenario: ' + scenarioName);
   }}
@@ -1268,7 +1313,7 @@ def test_scheduled_tasks_open_run_log_renders_console_shell_and_loads_first_chun
 
     assert result["modalActive"] is True
     assert result["consoleHasShell"] is True
-    assert "[ERROR]" in result["consoleHtml"]
+    assert ">ERROR<" in result["consoleHtml"]
     assert "boom first" in result["consoleHtml"]
     assert "/scheduled-runs/123/logs?offset=0" in result["logRequests"]
 
@@ -1295,35 +1340,56 @@ def test_scheduled_tasks_run_log_search_applies_only_on_enter():
     assert result["enterPrevented"] is True
     assert "startup ok" in result["beforeHtml"]
     assert "startup ok" not in result["afterHtml"]
-    assert "[ERROR]" in result["afterHtml"]
+    assert ">ERROR<" in result["afterHtml"]
     assert "boom first" in result["afterHtml"]
 
 
 def test_scheduled_tasks_run_log_level_filter_rerenders_matching_lines_only():
     result = run_scheduled_tasks_log_console_scenario("level_filter")
 
-    assert "[INFO]" in result["beforeHtml"]
+    assert ">INFO<" in result["beforeHtml"]
     assert "startup ok" in result["beforeHtml"]
-    assert "[WARN]" in result["beforeHtml"]
+    assert ">WARN<" in result["beforeHtml"]
     assert "warn once" in result["beforeHtml"]
     assert "startup ok" not in result["afterHtml"]
     assert "warn once" not in result["afterHtml"]
-    assert "[ERROR]" in result["afterHtml"]
+    assert ">ERROR<" in result["afterHtml"]
     assert "boom first" in result["afterHtml"]
 
 
 def test_scheduled_tasks_run_log_reapplies_filters_after_new_chunk_arrives():
     result = run_scheduled_tasks_log_console_scenario("second_chunk_reapplies_filters")
 
-    assert "[ERROR]" in result["beforeHtml"]
+    assert ">ERROR<" in result["beforeHtml"]
     assert "boom first" in result["beforeHtml"]
     assert "boom info second" not in result["beforeHtml"]
-    assert "[ERROR]" in result["afterHtml"]
+    assert ">ERROR<" in result["afterHtml"]
     assert "boom first" in result["afterHtml"]
     assert "boom second" in result["afterHtml"]
     assert "boom info second" not in result["afterHtml"]
     assert "/scheduled-runs/123/logs?offset=0" in result["logRequests"]
     assert any(request.endswith(f"offset={len('2026-03-24 09:00:00.100 [INFO] startup ok\n2026-03-24 09:00:00.200 [ERROR] boom first\n2026-03-24 09:00:00.300 [WARN] warn once')}") for request in result["logRequests"])
+
+
+def test_scheduled_tasks_run_log_renders_second_precision_timestamps_and_column_hooks():
+    result = run_scheduled_tasks_log_console_scenario("timestamp_normalization")
+
+    assert "2026-03-24 09:00:00.100" not in result["consoleHtml"]
+    assert "2026-03-24 09:00:00" in result["consoleHtml"]
+    assert "2026-03-24 09:00:02" in result["consoleHtml"]
+    assert "scheduled-run-log-timestamp" in result["consoleHtml"]
+    assert "scheduled-run-log-message" in result["consoleHtml"]
+    assert ">INFO<" in result["consoleHtml"]
+    assert ">WARN<" in result["consoleHtml"]
+
+
+def test_scheduled_tasks_run_log_copy_uses_raw_visible_lines():
+    result = run_scheduled_tasks_log_console_scenario("copy_visible_logs_preserves_raw_text")
+
+    assert result["copiedText"] == "2026-03-24 09:00:00.100 [ERROR] boom first"
+    assert "startup ok" not in result["copiedText"]
+    assert "warn once" not in result["copiedText"]
+
 
 def test_scheduled_tasks_script_drops_stale_builtin_keys_when_task_type_switches():
     node_script = r"""
