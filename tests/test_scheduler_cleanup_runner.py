@@ -218,6 +218,7 @@ def test_cleanup_runner_persists_probe_progress_logs(temp_db, monkeypatch):
     temp_db.expire_all()
     persisted_run = temp_db.get(ScheduledRun, run.id)
     assert persisted_run is not None
+    assert persisted_run.summary["probe_items_selected"] == 20
     assert "probe candidates loaded (total=200, selected=20)" in (persisted_run.logs or "")
     assert "probe progress (scanned=20/20, invalid=0)" in (persisted_run.logs or "")
 
@@ -372,6 +373,7 @@ def test_cleanup_runner_persists_failure_status_when_probe_raises(temp_db, monke
     assert persisted_run.finished_at is not None
     assert persisted_run.error_message == "probe failed"
     assert persisted_run.summary == {
+        "probe_items_selected": 0,
         "invalid_items_found": 0,
         "invalid_items_considered": 0,
         "local_marked_expired": 0,

@@ -621,7 +621,7 @@ window.renderScheduledRuns([
     status: 'success',
     started_at: null,
     finished_at: null,
-    summary: { invalid_items_found: 20, remote_deleted: 18 },
+    summary: { probe_items_selected: 5000, invalid_items_found: 20, remote_deleted: 18 },
   },
   {
     id: 2,
@@ -648,7 +648,7 @@ window.renderScheduledRuns([
 ]);
 
 const html = runsBody.innerHTML;
-if (!html.includes('检测 20 · 清理 18')) throw new Error('missing cleanup concise summary: ' + html);
+if (!html.includes('检测 5000 · 失效 20 · 成功清理 18')) throw new Error('missing cleanup concise summary: ' + html);
 if (!html.includes('补号 6')) throw new Error('missing refill concise summary: ' + html);
 if (!html.includes('处理 30 · 刷新 28 · 上传 27')) throw new Error('missing refresh concise summary: ' + html);
 """
@@ -727,7 +727,7 @@ window.renderScheduledRuns([
     started_at: null,
     finished_at: null,
     error_message: '接口超时',
-    summary: { invalid_items_found: 12, remote_deleted: 4 },
+    summary: { probe_items_selected: 5000, invalid_items_found: 12, remote_deleted: 4 },
   },
   {
     id: 2,
@@ -744,7 +744,7 @@ window.renderScheduledRuns([
 ]);
 
 const html = runsBody.innerHTML;
-if (!html.includes('检测 12 · 清理 4 · 原因：接口超时')) {
+if (!html.includes('检测 5000 · 失效 12 · 成功清理 4 · 原因：接口超时')) {
   throw new Error('missing failed cleanup reason summary: ' + html);
 }
 if (!html.includes('补号 3 · 原因：用户停止')) {
@@ -839,7 +839,7 @@ global.api = {
         finished_at: '2026-03-23T10:05:00',
         duration_seconds: 300.5,
         error_message: null,
-        summary: { invalid_items_found: 18, remote_deleted: 16 },
+        summary: { probe_items_selected: 5000, invalid_items_found: 18, remote_deleted: 16 },
         status: 'cancelled',
         last_log_at: '2026-03-23T10:05:00',
         is_running: false,
@@ -875,7 +875,7 @@ async function main() {
   if (!detailBodyHtml.includes('scheduled-run-detail-head')) throw new Error('missing detail head hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('scheduled-run-detail-grid')) throw new Error('missing detail grid hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('scheduled-run-summary')) throw new Error('missing summary hook: ' + detailBodyHtml);
-  if (!detailBodyHtml.includes('检测 18 · 清理 16')) throw new Error('missing concise summary: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('检测 5000 · 失效 18 · 成功清理 16')) throw new Error('missing concise summary: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('持续时长')) throw new Error('missing duration label: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('300.5 秒')) throw new Error('missing duration value: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('停止请求时间')) throw new Error('missing stop requested at label: ' + detailBodyHtml);

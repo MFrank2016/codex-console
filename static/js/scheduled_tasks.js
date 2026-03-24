@@ -1317,7 +1317,14 @@ function buildScheduledRunSummaryBase(run) {
     }
 
     if (taskType === 'cpa_cleanup') {
-        return `检测 ${toSummaryCount(summary.invalid_items_found)} · 清理 ${toSummaryCount(summary.remote_deleted)}`;
+        const probeItemsSelected = summary.probe_items_selected;
+        const detectedCount =
+            probeItemsSelected ?? summary.invalid_items_considered ?? summary.invalid_items_found;
+        return (
+            `检测 ${toSummaryCount(detectedCount)} · ` +
+            `失效 ${toSummaryCount(summary.invalid_items_found)} · ` +
+            `成功清理 ${toSummaryCount(summary.remote_deleted)}`
+        );
     }
 
     if (taskType === 'account_refresh') {

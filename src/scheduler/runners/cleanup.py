@@ -12,6 +12,7 @@ from ..run_logger import append_run_log, finalize_cancelled_run, finalize_run, r
 
 
 _PROBE_PROGRESS_PATTERN = re.compile(r"scanned=(\d+)(?:/\d+)?, invalid=(\d+)")
+_PROBE_CANDIDATES_PATTERN = re.compile(r"total=(\d+), selected=(\d+)")
 _PROGRESS_EVERY = 100
 _DEFAULT_PROBE_WORKERS = 10
 _DEFAULT_DELETE_WORKERS = 20
@@ -46,6 +47,7 @@ def _resolve_worker_count(config: dict[str, Any], key: str, *, default: int) -> 
 
 def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
     summary: dict[str, Any] = {
+        "probe_items_selected": 0,
         "invalid_items_found": 0,
         "invalid_items_considered": 0,
         "local_marked_expired": 0,
@@ -92,6 +94,10 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
         def _on_probe_progress(message: str) -> None:
             nonlocal next_probe_progress
             append_run_log(run_id, message)
+
+            candidates_match = _PROBE_CANDIDATES_PATTERN.search(message)
+            if candidates_match:
+                summary["probe_items_selected"] = int(candidates_match.group(2))
 
             match = _PROBE_PROGRESS_PATTERN.search(message)
             if match:
