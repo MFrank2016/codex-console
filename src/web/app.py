@@ -249,7 +249,15 @@ def create_app() -> FastAPI:
     @app.get("/payment", response_class=HTMLResponse)
     async def payment_page(request: Request):
         """支付页面"""
-        return templates.TemplateResponse("payment.html", {"request": request})
+        return templates.TemplateResponse(
+            "payment.html",
+            _workspace_context(
+                request,
+                page_key="payment",
+                page_title="支付升级",
+                page_subtitle="为账号生成 Plus 或 Team 订阅支付链接。",
+            ),
+        )
 
     @app.get("/registration-experiments", response_class=HTMLResponse)
     async def registration_experiments_page(request: Request):

@@ -129,6 +129,21 @@ def test_execution_and_configuration_templates_extend_workspace_shell():
         assert '{% extends "_workspace_base.html" %}' in template
 
 
+def test_payment_page_uses_centralized_workspace_shell_context():
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/payment")
+
+    assert response.status_code == 200
+    assert 'data-page-key="payment"' in response.text
+    assert "支付升级" in response.text
+    assert 'href="/payment"' in response.text
+
+    template = Path("templates/payment.html").read_text(encoding="utf-8")
+    assert "page_key is not defined" not in template
+    assert "workspace_nav is not defined" not in template
+
+
 def test_accounts_template_contains_pagination_jump_controls():
     template = Path("templates/accounts.html").read_text(encoding="utf-8")
     assert 'id="page-jump-input"' in template
