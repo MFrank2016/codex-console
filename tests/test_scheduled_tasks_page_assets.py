@@ -98,8 +98,16 @@ def test_scheduled_tasks_template_contains_run_center_hooks():
     assert 'id="run-log-copy-btn"' in template
     assert 'id="run-log-clear-btn"' in template
     assert 'id="run-log-wrap-input"' in template
-    assert "scheduled-run-log-modal-content" in template
     assert 'id="run-log-modal"' in template
+    assert 'class="modal-content scheduled-run-log-modal-content"' in template
+    assert "scheduled-run-log-modal-content" in template
+    run_detail_modal_match = re.search(
+        r'<div id="run-detail-modal" class="modal">\s*(<div\b[^>]*>)',
+        template,
+        re.S,
+    )
+    assert run_detail_modal_match is not None
+    assert "max-width: 960px;" in run_detail_modal_match.group(1)
     run_log_modal_match = re.search(r'<div id="run-log-modal" class="modal">\s*(<div\b[^>]*>)', template, re.S)
     assert run_log_modal_match is not None
     run_log_modal_content_tag = run_log_modal_match.group(1)
@@ -460,8 +468,10 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert ".scheduled-run-log-panel" in stylesheet
     assert ".scheduled-run-log-modal-content" in stylesheet
     assert ".scheduled-run-console-shell" in stylesheet
+    assert ".scheduled-run-console-status" in stylesheet
     assert ".scheduled-run-console-toolbar" in stylesheet
     assert ".scheduled-run-log-line" in stylesheet
+    assert ".scheduled-run-log-level-badge" in stylesheet
     assert ".scheduled-run-log-timestamp" in stylesheet
     assert ".scheduled-run-log-message" in stylesheet
     assert ".scheduled-run-log-level-error" in stylesheet
