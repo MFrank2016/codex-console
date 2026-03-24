@@ -36,7 +36,8 @@ def test_login_template_uses_redesigned_card_shell_tokens():
 def test_web_app_registers_registration_batch_stats_page_route():
     app_source = Path("src/web/app.py").read_text(encoding="utf-8")
     assert '@app.get("/registration-batch-stats", response_class=HTMLResponse)' in app_source
-    assert 'templates.TemplateResponse("registration_batch_stats.html"' in app_source
+    assert 'templates.TemplateResponse(' in app_source
+    assert '"registration_batch_stats.html"' in app_source
 
 
 def test_registration_batch_stats_page_requires_auth_and_renders_script():

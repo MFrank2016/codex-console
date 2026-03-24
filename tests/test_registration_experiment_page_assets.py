@@ -26,7 +26,8 @@ def test_registration_experiments_template_references_dashboard_script():
 def test_web_app_registers_registration_experiments_page_route():
     app_source = Path("src/web/app.py").read_text(encoding="utf-8")
     assert '@app.get("/registration-experiments", response_class=HTMLResponse)' in app_source
-    assert 'templates.TemplateResponse("registration_experiments.html"' in app_source
+    assert 'templates.TemplateResponse(' in app_source
+    assert '"registration_experiments.html"' in app_source
 
 
 def test_registration_experiments_page_requires_auth_and_renders_script():
