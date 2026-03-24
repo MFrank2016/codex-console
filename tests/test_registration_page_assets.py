@@ -29,6 +29,8 @@ def test_registration_workbench_page_requires_auth_and_renders_workspace_shell_h
         assert 'id="registration-form"' in response.text
         assert 'id="task-step-waterfall"' in response.text
         assert 'href="/registration-workbench"' in response.text
+        assert 'href="/logout"' in response.text
+        assert 'class="theme-toggle"' in response.text
 
 
 def test_registration_template_contains_unlimited_mode_and_domain_stats_container():
