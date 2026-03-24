@@ -132,11 +132,14 @@ def test_refresh_runner_marks_account_expired_on_refresh_failure(temp_db, monkey
 
     temp_db.expire_all()
     refreshed = crud.get_account_by_id(temp_db, account.id)
+    persisted_run = temp_db.get(ScheduledRun, run.id)
     assert refreshed.status == "expired"
     assert refreshed.invalid_reason == "refresh_failed"
     assert refreshed.cpa_uploaded is False
     assert refreshed.cpa_uploaded_at is None
     assert summary["refresh_failed"] == 1
+    assert persisted_run is not None
+    assert f"[WARN] token refresh failed (account_id={account.id}): bad refresh" in (persisted_run.logs or "")
 
 
 def test_refresh_runner_keeps_account_active_when_cpa_upload_fails(temp_db, monkeypatch):

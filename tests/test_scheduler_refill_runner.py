@@ -103,6 +103,9 @@ def test_refill_runner_auto_disables_plan_after_consecutive_failures(temp_db, mo
     assert persisted_run.summary is not None
     assert persisted_run.summary["auto_disabled"] is True
     assert summary["auto_disabled"] is True
+    logs = persisted_run.logs or ""
+    assert "[WARN] registration failed: boom" in logs
+    assert "[WARN] refill plan auto-disabled: consecutive_failures_reached" in logs
 
 
 def test_refill_runner_marks_run_failed_when_registration_succeeds_but_cpa_upload_fails(temp_db, monkeypatch):
