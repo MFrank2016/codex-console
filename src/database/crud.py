@@ -15,6 +15,9 @@ from .models import (
     PipelineStepRun,
     ProxyCheckResult,
     ProxyCheckRun,
+    RegistrationBatchStageStat,
+    RegistrationBatchStat,
+    RegistrationBatchStepStat,
     RegistrationTask,
     Setting,
     Proxy,
@@ -436,6 +439,21 @@ def get_registration_tasks(
     return query.all()
 
 
+def get_registration_tasks_by_uuids(
+    db: Session,
+    task_uuids: List[str],
+) -> List[RegistrationTask]:
+    """根据任务 UUID 列表获取任务。"""
+    if not task_uuids:
+        return []
+    return (
+        db.query(RegistrationTask)
+        .filter(RegistrationTask.task_uuid.in_(task_uuids))
+        .order_by(asc(RegistrationTask.id))
+        .all()
+    )
+
+
 def update_registration_task(
     db: Session,
     task_uuid: str,
@@ -504,6 +522,21 @@ def get_pipeline_step_runs_by_task_uuid(db: Session, task_uuid: str) -> List[Pip
     )
 
 
+def get_pipeline_step_runs_by_task_uuids(
+    db: Session,
+    task_uuids: List[str],
+) -> List[PipelineStepRun]:
+    """按任务 UUID 列表获取 Step 运行记录。"""
+    if not task_uuids:
+        return []
+    return (
+        db.query(PipelineStepRun)
+        .filter(PipelineStepRun.task_uuid.in_(task_uuids))
+        .order_by(asc(PipelineStepRun.step_order), asc(PipelineStepRun.id))
+        .all()
+    )
+
+
 def create_experiment_batch(
     db: Session,
     name: str,
@@ -532,6 +565,111 @@ def create_experiment_batch(
     db.commit()
     db.refresh(row)
     return row
+
+
+def _persist_row(db: Session, row: Any, *, commit: bool) -> Any:
+    """持久化 ORM 行并支持可选提交。"""
+    db.add(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    else:
+        db.flush()
+    return row
+
+
+def create_registration_batch_stat(
+    db: Session,
+    *,
+    commit: bool = True,
+    **kwargs,
+) -> RegistrationBatchStat:
+    """创建普通批量注册统计主记录"""
+    row = RegistrationBatchStat(**kwargs)
+    return _persist_row(db, row, commit=commit)
+
+
+def get_registration_batch_stat_by_batch_id(
+    db: Session,
+    batch_id: str,
+) -> Optional[RegistrationBatchStat]:
+    """根据运行批次 ID 获取统计快照。"""
+    return (
+        db.query(RegistrationBatchStat)
+        .filter(RegistrationBatchStat.batch_id == batch_id)
+        .first()
+    )
+
+
+def get_registration_batch_stat_by_id(
+    db: Session,
+    stat_id: int,
+) -> Optional[RegistrationBatchStat]:
+    """根据 ID 获取统计快照。"""
+    return (
+        db.query(RegistrationBatchStat)
+        .filter(RegistrationBatchStat.id == stat_id)
+        .first()
+    )
+
+
+def list_registration_batch_stats(
+    db: Session,
+    *,
+    status: Optional[str] = None,
+    pipeline_key: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 100,
+) -> List[RegistrationBatchStat]:
+    """获取普通批量注册统计快照列表。"""
+    query = db.query(RegistrationBatchStat)
+    if status:
+        query = query.filter(RegistrationBatchStat.status == status)
+    if pipeline_key:
+        query = query.filter(RegistrationBatchStat.pipeline_key == pipeline_key)
+    return (
+        query.order_by(desc(RegistrationBatchStat.started_at), desc(RegistrationBatchStat.id))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+
+def count_registration_batch_stats(
+    db: Session,
+    *,
+    status: Optional[str] = None,
+    pipeline_key: Optional[str] = None,
+) -> int:
+    """统计普通批量注册统计快照数量。"""
+    query = db.query(RegistrationBatchStat)
+    if status:
+        query = query.filter(RegistrationBatchStat.status == status)
+    if pipeline_key:
+        query = query.filter(RegistrationBatchStat.pipeline_key == pipeline_key)
+    return query.count()
+
+
+def create_registration_batch_step_stat(
+    db: Session,
+    *,
+    commit: bool = True,
+    **kwargs,
+) -> RegistrationBatchStepStat:
+    """创建普通批量注册 Step 统计记录"""
+    row = RegistrationBatchStepStat(**kwargs)
+    return _persist_row(db, row, commit=commit)
+
+
+def create_registration_batch_stage_stat(
+    db: Session,
+    *,
+    commit: bool = True,
+    **kwargs,
+) -> RegistrationBatchStageStat:
+    """创建普通批量注册阶段统计记录"""
+    row = RegistrationBatchStageStat(**kwargs)
+    return _persist_row(db, row, commit=commit)
 
 
 def create_proxy_check_run(
