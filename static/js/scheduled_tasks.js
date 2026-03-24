@@ -49,6 +49,7 @@ const scheduledTaskElements = {
     runLogStopActions: document.getElementById('run-log-stop-actions'),
     runLogStopBtn: document.getElementById('run-log-stop-btn'),
     runLogModalBody: document.getElementById('run-log-modal-body'),
+    runLogConsole: document.getElementById('run-log-console'),
     runLogSearchInput: document.getElementById('run-log-search-input'),
     runLogLevelFilter: document.getElementById('run-log-level-filter'),
     runLogCopyBtn: document.getElementById('run-log-copy-btn'),
@@ -213,13 +214,12 @@ let scheduledRunLogPollingTimer = null;
 let scheduledRunLogPollingInFlight = false;
 let scheduledRunLogLoadToken = 0;
 let scheduledRunConsoleState = {
-    rawText: '',
-    rawLines: [],
+    lines: [],
+    pendingLineText: '',
     visibleLines: [],
     searchTerm: '',
     levelFilter: '',
     wrap: Boolean(scheduledTaskElements.runLogWrapInput?.checked),
-    clearedView: false,
 };
 const SCHEDULED_RUN_LOG_LINE_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[(INFO|WARN|ERROR)\]\s?(.*)$/;
 
@@ -1480,13 +1480,12 @@ function resetScheduledRunModalState() {
     currentScheduledRunLogOffset = 0;
     stopScheduledRunLogPolling();
     scheduledRunConsoleState = {
-        rawText: '',
-        rawLines: [],
+        lines: [],
+        pendingLineText: '',
         visibleLines: [],
         searchTerm: '',
         levelFilter: '',
         wrap: Boolean(scheduledTaskElements.runLogWrapInput?.checked ?? true),
-        clearedView: false,
     };
     if (scheduledTaskElements.runLogStatusBar) {
         scheduledTaskElements.runLogStatusBar.innerHTML = '<span>未选择运行记录</span>';
@@ -1573,6 +1572,42 @@ function parseScheduledRunLogLines(text) {
         });
 }
 
+function getScheduledRunConsoleElement() {
+    return scheduledTaskElements.runLogConsole || document.getElementById('run-log-console');
+}
+
+function getScheduledRunRenderableLines() {
+    const lines = [...scheduledRunConsoleState.lines];
+    if (scheduledRunConsoleState.pendingLineText) {
+        const pendingLine = parseScheduledRunLogLines(scheduledRunConsoleState.pendingLineText)[0];
+        if (pendingLine) {
+            lines.push(pendingLine);
+        }
+    }
+    return lines;
+}
+
+function syncScheduledRunConsoleMountFallback() {
+    if (!scheduledTaskElements.runLogModalBody || getScheduledRunConsoleElement()) return;
+    scheduledTaskElements.runLogModalBody.innerHTML = `
+        <div id="run-log-console" class="scheduled-run-console-shell ${scheduledRunConsoleState.wrap ? 'scheduled-run-log-wrap' : 'scheduled-run-log-nowrap'}"></div>
+    `;
+}
+
+function updateScheduledRunConsoleShell() {
+    const consoleElement = getScheduledRunConsoleElement();
+    if (!consoleElement) return null;
+    consoleElement.classList.add('scheduled-run-console-shell');
+    if (scheduledRunConsoleState.wrap) {
+        consoleElement.classList.add('scheduled-run-log-wrap');
+        consoleElement.classList.remove('scheduled-run-log-nowrap');
+    } else {
+        consoleElement.classList.add('scheduled-run-log-nowrap');
+        consoleElement.classList.remove('scheduled-run-log-wrap');
+    }
+    return consoleElement;
+}
+
 function renderScheduledRunConsoleLine(line) {
     if (!line.level) {
         return `
@@ -1592,10 +1627,13 @@ function renderScheduledRunConsoleLine(line) {
 }
 
 function renderScheduledRunConsole() {
-    if (!scheduledTaskElements.runLogModalBody) return;
-    const wrapClass = scheduledRunConsoleState.wrap ? 'scheduled-run-log-wrap' : 'scheduled-run-log-nowrap';
+    syncScheduledRunConsoleMountFallback();
+    const consoleElement = updateScheduledRunConsoleShell();
+    if (!consoleElement) return;
+
+    const previousScrollTop = Number(consoleElement.scrollTop || 0);
+    const shouldAutoScroll = Boolean(scheduledTaskElements.runLogAutoScrollInput?.checked);
     const lines = scheduledRunConsoleState.visibleLines;
-    const visibleText = lines.length ? lines.map((line) => line.raw).join('\n') : '暂无记录';
     const contentHtml = lines.length
         ? lines.map((line) => renderScheduledRunConsoleLine(line)).join('')
         : `
@@ -1604,28 +1642,45 @@ function renderScheduledRunConsole() {
                 <span>暂无记录</span>
             </div>
         `;
-    scheduledTaskElements.runLogModalBody.innerHTML = `
-        <div id="run-log-console" class="scheduled-run-console-shell ${wrapClass}" data-visible-text="${escapeHtml(visibleText)}">
-            ${contentHtml}
-        </div>
-    `;
+
+    consoleElement.innerHTML = contentHtml;
+
+    if (shouldAutoScroll) {
+        consoleElement.scrollTop = Number(consoleElement.scrollHeight || 0);
+        return;
+    }
+    consoleElement.scrollTop = previousScrollTop;
 }
 
 function applyScheduledRunLogFilters() {
     const searchTerm = scheduledRunConsoleState.searchTerm.trim().toLowerCase();
-    scheduledRunConsoleState.visibleLines = scheduledRunConsoleState.rawLines.filter((line) => {
+    scheduledRunConsoleState.visibleLines = getScheduledRunRenderableLines().filter((line) => {
         const matchesLevel = !scheduledRunConsoleState.levelFilter || line.level === scheduledRunConsoleState.levelFilter;
         const matchesSearch = !searchTerm || line.raw.toLowerCase().includes(searchTerm);
         return matchesLevel && matchesSearch;
     });
-    scheduledRunConsoleState.clearedView = false;
     renderScheduledRunConsole();
 }
 
 function appendScheduledRunLogChunk(chunk, options = {}) {
     const reset = options.reset === true;
-    scheduledRunConsoleState.rawText = reset ? String(chunk || '') : `${scheduledRunConsoleState.rawText}${chunk || ''}`;
-    scheduledRunConsoleState.rawLines = parseScheduledRunLogLines(scheduledRunConsoleState.rawText);
+    if (reset) {
+        scheduledRunConsoleState.lines = [];
+        scheduledRunConsoleState.pendingLineText = '';
+    }
+
+    const incomingText = String(chunk || '').replace(/\r\n/g, '\n');
+    if (incomingText) {
+        const combinedText = `${scheduledRunConsoleState.pendingLineText}${incomingText}`;
+        const parts = combinedText.split('\n');
+        const endsWithNewline = combinedText.endsWith('\n');
+        scheduledRunConsoleState.pendingLineText = endsWithNewline ? '' : (parts.pop() ?? '');
+        const parsedLines = parts.length ? parseScheduledRunLogLines(parts.join('\n')) : [];
+        if (parsedLines.length) {
+            scheduledRunConsoleState.lines.push(...parsedLines);
+        }
+    }
+
     applyScheduledRunLogFilters();
 }
 
@@ -1646,6 +1701,13 @@ function handleScheduledRunLogWrapChange() {
     renderScheduledRunConsole();
 }
 
+function handleScheduledRunLogAutoScrollChange() {
+    if (!scheduledTaskElements.runLogAutoScrollInput?.checked) return;
+    const consoleElement = getScheduledRunConsoleElement();
+    if (!consoleElement) return;
+    consoleElement.scrollTop = Number(consoleElement.scrollHeight || 0);
+}
+
 async function copyScheduledRunVisibleLogs() {
     const visibleText = scheduledRunConsoleState.visibleLines.map((line) => line.raw).join('\n');
     if (!visibleText) {
@@ -1662,8 +1724,14 @@ async function copyScheduledRunVisibleLogs() {
 
 function clearScheduledRunConsoleView() {
     scheduledRunConsoleState.visibleLines = [];
-    scheduledRunConsoleState.clearedView = true;
     renderScheduledRunConsole();
+}
+
+function renderScheduledRunLogLoadError(message) {
+    syncScheduledRunConsoleMountFallback();
+    const consoleElement = updateScheduledRunConsoleShell();
+    if (!consoleElement) return;
+    consoleElement.innerHTML = `<div style="color: var(--danger-color, #d9534f);">${escapeHtml(message)}</div>`;
 }
 
 function setScheduledRunStopButtonState(detail) {
@@ -1846,10 +1914,7 @@ async function openScheduledRunLog(runId) {
             return;
         }
         renderScheduledRunStatusBar(null);
-        if (scheduledTaskElements.runLogModalBody) {
-            scheduledTaskElements.runLogModalBody.innerHTML = `<div style="color: var(--danger-color, #d9534f);">加载运行日志失败：${escapeHtml(error.message || '请求失败')}</div>`;
-            scheduledTaskElements.runLogModalBody.textContent = `加载运行日志失败：${error.message || '请求失败'}`;
-        }
+        renderScheduledRunLogLoadError(`加载运行日志失败：${error.message || '请求失败'}`);
         toast.error(`加载运行日志失败: ${error.message}`);
     }
 }
@@ -2090,6 +2155,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (scheduledTaskElements.runLogWrapInput) {
         scheduledTaskElements.runLogWrapInput.addEventListener('change', handleScheduledRunLogWrapChange);
+    }
+
+    if (scheduledTaskElements.runLogAutoScrollInput) {
+        scheduledTaskElements.runLogAutoScrollInput.addEventListener('change', handleScheduledRunLogAutoScrollChange);
     }
 
     if (scheduledTaskElements.runLogCopyBtn) {

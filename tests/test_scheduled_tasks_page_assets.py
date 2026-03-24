@@ -912,6 +912,9 @@ function createMockElement(id = '') {{
     disabled: false,
     value: '',
     checked: false,
+    scrollTop: 0,
+    scrollHeight: 0,
+    clientHeight: 0,
     _listeners: {{}},
     setAttribute() {{}},
     removeAttribute() {{}},
@@ -936,7 +939,10 @@ function createMockElement(id = '') {{
       }},
     }},
     get innerHTML() {{ return html; }},
-    set innerHTML(next) {{ html = String(next ?? ''); }},
+    set innerHTML(next) {{
+      html = String(next ?? '');
+      this.scrollHeight = Math.max(html.length, 1);
+    }},
     get textContent() {{ return text; }},
     set textContent(next) {{ text = String(next ?? ''); }},
     querySelectorAll() {{ return []; }},
@@ -962,6 +968,7 @@ function getElement(id) {{
   'run-log-stop-actions',
   'run-log-stop-btn',
   'run-log-modal-body',
+  'run-log-console',
   'run-log-search-input',
   'run-log-level-filter',
   'run-log-copy-btn',
@@ -1013,14 +1020,14 @@ const document = {{
 let timerCallback = null;
 const runRequests = [];
 const logRequests = [];
-const detailIsRunning = scenarioName === 'second_chunk_reapplies_filters';
+const detailIsRunning = scenarioName === 'second_chunk_reapplies_filters' || scenarioName === 'auto_scroll_disabled_preserves_position';
 
 const firstChunk = [
   '2026-03-24 09:00:00.100 [INFO] startup ok',
   '2026-03-24 09:00:00.200 [ERROR] boom first',
   '2026-03-24 09:00:00.300 [WARN] warn once',
 ].join('\n');
-const secondChunk = [
+const secondChunk = '\n' + [
   '2026-03-24 09:00:01.100 [INFO] boom info second',
   '2026-03-24 09:00:01.200 [ERROR] boom second',
 ].join('\n');
@@ -1147,36 +1154,41 @@ async function runScenario() {{
   const searchInput = getElement('run-log-search-input');
   const levelFilter = getElement('run-log-level-filter');
   const logBody = getElement('run-log-modal-body');
+  const logConsole = getElement('run-log-console');
 
   switch (scenarioName) {{
     case 'open_log_console': {{
       await context.window.openScheduledRunLog(123);
       return {{
         logBodyHtml: logBody.innerHTML,
+        consoleHtml: logConsole.innerHTML,
+        consoleHasShell: logConsole.classList.contains('scheduled-run-console-shell'),
+        scrollTop: logConsole.scrollTop,
+        scrollHeight: logConsole.scrollHeight,
         logRequests,
         modalActive: getElement('run-log-modal').classList.contains('active'),
       }};
     }}
     case 'search_enter': {{
       await context.window.openScheduledRunLog(123);
-      const beforeHtml = logBody.innerHTML;
+      const beforeHtml = logConsole.innerHTML;
       searchInput.value = 'boom';
       let enterPrevented = false;
       trigger('keydown', searchInput, {{ key: 'Enter', preventDefault() {{ enterPrevented = true; }} }});
       return {{
         beforeHtml,
-        afterHtml: logBody.innerHTML,
+        afterHtml: logConsole.innerHTML,
         enterPrevented,
       }};
     }}
     case 'level_filter': {{
       await context.window.openScheduledRunLog(123);
-      const beforeHtml = logBody.innerHTML;
+      const beforeHtml = logConsole.innerHTML;
       levelFilter.value = 'ERROR';
       trigger('change', levelFilter, {{ target: levelFilter }});
       return {{
         beforeHtml,
-        afterHtml: logBody.innerHTML,
+        afterHtml: logConsole.innerHTML,
       }};
     }}
     case 'second_chunk_reapplies_filters': {{
@@ -1185,14 +1197,33 @@ async function runScenario() {{
       trigger('keydown', searchInput, {{ key: 'Enter', preventDefault() {{}} }});
       levelFilter.value = 'ERROR';
       trigger('change', levelFilter, {{ target: levelFilter }});
-      const beforeHtml = logBody.innerHTML;
+      const beforeHtml = logConsole.innerHTML;
       if (typeof timerCallback !== 'function') throw new Error('expected polling callback');
       await timerCallback();
       await flush();
       return {{
         beforeHtml,
-        afterHtml: logBody.innerHTML,
+        afterHtml: logConsole.innerHTML,
         logRequests,
+      }};
+    }}
+    case 'auto_scroll_enabled': {{
+      await context.window.openScheduledRunLog(123);
+      return {{
+        scrollTop: logConsole.scrollTop,
+        scrollHeight: logConsole.scrollHeight,
+      }};
+    }}
+    case 'auto_scroll_disabled_preserves_position': {{
+      await context.window.openScheduledRunLog(123);
+      getElement('run-log-auto-scroll').checked = false;
+      logConsole.scrollTop = 17;
+      if (typeof timerCallback !== 'function') throw new Error('expected polling callback');
+      await timerCallback();
+      await flush();
+      return {{
+        scrollTop: logConsole.scrollTop,
+        scrollHeight: logConsole.scrollHeight,
       }};
     }}
     default:
@@ -1225,11 +1256,26 @@ def test_scheduled_tasks_open_run_log_renders_console_shell_and_loads_first_chun
     result = run_scheduled_tasks_log_console_scenario("open_log_console")
 
     assert result["modalActive"] is True
-    assert 'id="run-log-console"' in result["logBodyHtml"]
-    assert "scheduled-run-console-shell" in result["logBodyHtml"]
-    assert "[ERROR]" in result["logBodyHtml"]
-    assert "boom first" in result["logBodyHtml"]
+    assert result["consoleHasShell"] is True
+    assert "[ERROR]" in result["consoleHtml"]
+    assert "boom first" in result["consoleHtml"]
     assert "/scheduled-runs/123/logs?offset=0" in result["logRequests"]
+
+
+
+
+def test_scheduled_tasks_run_log_auto_scroll_scrolls_to_bottom_when_enabled():
+    result = run_scheduled_tasks_log_console_scenario("auto_scroll_enabled")
+
+    assert result["scrollHeight"] > 0
+    assert result["scrollTop"] == result["scrollHeight"]
+
+
+def test_scheduled_tasks_run_log_manual_position_is_preserved_when_auto_scroll_is_disabled():
+    result = run_scheduled_tasks_log_console_scenario("auto_scroll_disabled_preserves_position")
+
+    assert result["scrollHeight"] > 0
+    assert result["scrollTop"] == 17
 
 
 def test_scheduled_tasks_run_log_search_applies_only_on_enter():
@@ -1388,6 +1434,7 @@ const elements = new Map([
   ['run-log-modal', makeElement()],
   ['run-log-status-bar', makeElement()],
   ['run-log-modal-body', makeElement()],
+  ['run-log-console', makeElement()],
   ['run-log-stop-btn', makeElement()],
 ]);
 
@@ -1478,7 +1525,7 @@ vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
 async function main() {
   await window.openScheduledRunLog(123);
   if (logCalls !== 2) throw new Error('expected 2 log calls, got ' + logCalls);
-  const html = elements.get('run-log-modal-body').innerHTML;
+  const html = elements.get('run-log-console').innerHTML;
   if (!html.includes('>ab<')) {
     throw new Error('expected log output to include merged chunks, got: ' + JSON.stringify(html));
   }
@@ -1529,6 +1576,7 @@ const elements = new Map([
   ['run-log-modal', makeElement()],
   ['run-log-status-bar', makeElement()],
   ['run-log-modal-body', makeElement()],
+  ['run-log-console', makeElement()],
   ['run-log-stop-btn', makeElement()],
 ]);
 
@@ -1759,6 +1807,7 @@ const elements = new Map([
   ['run-log-modal', runLogModal],
   ['run-log-status-bar', runLogStatusBar],
   ['run-log-modal-body', runLogModalBody],
+  ['run-log-console', makeElement()],
   ['run-log-stop-btn', runLogStopBtn],
 ]);
 
@@ -1859,8 +1908,9 @@ async function main() {
   if (runLogStatusBar.innerHTML !== '<span>未选择运行记录</span>') {
     throw new Error('expected status bar to stay reset, got: ' + JSON.stringify(runLogStatusBar.innerHTML));
   }
-  if (!String(runLogModalBody.innerHTML).includes('暂无记录')) {
-    throw new Error('expected modal body to stay reset, got: ' + JSON.stringify(runLogModalBody.innerHTML));
+  const runLogConsole = elements.get('run-log-console');
+  if (!String(runLogConsole.innerHTML).includes('暂无记录')) {
+    throw new Error('expected console to stay reset, got: ' + JSON.stringify(runLogConsole.innerHTML));
   }
 }
 
