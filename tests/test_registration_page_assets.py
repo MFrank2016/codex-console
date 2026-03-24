@@ -117,6 +117,18 @@ def test_app_js_restore_unlimited_task_uses_batch_endpoint():
     assert result["batch_progress_display"] == "block"
 
 
+def test_execution_and_configuration_templates_extend_workspace_shell():
+    for path in [
+        "templates/accounts.html",
+        "templates/scheduled_tasks.html",
+        "templates/email_services.html",
+        "templates/settings.html",
+        "templates/payment.html",
+    ]:
+        template = Path(path).read_text(encoding="utf-8")
+        assert '{% extends "_workspace_base.html" %}' in template
+
+
 def test_accounts_template_contains_pagination_jump_controls():
     template = Path("templates/accounts.html").read_text(encoding="utf-8")
     assert 'id="page-jump-input"' in template

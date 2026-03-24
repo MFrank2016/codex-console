@@ -1,12 +1,7 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>账号管理 - OpenAI 注册系统</title>
-    <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>">
-    <style>
+{% extends "_workspace_base.html" %}
+
+{% block head_extra %}
+<style>
         .password-cell {
             font-family: var(--font-mono);
             font-size: 0.75rem;
@@ -44,186 +39,148 @@
         }
         .cpa-status .badge.uploaded { background: var(--success-color); color: white; }
         .cpa-status .badge.pending { background: var(--border-color); color: var(--text-secondary); }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <!-- 导航栏 -->
-        <nav class="navbar">
-            <div class="nav-brand">
-                <h1>OpenAI 注册系统</h1>
-            </div>
-            <div class="nav-links">
-                <a href="/" class="nav-link">注册</a>
-                <a href="/accounts" class="nav-link active">账号管理</a>
-                <a href="/email-services" class="nav-link">邮箱服务</a>
-                <a href="/scheduled-tasks" class="nav-link">定时任务</a>
-                <a href="/payment" class="nav-link">支付</a>
-                <a href="/settings" class="nav-link">设置</a>
-                <a href="/logout" class="nav-link">退出</a>
-            </div>
-            <button class="theme-toggle" onclick="theme.toggle()" title="切换主题">
-                🌙
-            </button>
-        </nav>
+    
+</style>
+{% endblock %}
 
-        <!-- 主内容区 -->
-        <main class="main-content">
-            <div class="page-header">
-                <h2>账号管理</h2>
-                <p class="subtitle">查看和管理已注册的 OpenAI 账号</p>
-            </div>
-
-            <!-- 统计卡片 -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value" id="total-accounts">0</div>
-                    <div class="stat-label">总账号数</div>
-                </div>
-                <div class="stat-card success">
-                    <div class="stat-value" id="active-accounts">0</div>
-                    <div class="stat-label">活跃账号</div>
-                </div>
-                <div class="stat-card warning">
-                    <div class="stat-value" id="expired-accounts">0</div>
-                    <div class="stat-label">过期账号</div>
-                </div>
-                <div class="stat-card danger">
-                    <div class="stat-value" id="failed-accounts">0</div>
-                    <div class="stat-label">失败账号</div>
-                </div>
-            </div>
-
-            <!-- 工具栏 -->
-            <div class="card toolbar-card">
-                <div class="card-body filter-panel">
-                    <div class="filter-panel-grid">
-                        <select id="filter-status" class="form-select">
-                            <option value="">全部状态</option>
-                            <option value="active">活跃</option>
-                            <option value="expired">过期</option>
-                            <option value="banned">封禁</option>
-                            <option value="failed">失败</option>
-                        </select>
-
-                        <select id="filter-service" class="form-select">
-                            <option value="">全部邮箱服务</option>
-                            <option value="tempmail">Tempmail</option>
-                            <option value="outlook">Outlook</option>
-                            <option value="moe_mail">MoeMail</option>
-                        </select>
-
-                        <input
-                            type="number"
-                            id="filter-primary-cpa-service-id"
-                            class="form-input filter-input-cpa-service-id"
-                            placeholder="主 CPA 服务 ID"
-                            min="1"
-                        >
-
-                        <input type="text" id="search-input" class="form-input filter-input-search" placeholder="🔍 搜索邮箱...">
+{% block page_content %}
+<div class="workspace-side-stack">
+    <div class="stats-grid hero-metrics">
+                    <div class="stat-card">
+                        <div class="stat-value" id="total-accounts">0</div>
+                        <div class="stat-label">总账号数</div>
                     </div>
+                    <div class="stat-card success">
+                        <div class="stat-value" id="active-accounts">0</div>
+                        <div class="stat-label">活跃账号</div>
+                    </div>
+                    <div class="stat-card warning">
+                        <div class="stat-value" id="expired-accounts">0</div>
+                        <div class="stat-label">过期账号</div>
+                    </div>
+                    <div class="stat-card danger">
+                        <div class="stat-value" id="failed-accounts">0</div>
+                        <div class="stat-label">失败账号</div>
+                    </div>
+                </div>
 
-                    <div class="filter-panel-actions">
-                        <button class="btn btn-ghost" id="refresh-btn" title="刷新">
-                            🔄 刷新
-                        </button>
-                        <button class="btn btn-warning" id="batch-refresh-btn" disabled title="批量刷新Token">
-                            🔄 刷新Token
-                        </button>
-                        <button class="btn btn-info" id="batch-validate-btn" disabled title="批量验证Token">
-                            ✅ 验证Token
-                        </button>
-                        <button class="btn btn-info" id="batch-check-sub-btn" disabled title="批量检测订阅状态">
-                            🔍 检测订阅
-                        </button>
-                        <div class="dropdown">
-                            <button class="btn btn-success" id="batch-upload-btn" disabled>
-                                ☁️ 上传
-                            </button>
-                            <div class="dropdown-menu" id="upload-menu">
-                                <a href="#" class="dropdown-item" id="batch-upload-cpa-item">☁️ 上传到 CPA</a>
-                                <a href="#" class="dropdown-item" id="batch-upload-sub2api-item">🔗 上传到 Sub2API</a>
-                                <a href="#" class="dropdown-item" id="batch-upload-tm-item">🚀 上传到 Team Manager</a>
-                            </div>
+                
+    <section class="workspace-panel workspace-table-panel"><div class="card toolbar-card">
+                    <div class="card-body filter-panel">
+                        <div class="filter-panel-grid">
+                            <select id="filter-status" class="form-select">
+                                <option value="">全部状态</option>
+                                <option value="active">活跃</option>
+                                <option value="expired">过期</option>
+                                <option value="banned">封禁</option>
+                                <option value="failed">失败</option>
+                            </select>
+
+                            <select id="filter-service" class="form-select">
+                                <option value="">全部邮箱服务</option>
+                                <option value="tempmail">Tempmail</option>
+                                <option value="outlook">Outlook</option>
+                                <option value="moe_mail">MoeMail</option>
+                            </select>
+
+                            <input type="number" id="filter-primary-cpa-service-id" class="form-input filter-input-cpa-service-id" placeholder="主 CPA 服务 ID" min="1">
+
+                            <input type="text" id="search-input" class="form-input filter-input-search" placeholder="🔍 搜索邮箱...">
                         </div>
-                        <button class="btn btn-danger" id="batch-delete-btn" disabled>
-                            🗑️ 批量删除
-                        </button>
-                        <div class="dropdown">
-                            <button class="btn btn-primary" id="export-btn">
-                                📥 导出
+
+                        <div class="filter-panel-actions">
+                            <button class="btn btn-ghost" id="refresh-btn" title="刷新">
+                                🔄 刷新
                             </button>
-                            <div class="dropdown-menu" id="export-menu">
-                                <a href="#" class="dropdown-item" data-format="json">导出 JSON</a>
-                                <a href="#" class="dropdown-item" data-format="csv">导出 CSV</a>
-                                <a href="#" class="dropdown-item" data-format="cpa">导出 CPA 格式</a>
-                                <a href="#" class="dropdown-item" data-format="sub2api">导出 Sub2Api 格式</a>
+                            <button class="btn btn-warning" id="batch-refresh-btn" disabled title="批量刷新Token">
+                                🔄 刷新Token
+                            </button>
+                            <button class="btn btn-info" id="batch-validate-btn" disabled title="批量验证Token">
+                                ✅ 验证Token
+                            </button>
+                            <button class="btn btn-info" id="batch-check-sub-btn" disabled title="批量检测订阅状态">
+                                🔍 检测订阅
+                            </button>
+                            <div class="dropdown">
+                                <button class="btn btn-success" id="batch-upload-btn" disabled>
+                                    ☁️ 上传
+                                </button>
+                                <div class="dropdown-menu" id="upload-menu">
+                                    <a href="#" class="dropdown-item" id="batch-upload-cpa-item">☁️ 上传到 CPA</a>
+                                    <a href="#" class="dropdown-item" id="batch-upload-sub2api-item">🔗 上传到 Sub2API</a>
+                                    <a href="#" class="dropdown-item" id="batch-upload-tm-item">🚀 上传到 Team Manager</a>
+                                </div>
+                            </div>
+                            <button class="btn btn-danger" id="batch-delete-btn" disabled>
+                                🗑️ 批量删除
+                            </button>
+                            <div class="dropdown">
+                                <button class="btn btn-primary" id="export-btn">
+                                    📥 导出
+                                </button>
+                                <div class="dropdown-menu" id="export-menu">
+                                    <a href="#" class="dropdown-item" data-format="json">导出 JSON</a>
+                                    <a href="#" class="dropdown-item" data-format="csv">导出 CSV</a>
+                                    <a href="#" class="dropdown-item" data-format="cpa">导出 CPA 格式</a>
+                                    <a href="#" class="dropdown-item" data-format="sub2api">导出 Sub2Api 格式</a>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- 账号列表 -->
-            <div class="card">
-                <div class="card-body" style="padding: 0;">
-                    <div class="table-container table-shell">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th style="width: 40px;"><input type="checkbox" id="select-all"></th>
-                                    <th style="width: 60px;">ID</th>
-                                    <th>邮箱</th>
-                                    <th style="width: 100px;">密码</th>
-                                    <th style="width: 120px;">邮箱服务</th>
-                                    <th style="width: 80px;">状态</th>
-                                    <th style="width: 80px;">CPA</th>
-                                    <th style="width: 80px;">订阅</th>
-                                    <th style="width: 220px;">失效信息</th>
-                                    <th style="width: 140px;">最后刷新</th>
-                                    <th style="width: 160px;">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="accounts-table">
-                                <tr>
-                                    <td colspan="11">
-                                        <div class="empty-state">
-                                            <div class="skeleton skeleton-text" style="width: 60%;"></div>
-                                            <div class="skeleton skeleton-text" style="width: 80%;"></div>
-                                            <div class="skeleton skeleton-text" style="width: 40%;"></div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- 分页 -->
-                    <div class="pagination pagination-panel" id="pagination">
-                        <button class="btn btn-secondary btn-sm" id="prev-page" disabled>
-                            ← 上一页
-                        </button>
-                        <span id="page-info">第 1 页 / 共 1 页</span>
-                        <div class="pagination-jump">
-                            <input
-                                type="number"
-                                id="page-jump-input"
-                                class="form-input pagination-jump-input"
-                                min="1"
-                                inputmode="numeric"
-                                placeholder="页码"
-                            >
-                            <button class="btn btn-secondary btn-sm" id="page-jump-btn">跳转</button>
+                <div class="card">
+                    <div class="card-body" style="padding: 0;">
+                        <div class="table-container table-shell">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px;"><input type="checkbox" id="select-all"></th>
+                                        <th style="width: 60px;">ID</th>
+                                        <th>邮箱</th>
+                                        <th style="width: 100px;">密码</th>
+                                        <th style="width: 120px;">邮箱服务</th>
+                                        <th style="width: 80px;">状态</th>
+                                        <th style="width: 80px;">CPA</th>
+                                        <th style="width: 80px;">订阅</th>
+                                        <th style="width: 220px;">失效信息</th>
+                                        <th style="width: 140px;">最后刷新</th>
+                                        <th style="width: 160px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="accounts-table">
+                                    <tr>
+                                        <td colspan="11">
+                                            <div class="empty-state">
+                                                <div class="skeleton skeleton-text" style="width: 60%;"></div>
+                                                <div class="skeleton skeleton-text" style="width: 80%;"></div>
+                                                <div class="skeleton skeleton-text" style="width: 40%;"></div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
-                        <button class="btn btn-secondary btn-sm" id="next-page">
-                            下一页 →
-                        </button>
+
+                        <!-- 分页 -->
+                        <div class="pagination pagination-panel" id="pagination">
+                            <button class="btn btn-secondary btn-sm" id="prev-page" disabled>
+                                ← 上一页
+                            </button>
+                            <span id="page-info">第 1 页 / 共 1 页</span>
+                            <div class="pagination-jump">
+                                <input type="number" id="page-jump-input" class="form-input pagination-jump-input" min="1" inputmode="numeric" placeholder="页码">
+                                <button class="btn btn-secondary btn-sm" id="page-jump-btn">跳转</button>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="next-page">
+                                下一页 →
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </main>
-    </div>
+            </section>
+
+</div>
 
     <!-- 详情模态框 -->
     <div class="modal" id="detail-modal">
@@ -297,8 +254,10 @@
             </div>
         </div>
     </div>
+</div>
+{% endblock %}
 
-    <script src="/static/js/utils.js?v={{ static_version }}"></script>
+{% block page_scripts %}
+<script src="/static/js/utils.js?v={{ static_version }}"></script>
     <script src="/static/js/accounts.js?v={{ static_version }}"></script>
-</body>
-</html>
+{% endblock %}
