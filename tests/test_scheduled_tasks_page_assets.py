@@ -100,14 +100,13 @@ def test_scheduled_tasks_template_contains_run_center_hooks():
     assert 'id="run-log-wrap-input"' in template
     assert "scheduled-run-log-modal-content" in template
     assert 'id="run-log-modal"' in template
-    run_log_modal_match = re.search(
-        r'(<div id="run-log-modal" class="modal">\s*<div class="([^"]+)")',
-        template,
-        re.S,
-    )
+    run_log_modal_match = re.search(r'<div id="run-log-modal" class="modal">\s*(<div\b[^>]*>)', template, re.S)
     assert run_log_modal_match is not None
-    assert "max-width: 960px" not in run_log_modal_match.group(1)
-    assert "scheduled-run-log-modal-content" in run_log_modal_match.group(2).split()
+    run_log_modal_content_tag = run_log_modal_match.group(1)
+    assert "max-width: 960px" not in run_log_modal_content_tag
+    class_match = re.search(r'class\s*=\s*"([^"]+)"', run_log_modal_content_tag)
+    assert class_match is not None
+    assert "scheduled-run-log-modal-content" in class_match.group(1).split()
 
 
 def test_scheduled_tasks_run_center_filter_panel_uses_shared_shell_classes():
