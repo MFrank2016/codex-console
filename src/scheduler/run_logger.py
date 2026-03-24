@@ -11,10 +11,23 @@ USER_STOP_REQUESTED_LOG = "收到停止请求"
 USER_STOP_COMPLETED_LOG = "任务已按请求停止"
 
 
-def append_run_log(run_id: int, message: str, *, logged_at: datetime | None = None) -> bool:
+def _format_run_log_line(message: str, *, level: str, logged_at: datetime) -> str:
+    stamp = logged_at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    return f"{stamp} [{level}] {message}"
+
+
+def append_run_log(
+    run_id: int,
+    message: str,
+    *,
+    level: str = "INFO",
+    logged_at: datetime | None = None,
+) -> bool:
     """Append a log line for a scheduled run."""
+    actual_logged_at = logged_at or datetime.utcnow()
+    line = _format_run_log_line(message, level=level, logged_at=actual_logged_at)
     with get_db() as db:
-        return crud.append_scheduled_run_log(db, run_id, message, logged_at=logged_at)
+        return crud.append_scheduled_run_log(db, run_id, line, logged_at=actual_logged_at)
 
 
 def finalize_run(
