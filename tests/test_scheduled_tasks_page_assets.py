@@ -35,6 +35,22 @@ def _find_div_start_by_class_tokens(template: str, class_tokens: set[str], start
     return None
 
 
+def _extract_css_block(stylesheet: str, selector: str) -> str:
+    match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", stylesheet, re.S)
+    assert match is not None, f"missing CSS block for {selector}"
+    return match.group(1)
+
+
+def _extract_css_blocks_for_selector(stylesheet: str, selector: str) -> list[str]:
+    selector_blocks: list[str] = []
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", stylesheet, re.S):
+        selectors = [token.strip() for token in match.group(1).split(",")]
+        if selector in selectors:
+            selector_blocks.append(match.group(2))
+    assert selector_blocks, f"missing CSS blocks for {selector}"
+    return selector_blocks
+
+
 def test_scheduled_tasks_page_requires_auth_and_renders_script():
     app = create_app()
     with TestClient(app) as client:
@@ -475,6 +491,31 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert ".scheduled-run-log-timestamp" in stylesheet
     assert ".scheduled-run-log-message" in stylesheet
     assert ".scheduled-run-log-level-error" in stylesheet
+
+    shell_block = _extract_css_block(stylesheet, ".scheduled-run-console-shell")
+    row_block = _extract_css_block(stylesheet, ".scheduled-run-log-line")
+    badge_block = _extract_css_block(stylesheet, ".scheduled-run-log-level-badge")
+    assert "line-height: 1.24;" in shell_block
+    assert "padding: 6px 8px;" in shell_block
+    assert "gap: 6px;" in row_block
+    assert "line-height: 1.25;" in badge_block
+
+    status_spacing_blocks = [
+        block
+        for block in _extract_css_blocks_for_selector(stylesheet, ".scheduled-run-console-status")
+        if "padding:" in block or "margin-bottom:" in block
+    ]
+    toolbar_spacing_blocks = [
+        block
+        for block in _extract_css_blocks_for_selector(stylesheet, ".scheduled-run-console-toolbar")
+        if "padding:" in block or "margin-bottom:" in block
+    ]
+    assert len(status_spacing_blocks) == 1
+    assert len(toolbar_spacing_blocks) == 1
+    assert "padding: 6px 8px;" in status_spacing_blocks[0]
+    assert "margin-bottom: 6px;" in status_spacing_blocks[0]
+    assert "padding: 6px 8px;" in toolbar_spacing_blocks[0]
+    assert "margin-bottom: 6px;" in toolbar_spacing_blocks[0]
 
 
 def test_scheduled_tasks_script_contains_create_edit_enable_disable_hooks():
