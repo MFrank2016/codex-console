@@ -70,6 +70,8 @@ def validate_plan_payload(
     if task_type == "cpa_cleanup":
         _validate_optional_non_negative_int(config, "max_cleanup_count")
         _validate_optional_non_negative_int(config, "max_probe_count")
+        _validate_optional_non_negative_int(config, "probe_workers")
+        _validate_optional_non_negative_int(config, "delete_workers")
 
     if task_type == "cpa_refill" and not config.get("max_consecutive_failures"):
         raise ValueError("max_consecutive_failures is required")

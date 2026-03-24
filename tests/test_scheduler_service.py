@@ -83,6 +83,28 @@ def test_validate_cleanup_config_rejects_negative_max_probe_count():
         )
 
 
+def test_validate_cleanup_config_rejects_negative_probe_workers():
+    with pytest.raises(ValueError, match="probe_workers"):
+        validate_plan_payload(
+            task_type="cpa_cleanup",
+            trigger_type="interval",
+            config={"max_cleanup_count": 10, "probe_workers": -1},
+            interval_value=1,
+            interval_unit="hours",
+        )
+
+
+def test_validate_cleanup_config_rejects_negative_delete_workers():
+    with pytest.raises(ValueError, match="delete_workers"):
+        validate_plan_payload(
+            task_type="cpa_cleanup",
+            trigger_type="interval",
+            config={"max_cleanup_count": 10, "delete_workers": -1},
+            interval_value=1,
+            interval_unit="hours",
+        )
+
+
 def test_validate_trigger_payload_rejects_invalid_cron_expression():
     with pytest.raises(ValueError, match="cron_expression is invalid"):
         validate_trigger_payload(trigger_type="cron", cron_expression="not-a-cron")

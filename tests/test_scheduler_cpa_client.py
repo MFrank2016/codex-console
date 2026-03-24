@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 from src.scheduler import cpa_client
 
 
@@ -242,6 +245,59 @@ def test_probe_invalid_accounts_reads_chatgpt_account_id_from_nested_id_token(mo
     assert captured["json"]["header"]["Chatgpt-Account-Id"] == "acct-nested"
 
 
+def test_probe_invalid_accounts_workers_enable_concurrent_fallback_probe(monkeypatch):
+    payload = {
+        "files": [
+            {
+                "email": "invalid1@example.com",
+                "name": "invalid1@example.com.json",
+                "type": "codex",
+                "auth_index": "auth-1",
+            },
+            {
+                "email": "invalid2@example.com",
+                "name": "invalid2@example.com.json",
+                "type": "codex",
+                "auth_index": "auth-2",
+            },
+            {
+                "email": "active@example.com",
+                "name": "active@example.com.json",
+                "type": "codex",
+                "auth_index": "auth-3",
+            },
+        ]
+    }
+
+    monkeypatch.setattr(cpa_client.cffi_requests, "get", lambda url, **kwargs: FakeResponse(status_code=200, payload=payload))
+
+    state = {"active": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def _fake_post(url, **kwargs):
+        with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+
+        time.sleep(0.05)
+        auth_index = kwargs["json"]["authIndex"]
+        try:
+            return FakeResponse(
+                status_code=200,
+                payload={"status_code": 401 if auth_index in {"auth-1", "auth-2"} else 200},
+            )
+        finally:
+            with lock:
+                state["active"] -= 1
+
+    monkeypatch.setattr(cpa_client.cffi_requests, "post", _fake_post)
+
+    result = cpa_client.probe_invalid_accounts(_service(), workers=3)
+
+    assert sorted(item["email"] for item in result) == ["invalid1@example.com", "invalid2@example.com"]
+    assert state["peak"] >= 2
+
+
 def test_delete_invalid_accounts_uses_query_name_delete_endpoint(monkeypatch):
     delete_calls = []
 
@@ -277,3 +333,38 @@ def test_delete_invalid_accounts_counts_failures_per_name(monkeypatch):
     )
 
     assert result == {"deleted": 1, "failed": 1}
+
+
+def test_delete_invalid_accounts_workers_enable_concurrent_delete(monkeypatch):
+    state = {"active": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def _fake_delete(url, **kwargs):
+        with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+
+        time.sleep(0.05)
+        try:
+            if "bad%40example.com" in url:
+                return FakeResponse(status_code=400, payload={"error": "invalid name"})
+            return FakeResponse(status_code=200, payload={"status": "ok"})
+        finally:
+            with lock:
+                state["active"] -= 1
+
+    monkeypatch.setattr(cpa_client.cffi_requests, "delete", _fake_delete)
+
+    result = cpa_client.delete_invalid_accounts(
+        _service(),
+        [
+            "ok1@example.com.json",
+            "ok2@example.com.json",
+            "bad@example.com.json",
+            "ok3@example.com.json",
+        ],
+        workers=4,
+    )
+
+    assert result == {"deleted": 3, "failed": 1}
+    assert state["peak"] >= 2

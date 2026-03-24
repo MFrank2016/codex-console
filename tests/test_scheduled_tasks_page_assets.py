@@ -466,6 +466,8 @@ def test_scheduled_tasks_script_provides_safe_default_cleanup_config():
     assert "TASK_CONFIG_SCHEMAS" in script
     assert "max_probe_count" in script
     assert "max_cleanup_count" in script
+    assert "probe_workers" in script
+    assert "delete_workers" in script
     assert "refresh_after_days" in script
 
 

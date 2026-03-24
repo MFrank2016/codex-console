@@ -74,6 +74,22 @@ const TASK_CONFIG_SCHEMAS = {
             value_description: '只限制删除数量，不等于探测数量',
             readonly_key: true,
         },
+        {
+            key: 'probe_workers',
+            key_description: '401 探测并发数',
+            value_type: 'number',
+            default_value: 10,
+            value_description: '0 或空时回退为默认并发',
+            readonly_key: true,
+        },
+        {
+            key: 'delete_workers',
+            key_description: '远端删除并发数',
+            value_type: 'number',
+            default_value: 20,
+            value_description: '0 或空时回退为默认并发',
+            readonly_key: true,
+        },
     ],
     cpa_refill: [
         {

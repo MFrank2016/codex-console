@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -38,6 +39,7 @@ _VALIDITY_MARKER_KEYS = {
 
 ProbeProgressCallback = Callable[[str], None]
 _PROBE_PROGRESS_EVERY = 50
+_SERIAL_WORKERS = 1
 
 
 def _normalize_auth_files_url(api_url: str) -> str:
@@ -124,6 +126,12 @@ def _emit_probe_progress(progress_callback: ProbeProgressCallback | None, messag
     if progress_callback is None:
         return
     progress_callback(message)
+
+
+def _normalize_workers(value: Any, *, default: int) -> int:
+    if not isinstance(value, int) or value <= 0:
+        return max(1, default)
+    return max(1, value)
 
 
 def _normalize_text(value: Any) -> str:
@@ -251,6 +259,25 @@ def _build_probe_payload(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _perform_probe_api_call(
+    *,
+    api_call_endpoint: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: int,
+) -> Any:
+    response = cffi_requests.post(
+        api_call_endpoint,
+        json=payload,
+        headers=headers,
+        timeout=timeout,
+        proxies=None,
+        impersonate="chrome110",
+    )
+    _raise_for_http_error(response, "probe api-call")
+    return _safe_json(response)
+
+
 def _probe_invalid_accounts_via_api_call(
     service: Any,
     items: list[dict[str, Any]],
@@ -258,6 +285,7 @@ def _probe_invalid_accounts_via_api_call(
     limit: int | None = None,
     progress_callback: ProbeProgressCallback | None = None,
     timeout: int = 20,
+    workers: int | None = None,
 ) -> list[dict[str, Any]]:
     api_call_endpoint = _build_api_call_endpoint(service)
     headers = {**_build_headers(service), "Content-Type": "application/json"}
@@ -274,31 +302,57 @@ def _probe_invalid_accounts_via_api_call(
         prepared_items.append((item, payload))
 
     total_candidates = len(prepared_items)
-    for scanned, (item, payload) in enumerate(prepared_items, start=1):
-        response = cffi_requests.post(
-            api_call_endpoint,
-            json=payload,
-            headers=headers,
-            timeout=timeout,
-            proxies=None,
-            impersonate="chrome110",
-        )
-        _raise_for_http_error(response, "probe api-call")
+    resolved_workers = _normalize_workers(workers, default=_SERIAL_WORKERS)
 
-        data = _safe_json(response)
+    def _process_probe_result(item: dict[str, Any], data: Any) -> None:
         if isinstance(data, dict) and data.get("status_code") == 401:
             normalized_item = _normalize_invalid_item(item)
             if normalized_item is not None:
                 normalized.append(normalized_item)
 
-        if scanned == 1 or scanned == total_candidates or scanned % _PROBE_PROGRESS_EVERY == 0:
-            _emit_probe_progress(
-                progress_callback,
-                f"probe progress (scanned={scanned}/{total_candidates}, invalid={len(normalized)})",
+    if resolved_workers == _SERIAL_WORKERS:
+        for scanned, (item, payload) in enumerate(prepared_items, start=1):
+            data = _perform_probe_api_call(
+                api_call_endpoint=api_call_endpoint,
+                headers=headers,
+                payload=payload,
+                timeout=timeout,
             )
+            _process_probe_result(item, data)
 
-        if isinstance(limit, int) and limit > 0 and len(normalized) >= limit:
-            break
+            if scanned == 1 or scanned == total_candidates or scanned % _PROBE_PROGRESS_EVERY == 0:
+                _emit_probe_progress(
+                    progress_callback,
+                    f"probe progress (scanned={scanned}/{total_candidates}, invalid={len(normalized)})",
+                )
+
+            if isinstance(limit, int) and limit > 0 and len(normalized) >= limit:
+                break
+        return normalized
+
+    with ThreadPoolExecutor(max_workers=resolved_workers) as executor:
+        futures = {
+            executor.submit(
+                _perform_probe_api_call,
+                api_call_endpoint=api_call_endpoint,
+                headers=headers,
+                payload=payload,
+                timeout=timeout,
+            ): item
+            for item, payload in prepared_items
+        }
+        scanned = 0
+        for future in as_completed(futures):
+            scanned += 1
+            _process_probe_result(futures[future], future.result())
+            if scanned == 1 or scanned == total_candidates or scanned % _PROBE_PROGRESS_EVERY == 0:
+                _emit_probe_progress(
+                    progress_callback,
+                    f"probe progress (scanned={scanned}/{total_candidates}, invalid={len(normalized)})",
+                )
+
+    if isinstance(limit, int) and limit > 0:
+        normalized = normalized[:limit]
 
     return normalized
 
@@ -338,6 +392,7 @@ def probe_invalid_accounts(
     max_probe_count: int | None = None,
     progress_callback: ProbeProgressCallback | None = None,
     timeout: int = 20,
+    workers: int | None = None,
 ) -> list[dict[str, Any]]:
     endpoint = _build_endpoint(service)
     params: dict[str, Any] = {"invalid": "1"}
@@ -399,6 +454,7 @@ def probe_invalid_accounts(
         limit=result_limit,
         progress_callback=progress_callback,
         timeout=timeout,
+        workers=workers,
     )
 
 
@@ -426,30 +482,71 @@ def _extract_delete_counts(payload: Any, total: int) -> dict[str, int]:
     return {"deleted": max(0, deleted), "failed": max(0, failed)}
 
 
-def delete_invalid_accounts(service, names: list[str], *, timeout: int = 20) -> dict[str, int]:
+def _delete_invalid_account_name(
+    *,
+    endpoint: str,
+    headers: dict[str, str],
+    name: str,
+    timeout: int,
+) -> bool:
+    response = cffi_requests.delete(
+        f"{endpoint}?name={quote(name, safe='')}",
+        headers=headers,
+        timeout=timeout,
+        proxies=None,
+        impersonate="chrome110",
+    )
+    payload = _safe_json(response)
+    return response.status_code == 200 and isinstance(payload, dict) and payload.get("status") == "ok"
+
+
+def delete_invalid_accounts(
+    service,
+    names: list[str],
+    *,
+    timeout: int = 20,
+    workers: int | None = None,
+) -> dict[str, int]:
     cleaned_names = [name for name in names if isinstance(name, str) and name.strip()]
     if not cleaned_names:
         return {"deleted": 0, "failed": 0}
 
     endpoint = _build_endpoint(service)
     headers = _build_headers(service)
+    resolved_workers = _normalize_workers(workers, default=_SERIAL_WORKERS)
+
+    if resolved_workers == _SERIAL_WORKERS:
+        deleted = 0
+        failed = 0
+        for name in cleaned_names:
+            if _delete_invalid_account_name(
+                endpoint=endpoint,
+                headers=headers,
+                name=name,
+                timeout=timeout,
+            ):
+                deleted += 1
+                continue
+            failed += 1
+        return {"deleted": deleted, "failed": failed}
+
     deleted = 0
     failed = 0
-
-    for name in cleaned_names:
-        response = cffi_requests.delete(
-            f"{endpoint}?name={quote(name, safe='')}",
-            headers=headers,
-            timeout=timeout,
-            proxies=None,
-            impersonate="chrome110",
-        )
-
-        payload = _safe_json(response)
-        if response.status_code == 200 and isinstance(payload, dict) and payload.get("status") == "ok":
-            deleted += 1
-            continue
-
-        failed += 1
+    with ThreadPoolExecutor(max_workers=resolved_workers) as executor:
+        futures = [
+            executor.submit(
+                _delete_invalid_account_name,
+                endpoint=endpoint,
+                headers=headers,
+                name=name,
+                timeout=timeout,
+            )
+            for name in cleaned_names
+        ]
+        for future in as_completed(futures):
+            if future.result():
+                deleted += 1
+            else:
+                failed += 1
 
     return {"deleted": deleted, "failed": failed}

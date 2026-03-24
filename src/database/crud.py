@@ -162,6 +162,37 @@ def mark_account_expired_by_email_and_cpa(
     return int(updated)
 
 
+def mark_accounts_expired_by_emails_and_cpa(
+    db: Session,
+    *,
+    emails: List[str],
+    cpa_service_id: int,
+    reason: str,
+) -> int:
+    """按邮箱列表 + 主 CPA 服务批量标记账号为失效。"""
+    cleaned_emails = sorted({str(email).strip() for email in emails if str(email).strip()})
+    if not cleaned_emails:
+        return 0
+
+    now = datetime.utcnow()
+    updated = (
+        db.query(Account)
+        .filter(Account.email.in_(cleaned_emails))
+        .filter(Account.primary_cpa_service_id == cpa_service_id)
+        .update(
+            {
+                Account.status: "expired",
+                Account.invalidated_at: now,
+                Account.invalid_reason: reason,
+                Account.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return int(updated)
+
+
 def get_due_refresh_accounts(
     db: Session,
     *,

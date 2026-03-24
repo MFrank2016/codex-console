@@ -52,6 +52,35 @@ def _create_cleanup_plan_and_run(temp_db, *, max_cleanup_count: int = 10, max_pr
     return service, plan, run
 
 
+def test_cleanup_runner_passes_cleanup_worker_counts_to_cpa_client(temp_db, monkeypatch):
+    _, plan, run = _create_cleanup_plan_and_run(temp_db)
+    plan.config = {**(plan.config or {}), "probe_workers": 7, "delete_workers": 9}
+    temp_db.commit()
+
+    captured: dict[str, Any] = {}
+
+    def _fake_probe_invalid_accounts(**kwargs):
+        captured["probe_workers"] = kwargs.get("workers")
+        return [{"email": "worker@example.com", "name": "worker@example.com.json"}]
+
+    def _fake_delete_invalid_accounts(**kwargs):
+        captured["delete_workers"] = kwargs.get("workers")
+        return {"deleted": len(kwargs["names"]), "failed": 0}
+
+    monkeypatch.setattr(cleanup_runner, "probe_invalid_accounts", _fake_probe_invalid_accounts)
+    monkeypatch.setattr(cleanup_runner, "delete_invalid_accounts", _fake_delete_invalid_accounts)
+    monkeypatch.setattr(
+        cleanup_runner.crud,
+        "mark_accounts_expired_by_emails_and_cpa",
+        lambda *args, **kwargs: 1,
+    )
+
+    run_cleanup_plan(plan_id=plan.id, run_id=run.id)
+
+    assert captured["probe_workers"] == 7
+    assert captured["delete_workers"] == 9
+
+
 def test_cleanup_runner_marks_local_accounts_expired_for_matching_primary_cpa(temp_db, monkeypatch):
     service, plan, run = _create_cleanup_plan_and_run(temp_db)
 
@@ -254,10 +283,10 @@ def test_cleanup_runner_marks_run_cancelled_and_logs_user_stop_when_stop_request
     monkeypatch.setattr(cleanup_runner, "probe_invalid_accounts", lambda **_: invalid_items)
     monkeypatch.setattr(cleanup_runner, "delete_invalid_accounts", lambda **_: {"deleted": 0, "failed": 0})
 
-    original_mark_expired = cleanup_runner.crud.mark_account_expired_by_email_and_cpa
+    original_mark_expired = cleanup_runner.crud.mark_accounts_expired_by_emails_and_cpa
     stop_requested = {"done": False}
 
-    def _mark_account_expired_and_request_stop(db, **kwargs):
+    def _mark_accounts_expired_and_request_stop(db, **kwargs):
         marked = original_mark_expired(db, **kwargs)
         if not stop_requested["done"]:
             stop_requested["done"] = True
@@ -266,8 +295,8 @@ def test_cleanup_runner_marks_run_cancelled_and_logs_user_stop_when_stop_request
 
     monkeypatch.setattr(
         cleanup_runner.crud,
-        "mark_account_expired_by_email_and_cpa",
-        _mark_account_expired_and_request_stop,
+        "mark_accounts_expired_by_emails_and_cpa",
+        _mark_accounts_expired_and_request_stop,
     )
 
     summary = run_cleanup_plan(plan_id=plan.id, run_id=run.id)
@@ -277,7 +306,7 @@ def test_cleanup_runner_marks_run_cancelled_and_logs_user_stop_when_stop_request
     assert persisted_run is not None
     assert persisted_run.status == "cancelled"
     assert persisted_run.error_message == "user requested stop"
-    assert summary["local_marked_expired"] == 1
+    assert summary["local_marked_expired"] == 5
     assert summary["remote_deleted"] == 0
     assert "收到停止请求" in (persisted_run.logs or "")
     assert "任务已按请求停止" in (persisted_run.logs or "")
@@ -350,3 +379,48 @@ def test_cleanup_runner_persists_failure_status_when_probe_raises(temp_db, monke
         "remote_delete_failed": 0,
     }
     assert "cleanup runner failed: probe failed" in (persisted_run.logs or "")
+
+
+def test_cleanup_runner_uses_bulk_expire_helper_instead_of_single_row_updates(temp_db, monkeypatch):
+    service, plan, run = _create_cleanup_plan_and_run(temp_db, max_cleanup_count=3)
+
+    invalid_items = []
+    for idx in range(3):
+        email = f"bulk-{idx}@example.com"
+        account = crud.create_account(temp_db, email=email, email_service="tempmail")
+        crud.update_account(temp_db, account.id, primary_cpa_service_id=service.id, status="active")
+        invalid_items.append({"email": email, "name": f"{email}.json"})
+
+    monkeypatch.setattr(cleanup_runner, "probe_invalid_accounts", lambda **_: invalid_items)
+    monkeypatch.setattr(cleanup_runner, "delete_invalid_accounts", lambda **_: {"deleted": 3, "failed": 0})
+
+    bulk_calls: list[list[str]] = []
+    original_mark_expired = cleanup_runner.crud.mark_account_expired_by_email_and_cpa
+
+    def _fake_bulk_expire(db, *, emails, cpa_service_id, reason):
+        bulk_calls.append(list(emails))
+        marked = 0
+        for email in emails:
+            marked += original_mark_expired(
+            db,
+                email=email,
+                cpa_service_id=cpa_service_id,
+                reason=reason,
+            )
+        return marked
+
+    monkeypatch.setattr(
+        cleanup_runner.crud,
+        "mark_accounts_expired_by_emails_and_cpa",
+        _fake_bulk_expire,
+    )
+    monkeypatch.setattr(
+        cleanup_runner.crud,
+        "mark_account_expired_by_email_and_cpa",
+        lambda *args, **kwargs: pytest.fail("single-row expire helper should not be used"),
+    )
+
+    summary = run_cleanup_plan(plan_id=plan.id, run_id=run.id)
+
+    assert bulk_calls == [[item["email"] for item in invalid_items]]
+    assert summary["local_marked_expired"] == 3
