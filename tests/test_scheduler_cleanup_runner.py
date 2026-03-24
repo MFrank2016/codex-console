@@ -378,7 +378,7 @@ def test_cleanup_runner_persists_failure_status_when_probe_raises(temp_db, monke
         "remote_deleted": 0,
         "remote_delete_failed": 0,
     }
-    assert "cleanup runner failed: probe failed" in (persisted_run.logs or "")
+    assert "[ERROR] cleanup runner failed: probe failed" in (persisted_run.logs or "")
 
 
 def test_cleanup_runner_uses_bulk_expire_helper_instead_of_single_row_updates(temp_db, monkeypatch):

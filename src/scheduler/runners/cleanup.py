@@ -203,6 +203,6 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             return summary
         raise
     except Exception as exc:
-        append_run_log(run_id, f"cleanup runner failed: {exc}")
+        append_run_log(run_id, f"cleanup runner failed: {exc}", level="ERROR")
         finalize_run(run_id, status="failed", summary=summary, error_message=str(exc))
         raise

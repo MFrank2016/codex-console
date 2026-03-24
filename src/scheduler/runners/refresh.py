@@ -90,6 +90,7 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                         f"(account_id={account_id}): "
                         f"{getattr(refresh_result, 'error_message', 'unknown error')}"
                     ),
+                    level="WARN",
                 )
                 continue
 
@@ -98,7 +99,11 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             with get_db() as db:
                 account = crud.get_account_by_id(db, account_id)
                 if account is None:
-                    append_run_log(run_id, f"account missing after refresh (account_id={account_id})")
+                    append_run_log(
+                        run_id,
+                        f"account missing after refresh (account_id={account_id})",
+                        level="WARN",
+                    )
                     continue
 
                 if getattr(refresh_result, "access_token", None):
@@ -125,6 +130,7 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     append_run_log(
                         run_id,
                         f"subscription check failed (account_id={account_id}): {exc}",
+                        level="WARN",
                     )
                     continue
 
@@ -161,6 +167,7 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     append_run_log(
                         run_id,
                         f"cpa upload failed (account_id={account_id}): {upload_message}",
+                        level="WARN",
                     )
                 raise_if_stop_requested(run_id, stage="refresh upload complete")
 
@@ -183,6 +190,6 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             return summary
         raise
     except Exception as exc:
-        append_run_log(run_id, f"refresh runner failed: {exc}")
+        append_run_log(run_id, f"refresh runner failed: {exc}", level="ERROR")
         finalize_run(run_id, status="failed", summary=summary, error_message=str(exc))
         raise

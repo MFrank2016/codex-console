@@ -171,13 +171,17 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     summary["registered_failed"] += 1
                     consecutive_failures += 1
                     summary["consecutive_failures"] = consecutive_failures
-                    append_run_log(run_id, f"registration failed: {job.error_message or 'unknown error'}")
+                    append_run_log(
+                        run_id,
+                        f"registration failed: {job.error_message or 'unknown error'}",
+                        level="WARN",
+                    )
                     raise_if_stop_requested(run_id, stage="refill registration")
                 elif not job.account_id:
                     summary["registered_failed"] += 1
                     consecutive_failures += 1
                     summary["consecutive_failures"] = consecutive_failures
-                    append_run_log(run_id, "registration returned no account_id")
+                    append_run_log(run_id, "registration returned no account_id", level="WARN")
                     raise_if_stop_requested(run_id, stage="refill registration")
                 else:
                     summary["registered_success"] += 1
@@ -203,6 +207,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                         append_run_log(
                             run_id,
                             f"upload failed (account_id={job.account_id}): {message}",
+                            level="WARN",
                         )
                     raise_if_stop_requested(run_id, stage="refill upload")
 
@@ -226,6 +231,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                 append_run_log(
                     run_id,
                     f"refill plan auto-disabled: {AUTO_DISABLE_REASON}",
+                    level="WARN",
                 )
                 break
 
@@ -261,6 +267,6 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             return summary
         raise
     except Exception as exc:
-        append_run_log(run_id, f"refill runner failed: {exc}")
+        append_run_log(run_id, f"refill runner failed: {exc}", level="ERROR")
         finalize_run(run_id, status="failed", summary=summary, error_message=str(exc))
         raise
