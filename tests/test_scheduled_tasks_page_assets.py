@@ -1043,6 +1043,7 @@ const document = {{
 let timerCallback = null;
 const runRequests = [];
 const logRequests = [];
+let copiedText = '';
 const detailIsRunning = scenarioName === 'second_chunk_reapplies_filters' || scenarioName === 'auto_scroll_disabled_preserves_position';
 
 const defaultFirstChunk = [
@@ -1054,11 +1055,21 @@ const timestampNormalizationChunk = [
   '2026-03-24 09:00:00.100 [INFO] startup ok',
   '2026-03-24 09:00:02 [WARN] warn second precision',
 ].join('\n');
-const firstChunk = scenarioName === 'timestamp_normalization' ? timestampNormalizationChunk : defaultFirstChunk;
+const copyRegressionChunk = [
+  '2026-03-24 09:00:00.100 [INFO] startup ok',
+  '2026-03-24 09:00:00.100 [ERROR] boom first',
+  '2026-03-24 09:00:00.300 [WARN] warn once',
+].join('\n');
+const firstChunk = scenarioName === 'timestamp_normalization'
+  ? timestampNormalizationChunk
+  : (scenarioName === 'copy_visible_logs_preserves_raw_text' ? copyRegressionChunk : defaultFirstChunk);
 const secondChunk = '\n' + [
   '2026-03-24 09:00:01.100 [INFO] boom info second',
   '2026-03-24 09:00:01.200 [ERROR] boom second',
 ].join('\n');
+const writeClipboard = async (value) => {{
+  copiedText = String(value ?? '');
+}};
 
 const context = {{
   console,
@@ -1078,13 +1089,13 @@ const context = {{
   window: {{
     navigator: {{
       clipboard: {{
-        writeText: async () => {{}},
+        writeText: writeClipboard,
       }},
     }},
   }},
   navigator: {{
     clipboard: {{
-      writeText: async () => {{}},
+      writeText: writeClipboard,
     }},
   }},
   theme: {{ toggle() {{}} }},
@@ -1260,6 +1271,17 @@ async function runScenario() {{
         scrollHeight: logConsole.scrollHeight,
       }};
     }}
+    case 'copy_visible_logs_preserves_raw_text': {{
+      await context.window.openScheduledRunLog(123);
+      levelFilter.value = 'ERROR';
+      trigger('change', levelFilter, {{ target: levelFilter }});
+      trigger('click', getElement('run-log-copy-btn'), {{ preventDefault() {{}} }});
+      await flush();
+      await flush();
+      return {{
+        copiedText,
+      }};
+    }}
     default:
       throw new Error('unknown scenario: ' + scenarioName);
   }}
@@ -1359,6 +1381,15 @@ def test_scheduled_tasks_run_log_renders_second_precision_timestamps_and_column_
     assert "scheduled-run-log-message" in result["consoleHtml"]
     assert ">INFO<" in result["consoleHtml"]
     assert ">WARN<" in result["consoleHtml"]
+
+
+def test_scheduled_tasks_run_log_copy_uses_raw_visible_lines():
+    result = run_scheduled_tasks_log_console_scenario("copy_visible_logs_preserves_raw_text")
+
+    assert "2026-03-24 09:00:00.100 [ERROR] boom first" in result["copiedText"]
+    assert "[ERROR]" in result["copiedText"]
+    assert "2026-03-24 09:00:00.100" in result["copiedText"]
+
 
 def test_scheduled_tasks_script_drops_stale_builtin_keys_when_task_type_switches():
     node_script = r"""
