@@ -1386,9 +1386,9 @@ def test_scheduled_tasks_run_log_renders_second_precision_timestamps_and_column_
 def test_scheduled_tasks_run_log_copy_uses_raw_visible_lines():
     result = run_scheduled_tasks_log_console_scenario("copy_visible_logs_preserves_raw_text")
 
-    assert "2026-03-24 09:00:00.100 [ERROR] boom first" in result["copiedText"]
-    assert "[ERROR]" in result["copiedText"]
-    assert "2026-03-24 09:00:00.100" in result["copiedText"]
+    assert result["copiedText"] == "2026-03-24 09:00:00.100 [ERROR] boom first"
+    assert "startup ok" not in result["copiedText"]
+    assert "warn once" not in result["copiedText"]
 
 
 def test_scheduled_tasks_script_drops_stale_builtin_keys_when_task_type_switches():
