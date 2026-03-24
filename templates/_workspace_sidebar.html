@@ -1,0 +1,26 @@
+<aside class="workspace-sidebar" aria-label="工作区侧边栏">
+    <div class="workspace-sidebar-brand">
+        <a href="/" class="workspace-brand-link">Codex Console</a>
+    </div>
+
+    <nav class="workspace-nav" aria-label="工作区导航">
+        {% for nav_group in workspace_nav %}
+        <section class="workspace-nav-group">
+            <h2 class="workspace-nav-group-title">{{ nav_group["group"] }}</h2>
+            <ul class="workspace-nav-list">
+                {% for nav_item in nav_group["items"] %}
+                <li class="workspace-nav-list-item">
+                    <a
+                        href="{{ nav_item["href"] }}"
+                        class="workspace-nav-link{% if nav_item["key"] == page_key %} is-active{% endif %}"
+                        data-nav-key="{{ nav_item["key"] }}"
+                    >
+                        {{ nav_item["label"] }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </section>
+        {% endfor %}
+    </nav>
+</aside>

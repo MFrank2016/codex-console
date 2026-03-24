@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ page_title }} - OpenAI 注册系统{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="workspace-shell" data-page-key="{{ page_key }}">
+    <div class="workspace-rail">
+        {% include "_workspace_sidebar.html" %}
+    </div>
+
+    <div class="workspace-main">
+        <header class="page-head">
+            <div class="page-head-copy">
+                <h1 class="page-head-title">{{ page_title }}</h1>
+                <p class="page-head-subtitle">{{ page_subtitle }}</p>
+            </div>
+            <button type="button" id="workspace-sidebar-toggle" class="workspace-sidebar-toggle" aria-label="切换侧边栏">
+                ☰
+            </button>
+        </header>
+
+        <main class="workspace-content">
+            {% block page_content %}{% endblock %}
+        </main>
+    </div>
+
+    <script src="{{ '/static/js/workspace.js?v=' ~ static_version }}"></script>
+    {% block page_scripts %}{% endblock %}
+</body>
+</html>

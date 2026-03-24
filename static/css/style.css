@@ -131,6 +131,70 @@ body {
     padding: 0 var(--spacing-lg);
 }
 
+/* Workspace Shell Foundation */
+.workspace-shell {
+    min-height: 100vh;
+}
+
+.workspace-rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    padding: var(--spacing-lg) var(--spacing-md);
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    z-index: 50;
+}
+
+.workspace-sidebar {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+    overflow-y: auto;
+}
+
+.workspace-sidebar-collapsed .workspace-sidebar {
+    width: 72px;
+}
+
+.workspace-main {
+    margin-left: 260px;
+    min-height: 100vh;
+    padding: var(--spacing-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+.workspace-sidebar-collapsed .workspace-main {
+    margin-left: 96px;
+}
+
+.page-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+}
+
+.hero-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.workspace-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: var(--spacing-lg);
+}
+
 /* ============================================
    导航栏
    ============================================ */
