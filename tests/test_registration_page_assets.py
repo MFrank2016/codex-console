@@ -452,3 +452,9 @@ def test_accounts_script_update_pagination_does_not_override_focused_input_and_s
     assert result["focusedValue"] == "42"
     assert result["blurredValue"] == "4"
     assert result["maxAfterFocused"] == "5"
+
+
+def test_web_app_registers_registration_workbench_page_route():
+    app_source = Path("src/web/app.py").read_text(encoding="utf-8")
+    assert '@app.get("/registration-workbench", response_class=HTMLResponse)' in app_source
+    assert 'templates.TemplateResponse("index.html"' in app_source

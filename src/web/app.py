@@ -142,8 +142,13 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
-        """首页 - 注册页面"""
+    async def dashboard_page(request: Request):
+        if not _is_authenticated(request):
+            return _redirect_to_login(request)
+        return templates.TemplateResponse("dashboard.html", {"request": request})
+
+    @app.get("/registration-workbench", response_class=HTMLResponse)
+    async def registration_workbench_page(request: Request):
         if not _is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse("index.html", {"request": request})
