@@ -1,12 +1,35 @@
 {% extends "_workspace_base.html" %}
 
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/dashboard_page.css?v={{ static_version }}">
+{% endblock %}
+
 {% block page_content %}
-<section class="hero-metrics" id="dashboard-hero"></section>
-<section class="workspace-grid">
-  <div class="workspace-panel" id="dashboard-task-health"></div>
-  <div class="workspace-panel" id="dashboard-quick-links"></div>
+<section class="dashboard-page">
+  <header id="dashboard-hero-primary" class="dashboard-hero-primary">
+    <div class="dashboard-hero-copy">
+      <h2 class="dashboard-hero-title">总览</h2>
+      <p class="dashboard-hero-subtitle">快速了解当前运行状态与最近活动。</p>
+    </div>
+    <div id="dashboard-metric-grid" class="dashboard-metric-grid"></div>
+  </header>
+
+  <div class="dashboard-page-grid">
+    <section class="dashboard-card dashboard-card-activity">
+      <header class="dashboard-card-head">
+        <h3 class="dashboard-card-title">最近活动</h3>
+      </header>
+      <ul id="dashboard-activity-feed" class="dashboard-activity-feed"></ul>
+    </section>
+
+    <section class="dashboard-card dashboard-card-actions">
+      <header class="dashboard-card-head">
+        <h3 class="dashboard-card-title">快捷动作</h3>
+      </header>
+      <div id="dashboard-quick-actions" class="dashboard-quick-actions"></div>
+    </section>
+  </div>
 </section>
-<section class="workspace-panel" id="dashboard-recent-activity"></section>
 {% endblock %}
 
 {% block page_scripts %}

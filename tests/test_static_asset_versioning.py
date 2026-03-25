@@ -73,6 +73,7 @@ def test_dashboard_and_registration_pages_render_versioned_shared_assets():
         assert response.status_code == 200
         _assert_versioned_asset(response.text, "/static/js/workspace.js")
         _assert_versioned_asset(response.text, "/static/js/dashboard.js")
+        _assert_versioned_asset(response.text, "/static/css/dashboard_page.css")
 
         response = client.get("/registration-workbench")
         assert response.status_code == 200

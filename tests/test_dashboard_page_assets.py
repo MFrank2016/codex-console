@@ -7,6 +7,7 @@ from src.database import crud
 from src.database.session import get_db
 from src.config.settings import get_settings
 from src.web.app import create_app
+from tests_runtime.dashboard_js_harness import run_dashboard_js_scenario
 
 
 def test_dashboard_page_requires_auth_and_renders_dashboard_hooks():
@@ -34,17 +35,40 @@ def test_dashboard_page_requires_auth_and_renders_dashboard_hooks():
 
 def test_dashboard_template_contains_required_sections():
     template = Path("templates/dashboard.html").read_text(encoding="utf-8")
-    assert 'id="dashboard-hero"' in template
-    assert 'id="dashboard-task-health"' in template
-    assert 'id="dashboard-quick-links"' in template
+    assert "dashboard-page" in template
+    assert 'id="dashboard-hero-primary"' in template
+    assert 'id="dashboard-activity-feed"' in template
+    assert 'id="dashboard-quick-actions"' in template
+
+
+def test_dashboard_template_contains_new_hero_and_activity_sections():
+    template = Path("templates/dashboard.html").read_text(encoding="utf-8")
+    assert 'id="dashboard-hero-primary"' in template
+    assert 'id="dashboard-metric-grid"' in template
+    assert 'id="dashboard-activity-feed"' in template
+    assert 'id="dashboard-quick-actions"' in template
+    assert "/static/css/dashboard_page.css" in template
 
 
 def test_dashboard_script_loads_summary_endpoint_and_render_helpers():
     script = Path("static/js/dashboard.js").read_text(encoding="utf-8")
     assert "/dashboard/summary" in script
     assert "renderDashboardHero" in script
-    assert "renderDashboardTaskHealth" in script
-    assert "registration.total_tasks" in script
+    assert "renderRecentActivity" in script
+    assert "dashboard-activity-item" in script
+
+
+def test_dashboard_js_harness_renders_modern_hero_metrics_and_activity_feed():
+    result = run_dashboard_js_scenario("render_dashboard")
+
+    hero_html = result["hero_html"]
+    assert 'class="dashboard-hero-copy"' in hero_html
+    assert 'id="dashboard-metric-grid"' in hero_html
+    assert "dashboard-metric-card" in hero_html
+
+    activity_html = result["activity_html"]
+    assert 'class="dashboard-activity-item"' in activity_html
+    assert "&lt;script&gt;" in activity_html
 
 
 def test_dashboard_summary_api_requires_auth():

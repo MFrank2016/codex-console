@@ -7,111 +7,85 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function metricCard(title, value, hint = '') {
+function renderMetricCard(label, value, hint = '') {
+  const hintHtml = hint ? `<p class="dashboard-metric-hint">${escapeHtml(hint)}</p>` : '';
   return `
-    <article class="workspace-panel">
-      <h3>${escapeHtml(title)}</h3>
-      <p class="metric-value">${escapeHtml(value)}</p>
-      <p class="metric-hint">${escapeHtml(hint)}</p>
+    <article class="dashboard-metric-card">
+      <p class="dashboard-metric-label">${escapeHtml(label)}</p>
+      <p class="dashboard-metric-value">${escapeHtml(value)}</p>
+      ${hintHtml}
     </article>
   `;
 }
 
 function renderDashboardHero(summary) {
-  const container = document.getElementById('dashboard-hero');
-  if (!container) return;
-
   const registration = summary.registration || {};
   const accounts = summary.accounts || {};
   const scheduled = summary.scheduled || {};
   const successRate = registration.success_rate == null ? '—' : `${registration.success_rate}%`;
   const totalTasks = registration.total_tasks ?? registration.total ?? 0;
 
-  container.innerHTML = [
-    metricCard('注册任务总数', totalTasks, `运行中 ${registration.running ?? 0}`),
-    metricCard('注册成功率', successRate, `失败 ${registration.failed ?? 0}`),
-    metricCard('账号总数', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`),
-    metricCard('定时计划', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`),
+  const metrics = [
+    renderMetricCard('注册任务', totalTasks, `运行中 ${registration.running ?? 0}`),
+    renderMetricCard('成功率', successRate, `失败 ${registration.failed ?? 0}`),
+    renderMetricCard('账号', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`),
+    renderMetricCard('定时计划', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`),
   ].join('');
-}
 
-function renderDashboardTaskHealth(summary) {
-  const container = document.getElementById('dashboard-task-health');
-  if (!container) return;
-
-  const registration = summary.registration || {};
-  const scheduled = summary.scheduled || {};
-
-  container.innerHTML = `
-    <h3>任务健康</h3>
-    <ul>
-      <li>待执行注册：${escapeHtml(registration.pending ?? 0)}</li>
-      <li>执行中注册：${escapeHtml(registration.running ?? 0)}</li>
-      <li>今日定时运行：${escapeHtml(scheduled.runs_today ?? 0)}</li>
-      <li>运行中定时任务：${escapeHtml(scheduled.runs_running ?? 0)}</li>
-      <li>失败定时任务：${escapeHtml(scheduled.runs_failed ?? 0)}</li>
-    </ul>
+  return `
+    <div class="dashboard-hero-copy">
+      <h2 class="dashboard-hero-title">总览</h2>
+      <p class="dashboard-hero-subtitle">快速了解当前运行状态与最近活动。</p>
+    </div>
+    <div id="dashboard-metric-grid" class="dashboard-metric-grid">
+      ${metrics}
+    </div>
   `;
 }
 
-function renderDashboardQuickLinks(summary) {
-  const container = document.getElementById('dashboard-quick-links');
-  if (!container) return;
-
-  const links = Array.isArray(summary.quick_links) ? summary.quick_links : [];
-  if (!links.length) {
-    container.innerHTML = '<h3>快捷入口</h3><p>暂无可用入口。</p>';
-    return;
+function renderRecentActivity(items) {
+  const normalized = Array.isArray(items) ? items : [];
+  if (!normalized.length) {
+    return '<li class="dashboard-activity-item"><span>暂无最近活动。</span></li>';
   }
 
-  const rows = links
-    .map((link) => `
-      <li>
-        <a href="${escapeHtml(link.href || '#')}">${escapeHtml(link.label || '未命名入口')}</a>
-        <p>${escapeHtml(link.description || '')}</p>
+  return normalized
+    .map((item) => `
+      <li class="dashboard-activity-item">
+        <a href="${escapeHtml(item?.href || '#')}">${escapeHtml(item?.title || '未命名活动')}</a>
+        <span class="dashboard-activity-status">${escapeHtml(item?.status || 'unknown')}</span>
       </li>
     `)
     .join('');
-
-  container.innerHTML = `<h3>快捷入口</h3><ul>${rows}</ul>`;
 }
 
-function renderDashboardRecentActivity(summary) {
-  const container = document.getElementById('dashboard-recent-activity');
-  if (!container) return;
-
-  const items = Array.isArray(summary.recent_activity) ? summary.recent_activity : [];
-  if (!items.length) {
-    container.innerHTML = '<h3>最近活动</h3><p>暂无最近活动。</p>';
-    return;
+function renderQuickActions(links) {
+  const normalized = Array.isArray(links) ? links : [];
+  if (!normalized.length) {
+    return '<p class="dashboard-empty">暂无快捷动作。</p>';
   }
 
-  const listHtml = items
-    .map((item) => `
-      <li>
-        <a href="${escapeHtml(item.href || '#')}">${escapeHtml(item.title || '未命名活动')}</a>
-        <span>${escapeHtml(item.status || 'unknown')}</span>
-        <small>${escapeHtml(item.description || '')}</small>
-      </li>
+  return normalized
+    .map((link) => `
+      <a class="dashboard-quick-action" href="${escapeHtml(link?.href || '#')}">
+        <p class="dashboard-quick-action-title">${escapeHtml(link?.label || '未命名动作')}</p>
+        <p class="dashboard-quick-action-desc">${escapeHtml(link?.description || '')}</p>
+      </a>
     `)
     .join('');
-
-  container.innerHTML = `<h3>最近活动</h3><ul>${listHtml}</ul>`;
 }
 
 function renderDashboardError(error) {
   const message = error instanceof Error ? error.message : '加载失败';
   const html = `<p>Dashboard 加载失败：${escapeHtml(message)}</p>`;
 
-  const hero = document.getElementById('dashboard-hero');
-  const taskHealth = document.getElementById('dashboard-task-health');
-  const quickLinks = document.getElementById('dashboard-quick-links');
-  const recentActivity = document.getElementById('dashboard-recent-activity');
+  const hero = document.getElementById('dashboard-hero-primary');
+  const activity = document.getElementById('dashboard-activity-feed');
+  const actions = document.getElementById('dashboard-quick-actions');
 
   if (hero) hero.innerHTML = html;
-  if (taskHealth) taskHealth.innerHTML = html;
-  if (quickLinks) quickLinks.innerHTML = html;
-  if (recentActivity) recentActivity.innerHTML = html;
+  if (activity) activity.innerHTML = html;
+  if (actions) actions.innerHTML = html;
 }
 
 async function loadDashboardSummary() {
@@ -128,13 +102,27 @@ async function loadDashboardSummary() {
   return response.json();
 }
 
+function mountDashboard(summary) {
+  const hero = document.getElementById('dashboard-hero-primary');
+  if (hero) {
+    hero.innerHTML = renderDashboardHero(summary);
+  }
+
+  const activity = document.getElementById('dashboard-activity-feed');
+  if (activity) {
+    activity.innerHTML = renderRecentActivity(summary?.recent_activity);
+  }
+
+  const actions = document.getElementById('dashboard-quick-actions');
+  if (actions) {
+    actions.innerHTML = renderQuickActions(summary?.quick_links);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     const summary = await loadDashboardSummary();
-    renderDashboardHero(summary);
-    renderDashboardTaskHealth(summary);
-    renderDashboardQuickLinks(summary);
-    renderDashboardRecentActivity(summary);
+    mountDashboard(summary);
   } catch (error) {
     console.error('Failed to load dashboard summary', error);
     renderDashboardError(error);
