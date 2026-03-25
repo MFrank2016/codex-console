@@ -48,6 +48,26 @@ _batch_status: Dict[str, dict] = {}
 _batch_logs: Dict[str, List[str]] = defaultdict(list)
 _batch_locks: Dict[str, threading.Lock] = {}
 
+_stream_seq: Dict[str, int] = defaultdict(int)
+_stream_events: Dict[str, deque] = defaultdict(lambda: deque(maxlen=STREAM_BUFFER_SIZE))
+_stream_locks: Dict[str, threading.Lock] = {}
+
+
+def _get_stream_lock(stream_id: str) -> threading.Lock:
+    if stream_id not in _stream_locks:
+        with _meta_lock:
+            if stream_id not in _stream_locks:
+                _stream_locks[stream_id] = threading.Lock()
+    return _stream_locks[stream_id]
+
+
+def _get_logs_tail(task_uuid: str, tail_size: int) -> List[str]:
+    with _get_log_lock(task_uuid):
+        logs = _log_queues.get(task_uuid, [])
+        if tail_size >= len(logs):
+            return list(logs)
+        return list(logs[-tail_size:])
+
 
 def _get_log_lock(task_uuid: str) -> threading.Lock:
     """线程安全地获取或创建任务日志锁"""
@@ -73,8 +93,6 @@ class TaskManager:
     def __init__(self):
         self.executor = _executor
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._stream_seq = defaultdict(int)
-        self._stream_events = defaultdict(lambda: deque(maxlen=STREAM_BUFFER_SIZE))
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """设置事件循环（在 FastAPI 启动时调用）"""
@@ -82,15 +100,18 @@ class TaskManager:
 
     def append_stream_event(self, stream_id: str, kind: str, payload: dict) -> dict:
         """记录 stream 事件并维护递增 seq"""
-        self._stream_seq[stream_id] += 1
-        event = {
-            "seq": self._stream_seq[stream_id],
-            "stream": stream_id,
-            "kind": kind,
-            "timestamp": utc_now().isoformat(),
-            "payload": payload,
-        }
-        self._stream_events[stream_id].append(event)
+        lock = _get_stream_lock(stream_id)
+        with lock:
+            seq = _stream_seq[stream_id] + 1
+            _stream_seq[stream_id] = seq
+            event = {
+                "seq": seq,
+                "stream": stream_id,
+                "kind": kind,
+                "timestamp": utc_now().isoformat(),
+                "payload": payload,
+            }
+            _stream_events[stream_id].append(event)
         return event
 
     def build_task_stream_snapshot(self, task_uuid: str) -> dict:
@@ -98,9 +119,9 @@ class TaskManager:
         task_snapshot = self.get_status(task_uuid) or {}
         steps = self.get_task_steps(task_uuid)
         current_step = steps[-1] if steps else {}
-        logs_tail = self.get_logs(task_uuid)[-LOG_TAIL_SIZE:]
+        logs_tail = _get_logs_tail(task_uuid, LOG_TAIL_SIZE)
         return {
-            "seq": self._stream_seq.get(stream_id, 0) + 1,
+            "seq": _stream_seq.get(stream_id, 0) + 1,
             "stream": stream_id,
             "kind": "snapshot",
             "timestamp": utc_now().isoformat(),
@@ -113,7 +134,7 @@ class TaskManager:
         }
 
     def get_stream_events_after(self, stream_id: str, after_seq: int) -> List[dict]:
-        events = self._stream_events.get(stream_id, [])
+        events = _stream_events.get(stream_id, [])
         return [event for event in events if event["seq"] > after_seq]
 
     def get_loop(self) -> Optional[asyncio.AbstractEventLoop]:
