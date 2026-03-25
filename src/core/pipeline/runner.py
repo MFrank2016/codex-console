@@ -142,6 +142,8 @@ class PipelineRunner:
 
     def _apply_payload(self, ctx: PipelineContext, payload: dict[str, Any]) -> None:
         for key, value in payload.items():
+            if key == "task_step_callback":
+                raise ValueError("PipelineContext.task_step_callback is runtime-only and cannot be updated by steps")
             if key not in self._ALLOWED_CONTEXT_FIELDS:
                 raise ValueError(f"Unknown PipelineContext field: {key}")
 

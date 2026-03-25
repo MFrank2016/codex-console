@@ -130,6 +130,51 @@ def test_registration_service_emits_step_snapshot_and_closes_stream(db_factory, 
     assert task_manager._closed_streams == [("task-step-stream", "completed")]
 
 
+def test_registration_service_step_callback_does_not_override_terminal_status(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-terminal-step", pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        callback = kwargs.get("task_step_callback")
+        assert callable(callback)
+
+        # 模拟：任务已进入 terminal 状态，但仍有 step callback（乱序/延迟）到达
+        task_manager.update_status(kwargs["task_uuid"], "failed", error="boom")
+        callback(
+            {
+                "current_step": {"step_key": "create_email", "status": "running"},
+                "steps": [{"step_key": "create_email", "status": "running"}],
+            }
+        )
+        assert task_manager.get_status(kwargs["task_uuid"])["status"] == "failed"
+        assert task_manager.get_status(kwargs["task_uuid"])["current_step_key"] == "create_email"
+
+        return RegistrationJobResult(
+            success=False,
+            email="failed@example.com",
+            error_message="boom",
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    service.run_single_task_sync(
+        task_uuid="task-terminal-step",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    assert task_manager.get_status("task-terminal-step")["status"] == "failed"
+    assert task_manager.get_status("task-terminal-step")["current_step_key"] == "create_email"
+
+
 def test_registration_service_creates_run_records_and_terminal_status(db_factory, temp_db):
     from src.application.registration_service import RegistrationService
 
