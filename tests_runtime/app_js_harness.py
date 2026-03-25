@@ -268,7 +268,7 @@ context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
   context,
 );
 
@@ -410,11 +410,12 @@ async function runScenario() {{
             logs_tail: [],
           }},
         }},
-        {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'line-1' }} }},
-        {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'line-1-duplicate' }} }},
+        // 相同 message，但不同 seq：必须都保留（不能被 message 去重吞掉）
+        {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'same-line' }} }},
+        {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'same-line-dup-seq' }} }},
+        {{ seq: 3, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'same-line' }} }},
         {{ seq: 3, stream: 'batch:batch-001', kind: 'batch_progress_updated', payload: {{ batch_id: 'batch-001', success: 3 }} }},
         {{ seq: 999, stream: 'task:task-single-01', kind: 'connection_state_changed', payload: {{ status: 'polling' }}, meta: {{ local: true }} }},
-        {{ seq: 3, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'line-2' }} }},
       ];
 
       let state = {{
@@ -428,12 +429,15 @@ async function runScenario() {{
 
       for (const event of events) {{
         state = reduce(state, event);
+        exported.reduceRegistrationStream(event);
       }}
 
+      const renderedLogCount = getElement('console-log').querySelectorAll('.log-line').length;
       return {{
         current_step_key: state.currentStep ? String(state.currentStep.step_key || '') : '',
         batch_success: state.batch ? String(state.batch.success ?? '') : '',
         log_count: Array.isArray(state.logs) ? state.logs.length : 0,
+        rendered_log_count: renderedLogCount,
         connection_status: state.connection ? String(state.connection.status || '') : '',
       }};
     }}

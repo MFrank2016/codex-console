@@ -59,6 +59,11 @@ def test_registration_template_loads_registration_stream_before_app_js():
     assert template.index(stream_src) < template.index(app_src)
 
 
+def test_registration_template_contains_stream_status_panel_hook():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    assert 'id="registration-stream-status"' in template
+
+
 def test_registration_template_uses_workbench_layout_classes():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     assert "registration-workbench-layout" in template
@@ -133,6 +138,7 @@ def test_registration_realtime_store_reduces_snapshot_and_tracks_connection_stat
     assert result["current_step_key"] == "submit_login_email"
     assert result["batch_success"] == "3"
     assert result["log_count"] == 2
+    assert result["rendered_log_count"] == 2
     assert result["connection_status"] == "polling"
 
 

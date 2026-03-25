@@ -91,7 +91,7 @@ function syncRegistrationStreamDom(previous, next, event) {
         const entry = nextLogs[i];
         const message = typeof entry === 'string' ? entry : (entry ? entry.message : '');
         if (!message) continue;
-        addLog(getLogType(message), message);
+        appendRealtimeLogLine(getLogType(message), message);
     }
     registrationStreamRenderedLogCount = nextLogs.length;
 
@@ -123,6 +123,29 @@ function syncRegistrationStreamDom(previous, next, event) {
         if (hasUnlimited || (hasFiniteTotal && hasCompleted)) {
             updateBatchProgress(batch);
         }
+    }
+}
+
+function appendRealtimeLogLine(type, message) {
+    if (!elements.consoleLog) return;
+
+    const line = document.createElement('div');
+    line.className = `log-line ${type}`;
+
+    const timestamp = new Date().toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+
+    line.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}`;
+    elements.consoleLog.appendChild(line);
+
+    elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;
+
+    const lines = elements.consoleLog.querySelectorAll('.log-line');
+    if (lines.length > 500) {
+        lines[0].remove();
     }
 }
 
