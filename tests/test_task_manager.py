@@ -27,6 +27,9 @@ def clean_task_manager_globals():
         "_batch_status",
         "_batch_logs",
         "_batch_locks",
+        "_stream_seq",
+        "_stream_events",
+        "_stream_locks",
     ]
     snapshots = {}
     for name in names:

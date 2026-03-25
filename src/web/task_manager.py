@@ -104,12 +104,13 @@ class TaskManager:
         with lock:
             seq = _stream_seq[stream_id] + 1
             _stream_seq[stream_id] = seq
+            payload_copy = payload.copy() if isinstance(payload, dict) else payload
             event = {
                 "seq": seq,
                 "stream": stream_id,
                 "kind": kind,
                 "timestamp": utc_now().isoformat(),
-                "payload": payload,
+                "payload": payload_copy,
             }
             _stream_events[stream_id].append(event)
         return event
@@ -120,8 +121,12 @@ class TaskManager:
         steps = self.get_task_steps(task_uuid)
         current_step = steps[-1] if steps else {}
         logs_tail = _get_logs_tail(task_uuid, LOG_TAIL_SIZE)
+        lock = _get_stream_lock(stream_id)
+        with lock:
+            seq = _stream_seq.get(stream_id, 0)
+        next_seq = seq + 1
         return {
-            "seq": _stream_seq.get(stream_id, 0) + 1,
+            "seq": next_seq,
             "stream": stream_id,
             "kind": "snapshot",
             "timestamp": utc_now().isoformat(),
@@ -134,7 +139,9 @@ class TaskManager:
         }
 
     def get_stream_events_after(self, stream_id: str, after_seq: int) -> List[dict]:
-        events = _stream_events.get(stream_id, [])
+        lock = _get_stream_lock(stream_id)
+        with lock:
+            events = list(_stream_events.get(stream_id, []))
         return [event for event in events if event["seq"] > after_seq]
 
     def get_loop(self) -> Optional[asyncio.AbstractEventLoop]:
