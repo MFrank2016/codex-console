@@ -20,6 +20,19 @@ def test_task_and_batch_stream_routes_return_expected_contract():
     assert task_snapshot.status_code == 200
     assert task_snapshot.json()["stream"] == "task:task-route-1"
     assert task_events.status_code == 200
+    task_events_json = task_events.json()
+    assert task_events_json["stream"] == "task:task-route-1"
+    assert isinstance(task_events_json["events"], list)
+    assert task_events_json["events"], "after_seq=0 should return at least one event"
+    for event in task_events_json["events"]:
+        assert event["stream"] == "task:task-route-1"
+        assert isinstance(event["seq"], int)
+        assert event["kind"]
+        assert "payload" in event
+    last_event = task_events_json["events"][-1]
+    assert last_event["kind"] == "log_appended"
+    assert last_event["payload"].get("message") == "line-1"
+
     assert batch_snapshot.status_code == 200
     assert batch_snapshot.json()["stream"] == "batch:batch-route-1"
     assert batch_events.status_code == 200

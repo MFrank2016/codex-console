@@ -78,13 +78,6 @@ def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[str]:
         return list(logs[-tail_size:])
 
 
-def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[str]:
-    with _get_batch_lock(batch_id):
-        logs = _batch_logs.get(batch_id, [])
-        if tail_size >= len(logs):
-            return list(logs)
-        return list(logs[-tail_size:])
-
 
 def _get_log_lock(task_uuid: str) -> threading.Lock:
     """线程安全地获取或创建任务日志锁"""
