@@ -1,7 +1,15 @@
 from fastapi.testclient import TestClient
+import pytest
 from src.web.app import create_app
 from src.web.task_manager import task_manager
 from uuid import uuid4
+
+
+@pytest.fixture(autouse=True)
+def clean_registration_stream_state():
+    task_manager.clear_stream_state()
+    yield
+    task_manager.clear_stream_state()
 
 
 def test_task_and_batch_stream_routes_return_expected_contract():

@@ -8,7 +8,7 @@ router = APIRouter()
 
 @router.get("/task/{task_uuid}/snapshot")
 async def get_task_stream_snapshot(task_uuid: str):
-    if task_manager.get_status(task_uuid) is None:
+    if not task_manager.task_stream_exists(task_uuid):
         raise HTTPException(status_code=404, detail=f"Task stream '{task_uuid}' not found")
     return task_manager.build_task_stream_snapshot(task_uuid)
 
@@ -16,7 +16,7 @@ async def get_task_stream_snapshot(task_uuid: str):
 @router.get("/task/{task_uuid}/events")
 async def get_task_stream_events(task_uuid: str, after_seq: int = Query(0, ge=0)):
     stream = task_stream_id(task_uuid)
-    if task_manager.get_status(task_uuid) is None:
+    if not task_manager.task_stream_exists(task_uuid):
         raise HTTPException(status_code=404, detail=f"Task stream '{task_uuid}' not found")
     return {
         "stream": stream,
@@ -26,7 +26,7 @@ async def get_task_stream_events(task_uuid: str, after_seq: int = Query(0, ge=0)
 
 @router.get("/batch/{batch_id}/snapshot")
 async def get_batch_stream_snapshot(batch_id: str):
-    if task_manager.get_batch_status(batch_id) is None:
+    if not task_manager.batch_stream_exists(batch_id):
         raise HTTPException(status_code=404, detail=f"Batch stream '{batch_id}' not found")
     return task_manager.build_batch_stream_snapshot(batch_id)
 
@@ -34,7 +34,7 @@ async def get_batch_stream_snapshot(batch_id: str):
 @router.get("/batch/{batch_id}/events")
 async def get_batch_stream_events(batch_id: str, after_seq: int = Query(0, ge=0)):
     stream = batch_stream_id(batch_id)
-    if task_manager.get_batch_status(batch_id) is None:
+    if not task_manager.batch_stream_exists(batch_id):
         raise HTTPException(status_code=404, detail=f"Batch stream '{batch_id}' not found")
     return {
         "stream": stream,

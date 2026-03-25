@@ -324,6 +324,10 @@ class TaskManager:
         """获取任务状态"""
         return _task_status.get(task_uuid)
 
+    def task_stream_exists(self, task_uuid: str) -> bool:
+        """判断任务 stream 是否存在（至少有状态）"""
+        return task_uuid in _task_status
+
     def set_task_steps(self, task_uuid: str, steps: List[dict]):
         """设置任务步骤快照（轻量内存态，供 API 快速读取）。"""
         _task_steps[task_uuid] = list(steps or [])
@@ -508,6 +512,10 @@ class TaskManager:
         """获取批量任务状态"""
         return _batch_status.get(batch_id)
 
+    def batch_stream_exists(self, batch_id: str) -> bool:
+        """判断批量 stream 是否存在（至少有状态）"""
+        return batch_id in _batch_status
+
     def get_batch_logs(self, batch_id: str) -> List[str]:
         """获取批量任务日志"""
         with _get_batch_lock(batch_id):
@@ -568,6 +576,18 @@ class TaskManager:
             if key in _ws_sent_index:
                 _ws_sent_index[key].pop(id(websocket), None)
         logger.info(f"批量任务 WebSocket 连接已注销: {batch_id}")
+
+    def clear_stream_state(self):
+        """清理 stream 相关的全局状态，用于测试隔离"""
+        with _meta_lock:
+            _task_status.clear()
+            _task_steps.clear()
+            _experiment_status.clear()
+            _log_queues.clear()
+            _batch_status.clear()
+            _batch_logs.clear()
+            _stream_seq.clear()
+            _stream_events.clear()
 
     def create_log_callback(self, task_uuid: str, prefix: str = "", batch_id: str = "") -> Callable[[str], None]:
         """创建日志回调函数，可附加任务编号前缀，并同时推送到批量任务频道"""
