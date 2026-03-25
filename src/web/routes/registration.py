@@ -18,6 +18,10 @@ from ...core.registration_batch_metrics import apply_task_outcome, build_domain_
 from ...core.registration_batch_stats import finalize_batch_statistics
 from ...core.registration_job import run_registration_job
 from ...application import BatchRegistrationService, ProxyDispatchService, RegistrationService
+from ...application.batch_registration_service import (
+    DEFAULT_BATCH_PROXY_POOLS_STORE,
+    DEFAULT_BATCH_TASKS_STORE,
+)
 from ...services import EmailServiceType
 from ...core.time import utc_now, utc_now_naive
 from ..task_manager import task_manager
@@ -25,11 +29,9 @@ from ..task_manager import task_manager
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# 任务存储（简单的内存存储，生产环境应使用 Redis）
-running_tasks: dict = {}
-# 批量任务存储
-batch_tasks: Dict[str, dict] = {}
-batch_proxy_pools: Dict[str, object] = {}
+# 批量任务运行态存储由 application 层持有，route 仅保留兼容别名。
+batch_tasks: Dict[str, dict] = DEFAULT_BATCH_TASKS_STORE
+batch_proxy_pools: Dict[str, object] = DEFAULT_BATCH_PROXY_POOLS_STORE
 
 
 def _proxy_list_provider(limit: int) -> List[dict]:

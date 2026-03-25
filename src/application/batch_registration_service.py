@@ -17,6 +17,9 @@ from .registration_runs_service import RegistrationRunsService
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BATCH_TASKS_STORE: dict[str, dict] = {}
+DEFAULT_BATCH_PROXY_POOLS_STORE: dict[str, Any] = {}
+
 
 @dataclass
 class BatchExecutionSummary:
@@ -57,8 +60,12 @@ class BatchRegistrationService:
 
             task_manager = default_task_manager
         self.task_manager = task_manager
-        self.batch_tasks = batch_tasks_store if batch_tasks_store is not None else {}
-        self.batch_proxy_pools = batch_proxy_pools_store if batch_proxy_pools_store is not None else {}
+        self.batch_tasks = batch_tasks_store if batch_tasks_store is not None else DEFAULT_BATCH_TASKS_STORE
+        self.batch_proxy_pools = (
+            batch_proxy_pools_store
+            if batch_proxy_pools_store is not None
+            else DEFAULT_BATCH_PROXY_POOLS_STORE
+        )
         self.registration_task_runner = registration_task_runner
         self.batch_domain_stats_finalizer = batch_domain_stats_finalizer
         self.domain_stats_builder = domain_stats_builder
