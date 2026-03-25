@@ -64,6 +64,15 @@ def test_registration_template_contains_stream_status_panel_hook():
     assert 'id="registration-stream-status"' in template
 
 
+def test_registration_template_contains_realtime_feedback_panels():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    assert 'id="registration-config-panel"' in template
+    assert 'id="registration-single-progress"' in template
+    assert 'id="registration-batch-summary"' in template
+    assert 'id="registration-stream-status"' in template
+    assert "/static/css/registration_workbench.css" in template
+
+
 def test_registration_template_uses_workbench_layout_classes():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     assert "registration-workbench-layout" in template

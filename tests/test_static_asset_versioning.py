@@ -59,6 +59,7 @@ def test_registration_workbench_page_uses_versioned_static_assets():
 
     assert response.status_code == 200
     _assert_versioned_asset(response.text, "/static/css/style.css")
+    _assert_versioned_asset(response.text, "/static/css/registration_workbench.css")
     _assert_versioned_asset(response.text, "/static/js/workspace.js")
     _assert_versioned_asset(response.text, "/static/js/utils.js")
     _assert_versioned_asset(response.text, "/static/js/app.js")
@@ -76,6 +77,7 @@ def test_dashboard_and_registration_pages_render_versioned_shared_assets():
         response = client.get("/registration-workbench")
         assert response.status_code == 200
         _assert_versioned_asset(response.text, "/static/js/workspace.js")
+        _assert_versioned_asset(response.text, "/static/css/registration_workbench.css")
         _assert_versioned_asset(response.text, "/static/js/app.js")
 
 

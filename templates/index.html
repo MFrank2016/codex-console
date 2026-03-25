@@ -1,33 +1,8 @@
 {% extends "_workspace_base.html" %}
 
 {% block head_extra %}
+<link rel="stylesheet" href="{{ '/static/css/registration_workbench.css?v=' ~ static_version }}">
 <style>
-    .registration-workbench-layout {
-        display: grid;
-        grid-template-columns: minmax(320px, 360px) minmax(0, 1fr) minmax(320px, 380px);
-        gap: var(--spacing-lg);
-        align-items: start;
-    }
-
-    .registration-workbench-side {
-        position: sticky;
-        top: var(--spacing-sm);
-    }
-
-    .registration-workbench-main {
-        display: flex;
-        flex-direction: column;
-        gap: var(--spacing-lg);
-        min-width: 0;
-    }
-
-    .registration-workbench-sidecar {
-        display: flex;
-        flex-direction: column;
-        gap: var(--spacing-lg);
-        min-width: 0;
-    }
-
     .task-status-row {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -157,42 +132,23 @@
         color: var(--text-muted);
         font-size: 0.8rem;
     }
-
-    @media (max-width: 1440px) {
-        .registration-workbench-layout {
-            grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-        }
-
-        .registration-workbench-sidecar {
-            grid-column: 1 / -1;
-        }
-    }
-
-    @media (max-width: 1024px) {
-        .registration-workbench-layout {
-            grid-template-columns: 1fr;
-        }
-
-        .registration-workbench-side {
-            position: static;
-        }
-    }
 </style>
 {% endblock %}
 
 {% block page_content %}
-<div class="registration-workbench-layout">
-    <section class="workspace-panel registration-workbench-side">
-        <div class="card">
-            <div class="card-header">
-                <h3>📝 注册设置</h3>
-                <div style="display: flex; align-items: center; gap: var(--spacing-sm);">
-                    <button type="button" class="theme-toggle" onclick="theme.toggle()" title="切换主题">🌙</button>
-                    <a href="/logout" class="btn btn-secondary btn-sm">退出登录</a>
+<div class="registration-workbench-layout registration-layout">
+    <section id="registration-config-panel" class="registration-layout-config registration-workbench-side">
+        <div class="workspace-panel">
+            <div class="card">
+                <div class="card-header">
+                    <h3>📝 注册设置</h3>
+                    <div style="display: flex; align-items: center; gap: var(--spacing-sm);">
+                        <button type="button" class="theme-toggle" onclick="theme.toggle()" title="切换主题">🌙</button>
+                        <a href="/logout" class="btn btn-secondary btn-sm">退出登录</a>
+                    </div>
                 </div>
-            </div>
-            <div class="card-body">
-                <form id="registration-form">
+                <div class="card-body">
+                    <form id="registration-form">
                     <div class="form-group">
                         <label for="email-service">邮箱服务</label>
                         <select id="email-service" name="email_service" required>
@@ -337,19 +293,69 @@
                         </button>
                     </div>
                 </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="workspace-panel">
+            <div class="card">
+                <div class="card-header">
+                    <h3>📋 已注册账号</h3>
+                    <div style="display: flex; gap: var(--spacing-sm);">
+                        <button class="btn btn-ghost btn-sm" id="refresh-accounts-btn">🔄 刷新</button>
+                        <a href="/accounts" class="btn btn-secondary btn-sm">查看全部</a>
+                    </div>
+                </div>
+                <div class="card-body" style="padding: 0;">
+                    <div class="recent-accounts-table table-shell">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 50px;">ID</th>
+                                    <th>邮箱</th>
+                                    <th style="width: 120px;">密码</th>
+                                    <th style="width: 80px;">状态</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-accounts-table">
+                                <tr>
+                                    <td colspan="5">
+                                        <div class="empty-state" style="padding: var(--spacing-md);">
+                                            <div class="empty-state-icon">📭</div>
+                                            <div class="empty-state-title">暂无已注册账号</div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="workspace-panel">
+            <div class="card">
+                <div class="card-header">
+                    <h3>💡 快速提示</h3>
+                </div>
+                <div class="card-body">
+                    <ul style="margin: 0; padding-left: 1rem; color: var(--text-secondary); display: grid; gap: 0.4rem;">
+                        <li>单次模式适合排查流程和邮箱服务可用性。</li>
+                        <li>批量/无限模式会展示批次进度、连败统计与域名成功率。</li>
+                        <li>任务失败时可查看步骤瀑布流和日志快速定位问题。</li>
+                    </ul>
+                </div>
             </div>
         </div>
     </section>
 
-    <section class="registration-workbench-main">
-        <div class="workspace-panel">
-            <div class="card" id="console-card">
+    <section class="registration-layout-feedback registration-workbench-main">
+        <article id="registration-single-progress" class="workspace-panel feedback-panel">
+            <div class="card">
                 <div class="card-header">
-                    <h3>💻 监控台</h3>
+                    <h3>📌 单任务进度</h3>
                     <div style="display: flex; gap: var(--spacing-sm); align-items: center;">
-                        <span id="registration-stream-status" style="font-size: 0.8125rem; color: var(--text-secondary);">disconnected</span>
                         <span id="task-status-badge" class="status-badge pending" style="display: none;">等待中</span>
-                        <button class="btn btn-ghost btn-sm" id="clear-log-btn">清空</button>
                     </div>
                 </div>
                 <div class="card-body" style="padding: 0;">
@@ -373,8 +379,17 @@
                     </div>
 
                     <div id="task-step-waterfall" class="task-step-waterfall" style="display: none;"></div>
+                </div>
+            </div>
+        </article>
 
-                    <div id="batch-progress-section" style="display: none; padding: var(--spacing-md); border-bottom: 1px solid var(--border-light);">
+        <article id="registration-batch-summary" class="workspace-panel feedback-panel">
+            <div class="card">
+                <div class="card-header">
+                    <h3>📦 批量摘要</h3>
+                </div>
+                <div class="card-body" style="padding: 0;">
+                    <div id="batch-progress-section" style="display: none; padding: var(--spacing-md);">
                         <div style="display: flex; justify-content: space-between; margin-bottom: var(--spacing-sm);">
                             <span id="batch-progress-text">0/0</span>
                             <span id="batch-progress-percent">0%</span>
@@ -390,63 +405,27 @@
                         </div>
                         <div id="batch-domain-stats" style="display: none;"></div>
                     </div>
+                </div>
+            </div>
+        </article>
 
+        <article id="registration-log-console" class="workspace-panel feedback-panel feedback-panel-log">
+            <div class="card" id="console-card">
+                <div class="card-header">
+                    <h3>💻 实时日志</h3>
+                    <div style="display: flex; gap: var(--spacing-sm); align-items: center;">
+                        <span id="registration-stream-status" style="font-size: 0.8125rem; color: var(--text-secondary);">disconnected</span>
+                        <button class="btn btn-ghost btn-sm" id="clear-log-btn">清空</button>
+                    </div>
+                </div>
+                <div class="card-body" style="padding: 0;">
                     <div id="console-log" class="console-log">
                         <div class="log-line info">[系统] 准备就绪，等待开始注册...</div>
                     </div>
                 </div>
             </div>
-        </div>
+        </article>
     </section>
-
-    <aside class="workspace-panel registration-workbench-sidecar">
-        <div class="card">
-            <div class="card-header">
-                <h3>📋 已注册账号</h3>
-                <div style="display: flex; gap: var(--spacing-sm);">
-                    <button class="btn btn-ghost btn-sm" id="refresh-accounts-btn">🔄 刷新</button>
-                    <a href="/accounts" class="btn btn-secondary btn-sm">查看全部</a>
-                </div>
-            </div>
-            <div class="card-body" style="padding: 0;">
-                <div class="recent-accounts-table table-shell">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th style="width: 50px;">ID</th>
-                                <th>邮箱</th>
-                                <th style="width: 120px;">密码</th>
-                                <th style="width: 80px;">状态</th>
-                            </tr>
-                        </thead>
-                        <tbody id="recent-accounts-table">
-                            <tr>
-                                <td colspan="5">
-                                    <div class="empty-state" style="padding: var(--spacing-md);">
-                                        <div class="empty-state-icon">📭</div>
-                                        <div class="empty-state-title">暂无已注册账号</div>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <h3>💡 快速提示</h3>
-            </div>
-            <div class="card-body">
-                <ul style="margin: 0; padding-left: 1rem; color: var(--text-secondary); display: grid; gap: 0.4rem;">
-                    <li>单次模式适合排查流程和邮箱服务可用性。</li>
-                    <li>批量/无限模式会展示批次进度、连败统计与域名成功率。</li>
-                    <li>任务失败时可查看步骤瀑布流和日志快速定位问题。</li>
-                </ul>
-            </div>
-        </div>
-    </aside>
 </div>
 {% endblock %}
 

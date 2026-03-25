@@ -158,6 +158,12 @@ function resetRegistrationStreamViewState() {
 
 // DOM 元素
 const elements = {
+    // 新版工作台布局挂点（用于保持 DOM 结构可读、便于后续扩展；不改变现有渲染逻辑）
+    registrationConfigPanel: document.getElementById('registration-config-panel'),
+    registrationSingleProgress: document.getElementById('registration-single-progress'),
+    registrationBatchSummary: document.getElementById('registration-batch-summary'),
+    registrationLogConsole: document.getElementById('registration-log-console'),
+
     form: document.getElementById('registration-form'),
     emailService: document.getElementById('email-service'),
     pipelineKey: document.getElementById('pipeline-key'),
