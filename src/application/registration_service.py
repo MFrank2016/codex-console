@@ -244,7 +244,18 @@ class RegistrationService:
                 current_step = payload.get("current_step") if isinstance(payload, dict) else None
                 step_key = (current_step or {}).get("step_key")
                 if step_key:
-                    service.task_manager.update_status(task_uuid, "running", current_step_key=step_key)
+                    current_step_status = (current_step or {}).get("status")
+                    status_snapshot = getattr(
+                        service.task_manager,
+                        "get_status",
+                        lambda _task_uuid: None,
+                    )(task_uuid) or {}
+                    current_task_status = status_snapshot.get("status")
+                    if current_task_status:
+                        effective_status = current_task_status
+                    else:
+                        effective_status = "running" if current_step_status == "running" else "pending"
+                    service.task_manager.update_status(task_uuid, effective_status, current_step_key=step_key)
             except Exception as exc:
                 logger.warning("任务 %s 写入步骤快照失败: %s", task_uuid, exc)
 

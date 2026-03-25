@@ -204,7 +204,7 @@ def test_runner_emits_current_step_snapshot(fake_db):
     ctx = PipelineContext(
         task_uuid=task_uuid,
         pipeline_key="demo",
-        metadata={"task_step_callback": lambda payload: emitted.append(payload)},
+        task_step_callback=lambda payload: emitted.append(payload),
     )
 
     PipelineRunner(fake_db).run(pipeline, ctx)

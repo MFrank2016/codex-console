@@ -30,6 +30,8 @@ class PipelineRunner:
             started_at=pipeline_started_at,
         )
 
+        steps_snapshot: list[dict[str, Any]] = []
+
         for order, step in enumerate(pipeline.steps, start=1):
             started_at = self._utc_now()
             crud.update_registration_task(
@@ -48,18 +50,28 @@ class PipelineRunner:
                 status="running",
                 started_at=started_at,
             )
-            self._emit_step_snapshot(
-                ctx,
-                step.step_key,
-                status="running",
-                callback=ctx.metadata.get("task_step_callback"),
-            )
+            step_snapshot: dict[str, Any] = {
+                "step_key": step.step_key,
+                "step_order": order,
+                "status": "running",
+                "duration_ms": None,
+                "error_message": None,
+            }
+            steps_snapshot.append(step_snapshot)
+            self._emit_step_snapshot(ctx, current_step=step_snapshot, steps_snapshot=steps_snapshot)
 
             try:
                 payload = step.handler(ctx) or {}
                 self._apply_payload(ctx, payload)
             except Exception as exc:
                 self._finalize_step(step_run, started_at, status="failed", error_message=str(exc))
+                step_snapshot.update(
+                    {
+                        "status": "failed",
+                        "duration_ms": step_run.duration_ms,
+                        "error_message": step_run.error_message,
+                    }
+                )
                 failed_at = self._utc_now()
                 crud.update_registration_task(
                     self.db,
@@ -69,21 +81,18 @@ class PipelineRunner:
                     completed_at=failed_at,
                     error_message=str(exc),
                 )
-                self._emit_step_snapshot(
-                    ctx,
-                    step.step_key,
-                    status="failed",
-                    callback=ctx.metadata.get("task_step_callback"),
-                )
+                self._emit_step_snapshot(ctx, current_step=step_snapshot, steps_snapshot=steps_snapshot)
                 raise
 
             self._finalize_step(step_run, started_at, status="completed")
-            self._emit_step_snapshot(
-                ctx,
-                step.step_key,
-                status="completed",
-                callback=ctx.metadata.get("task_step_callback"),
+            step_snapshot.update(
+                {
+                    "status": "completed",
+                    "duration_ms": step_run.duration_ms,
+                    "error_message": step_run.error_message,
+                }
             )
+            self._emit_step_snapshot(ctx, current_step=step_snapshot, steps_snapshot=steps_snapshot)
 
         completed_at = self._utc_now()
         crud.update_registration_task(
@@ -98,28 +107,19 @@ class PipelineRunner:
     def _emit_step_snapshot(
         self,
         ctx: PipelineContext,
-        step_key: str,
         *,
-        status: str,
-        callback: Any,
+        current_step: dict[str, Any],
+        steps_snapshot: list[dict[str, Any]],
     ) -> None:
+        callback = ctx.task_step_callback
         if not callable(callback):
             return
 
-        rows = crud.get_pipeline_step_runs_by_task_uuid(self.db, ctx.task_uuid)
-        steps = [
-            {
-                "step_key": row.step_key,
-                "step_order": row.step_order,
-                "status": row.status,
-                "duration_ms": row.duration_ms,
-                "error_message": row.error_message,
-            }
-            for row in rows
-        ]
+        steps = [dict(item) for item in steps_snapshot]
+        current_step_payload = {"step_key": current_step.get("step_key"), "status": current_step.get("status")}
         callback(
             {
-                "current_step": {"step_key": step_key, "status": status},
+                "current_step": current_step_payload,
                 "steps": steps,
             }
         )

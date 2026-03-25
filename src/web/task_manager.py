@@ -49,9 +49,6 @@ _batch_status: Dict[str, dict] = {}
 _batch_logs: Dict[str, List[str]] = defaultdict(list)
 _batch_locks: Dict[str, threading.Lock] = {}
 
-_task_stream_closed: Dict[str, bool] = {}
-_batch_stream_closed: Dict[str, bool] = {}
-
 _stream_seq: Dict[str, int] = {}
 _stream_events: Dict[str, deque] = {}
 _stream_locks: Dict[str, threading.Lock] = {}
@@ -493,9 +490,11 @@ class TaskManager:
 
     def close_task_stream(self, task_uuid: str, *, final_status: str):
         """显式关闭 task stream（用于前端 reducer 停止等待）。"""
-        if _task_stream_closed.get(task_uuid):
+        snapshot = _task_status.setdefault(task_uuid, {})
+        if snapshot.get("stream_closed"):
             return
-        _task_stream_closed[task_uuid] = True
+        snapshot["stream_closed"] = True
+        snapshot["stream_final_status"] = final_status
 
         event = self.append_stream_event(
             task_stream_id(task_uuid),
@@ -627,9 +626,11 @@ class TaskManager:
 
     def close_batch_stream(self, batch_id: str, *, final_status: str):
         """显式关闭 batch stream（用于前端 reducer 停止等待）。"""
-        if _batch_stream_closed.get(batch_id):
+        snapshot = _batch_status.setdefault(batch_id, {})
+        if snapshot.get("stream_closed"):
             return
-        _batch_stream_closed[batch_id] = True
+        snapshot["stream_closed"] = True
+        snapshot["stream_final_status"] = final_status
 
         event = self.append_stream_event(
             batch_stream_id(batch_id),

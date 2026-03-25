@@ -349,10 +349,8 @@ def _run_pipeline_registration(
         task_uuid=effective_task_uuid,
         pipeline_key=pipeline_key,
         proxy_url=proxy,
-        metadata={
-            "registration_engine": runtime,
-            "task_step_callback": task_step_callback,
-        },
+        metadata={"registration_engine": runtime},
+        task_step_callback=task_step_callback,
     )
 
     PipelineRunner(db).run(pipeline, ctx)

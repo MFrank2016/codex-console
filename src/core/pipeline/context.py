@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -14,3 +14,5 @@ class PipelineContext:
     email: str | None = None
     password: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # runtime-only: do not put callables into metadata
+    task_step_callback: Callable[[dict[str, Any]], None] | None = None
