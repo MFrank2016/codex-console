@@ -7,6 +7,13 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function safeHref(rawHref) {
+  const href = String(rawHref ?? '');
+  if (href.startsWith('/')) return href;
+  if (/^https?:\/\//i.test(href)) return href;
+  return '#';
+}
+
 function renderMetricCard(label, value, hint = '') {
   const hintHtml = hint ? `<p class="dashboard-metric-hint">${escapeHtml(hint)}</p>` : '';
   return `
@@ -25,34 +32,24 @@ function renderDashboardHero(summary) {
   const successRate = registration.success_rate == null ? '—' : `${registration.success_rate}%`;
   const totalTasks = registration.total_tasks ?? registration.total ?? 0;
 
-  const metrics = [
+  return [
     renderMetricCard('注册任务', totalTasks, `运行中 ${registration.running ?? 0}`),
     renderMetricCard('成功率', successRate, `失败 ${registration.failed ?? 0}`),
     renderMetricCard('账号', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`),
     renderMetricCard('定时计划', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`),
   ].join('');
-
-  return `
-    <div class="dashboard-hero-copy">
-      <h2 class="dashboard-hero-title">总览</h2>
-      <p class="dashboard-hero-subtitle">快速了解当前运行状态与最近活动。</p>
-    </div>
-    <div id="dashboard-metric-grid" class="dashboard-metric-grid">
-      ${metrics}
-    </div>
-  `;
 }
 
 function renderRecentActivity(items) {
   const normalized = Array.isArray(items) ? items : [];
   if (!normalized.length) {
-    return '<li class="dashboard-activity-item"><span>暂无最近活动。</span></li>';
+    return '<li class="dashboard-empty">暂无最近活动。</li>';
   }
 
   return normalized
     .map((item) => `
       <li class="dashboard-activity-item">
-        <a href="${escapeHtml(item?.href || '#')}">${escapeHtml(item?.title || '未命名活动')}</a>
+        <a href="${escapeHtml(safeHref(item?.href))}">${escapeHtml(item?.title || '未命名活动')}</a>
         <span class="dashboard-activity-status">${escapeHtml(item?.status || 'unknown')}</span>
       </li>
     `)
@@ -67,7 +64,7 @@ function renderQuickActions(links) {
 
   return normalized
     .map((link) => `
-      <a class="dashboard-quick-action" href="${escapeHtml(link?.href || '#')}">
+      <a class="dashboard-quick-action" href="${escapeHtml(safeHref(link?.href))}">
         <p class="dashboard-quick-action-title">${escapeHtml(link?.label || '未命名动作')}</p>
         <p class="dashboard-quick-action-desc">${escapeHtml(link?.description || '')}</p>
       </a>
@@ -77,15 +74,17 @@ function renderQuickActions(links) {
 
 function renderDashboardError(error) {
   const message = error instanceof Error ? error.message : '加载失败';
-  const html = `<p>Dashboard 加载失败：${escapeHtml(message)}</p>`;
+  const metricHtml = `<p class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</p>`;
+  const listHtml = `<li class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</li>`;
+  const actionHtml = `<p class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</p>`;
 
-  const hero = document.getElementById('dashboard-hero-primary');
+  const metricGrid = document.getElementById('dashboard-metric-grid');
   const activity = document.getElementById('dashboard-activity-feed');
   const actions = document.getElementById('dashboard-quick-actions');
 
-  if (hero) hero.innerHTML = html;
-  if (activity) activity.innerHTML = html;
-  if (actions) actions.innerHTML = html;
+  if (metricGrid) metricGrid.innerHTML = metricHtml;
+  if (activity) activity.innerHTML = listHtml;
+  if (actions) actions.innerHTML = actionHtml;
 }
 
 async function loadDashboardSummary() {
@@ -103,9 +102,9 @@ async function loadDashboardSummary() {
 }
 
 function mountDashboard(summary) {
-  const hero = document.getElementById('dashboard-hero-primary');
-  if (hero) {
-    hero.innerHTML = renderDashboardHero(summary);
+  const metricGrid = document.getElementById('dashboard-metric-grid');
+  if (metricGrid) {
+    metricGrid.innerHTML = renderDashboardHero(summary);
   }
 
   const activity = document.getElementById('dashboard-activity-feed');

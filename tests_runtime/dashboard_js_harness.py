@@ -80,14 +80,31 @@ function sampleSummary() {{
         href: '/registration-workbench',
         description: '创建/查看注册任务',
       }},
+      {{
+        label: '危险链接',
+        href: 'javascript:alert(1)',
+        description: '不应被允许',
+      }},
+      {{
+        label: '数据协议',
+        href: 'data:text/html,<b>bad</b>',
+        description: '不应被允许',
+      }},
     ],
     recent_activity: [
       {{
         title: '<script>alert(1)</script>',
         status: 'completed',
-        href: '/registration/tasks/task-001',
+        href: 'javascript:alert(1)',
         timestamp: '2026-03-25T08:00:00Z',
         description: '示例活动',
+      }},
+      {{
+        title: '外部活动',
+        status: 'running',
+        href: 'https://example.com/activity',
+        timestamp: '2026-03-25T09:00:00Z',
+        description: '外部链接允许 https',
       }},
     ],
   }};
@@ -106,9 +123,15 @@ if (scenarioName === 'render_dashboard') {{
   ensureFunction('renderDashboardHero');
   ensureFunction('renderRecentActivity');
   ensureFunction('renderQuickActions');
-  result.hero_html = context.renderDashboardHero(summary);
+  result.metric_html = context.renderDashboardHero(summary);
   result.activity_html = context.renderRecentActivity(summary.recent_activity);
   result.quick_actions_html = context.renderQuickActions(summary.quick_links);
+}} else if (scenarioName === 'render_error') {{
+  ensureFunction('renderDashboardError');
+  context.renderDashboardError(new Error('boom'));
+  result.metric_html = document.getElementById('dashboard-metric-grid').innerHTML;
+  result.activity_html = document.getElementById('dashboard-activity-feed').innerHTML;
+  result.quick_actions_html = document.getElementById('dashboard-quick-actions').innerHTML;
 }} else {{
   throw new Error(`unknown scenario: ${{scenarioName}}`);
 }}
@@ -124,4 +147,3 @@ process.stdout.write(JSON.stringify(result));
     )
     stdout = completed.stdout.strip()
     return json.loads(stdout) if stdout else {}
-

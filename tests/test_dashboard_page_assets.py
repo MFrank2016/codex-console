@@ -55,20 +55,36 @@ def test_dashboard_script_loads_summary_endpoint_and_render_helpers():
     assert "/dashboard/summary" in script
     assert "renderDashboardHero" in script
     assert "renderRecentActivity" in script
+    assert "safeHref" in script
     assert "dashboard-activity-item" in script
 
 
 def test_dashboard_js_harness_renders_modern_hero_metrics_and_activity_feed():
     result = run_dashboard_js_scenario("render_dashboard")
 
-    hero_html = result["hero_html"]
-    assert 'class="dashboard-hero-copy"' in hero_html
-    assert 'id="dashboard-metric-grid"' in hero_html
-    assert "dashboard-metric-card" in hero_html
+    metric_html = result["metric_html"]
+    assert "dashboard-metric-card" in metric_html
+    assert "dashboard-hero-copy" not in metric_html
 
     activity_html = result["activity_html"]
     assert 'class="dashboard-activity-item"' in activity_html
     assert "&lt;script&gt;" in activity_html
+    assert 'href="#"' in activity_html
+    assert 'href="https://example.com/activity"' in activity_html
+    assert "javascript:" not in activity_html
+    assert "data:" not in activity_html
+
+    quick_actions_html = result["quick_actions_html"]
+    assert 'href="/registration-workbench"' in quick_actions_html
+    assert 'href="#"' in quick_actions_html
+    assert "javascript:" not in quick_actions_html
+    assert "data:" not in quick_actions_html
+
+
+def test_dashboard_js_harness_renders_error_state_without_invalid_ul_children():
+    result = run_dashboard_js_scenario("render_error")
+    assert result["activity_html"].lstrip().startswith('<li class="dashboard-empty">')
+    assert "<p" not in result["activity_html"]
 
 
 def test_dashboard_summary_api_requires_auth():
