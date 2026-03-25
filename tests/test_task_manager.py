@@ -61,3 +61,25 @@ async def test_update_status_broadcasts_to_registered_task_websocket():
     assert message["status"] == "completed"
     assert message["email"] == "tester@example.com"
     assert message["timestamp"]
+
+
+@pytest.mark.anyio
+async def test_task_manager_builds_snapshot_and_incremental_events():
+    manager = TaskManager()
+    manager.set_loop(asyncio.get_running_loop())
+
+    manager.update_status("task-live-1", "running", email="demo@example.com")
+    manager.set_task_steps(
+        "task-live-1",
+        [{"step_key": "create_email", "status": "running", "duration_ms": 12}],
+    )
+    manager.add_log("task-live-1", "[12:00:00] create email")
+
+    snapshot = manager.build_task_stream_snapshot("task-live-1")
+    events = manager.get_stream_events_after("task:task-live-1", after_seq=0)
+
+    assert snapshot["kind"] == "snapshot"
+    assert snapshot["payload"]["task"]["status"] == "running"
+    assert snapshot["payload"]["current_step"]["step_key"] == "create_email"
+    assert [item["seq"] for item in events] == [1, 2, 3]
+    assert events[-1]["payload"]["message"] == "[12:00:00] create email"

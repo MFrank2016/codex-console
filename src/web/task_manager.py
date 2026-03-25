@@ -8,9 +8,15 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional, List, Callable, Any
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from ..core.time import utc_now
+from src.web.realtime_streams import (
+    STREAM_BUFFER_SIZE,
+    LOG_TAIL_SIZE,
+    task_stream_id,
+    batch_stream_id,
+)
 logger = logging.getLogger(__name__)
 
 # 全局线程池（支持最多 50 个并发注册任务）
@@ -68,10 +74,59 @@ class TaskManager:
     def __init__(self):
         self.executor = _executor
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._stream_seq = defaultdict(int)
+        self._stream_events = defaultdict(lambda: deque(maxlen=STREAM_BUFFER_SIZE))
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """设置事件循环（在 FastAPI 启动时调用）"""
         self._loop = loop
+
+    def append_stream_event(self, stream_id: str, kind: str, payload: dict) -> dict:
+        """记录 stream 事件并维护递增 seq"""
+        self._stream_seq[stream_id] += 1
+        event = {
+            "seq": self._stream_seq[stream_id],
+            "stream": stream_id,
+            "kind": kind,
+            "timestamp": utc_now().isoformat(),
+            "payload": payload,
+        }
+        self._stream_events[stream_id].append(event)
+        return event
+
+    def build_task_stream_snapshot(self, task_uuid: str) -> dict:
+        stream_id = task_stream_id(task_uuid)
+        task_snapshot = self.get_status(task_uuid) or {}
+        steps = self.get_task_steps(task_uuid)
+        current_step = steps[-1] if steps else {}
+        return {
+            "seq": self._stream_seq.get(stream_id, 0) + 1,
+            "stream": stream_id,
+            "kind": "snapshot",
+            "timestamp": utc_now().isoformat(),
+            "payload": {
+                "task": task_snapshot,
+                "current_step": current_step,
+                "steps": steps,
+            },
+        }
+
+    def build_batch_stream_snapshot(self, batch_id: str) -> dict:
+        stream_id = batch_stream_id(batch_id)
+        batch_snapshot = self.get_batch_status(batch_id) or {}
+        return {
+            "seq": self._stream_seq.get(stream_id, 0) + 1,
+            "stream": stream_id,
+            "kind": "snapshot",
+            "timestamp": utc_now().isoformat(),
+            "payload": {
+                "batch": batch_snapshot,
+            },
+        }
+
+    def get_stream_events_after(self, stream_id: str, after_seq: int) -> List[dict]:
+        events = self._stream_events.get(stream_id, [])
+        return [event for event in events if event["seq"] > after_seq]
 
     def get_loop(self) -> Optional[asyncio.AbstractEventLoop]:
         """获取事件循环"""
@@ -102,6 +157,11 @@ class TaskManager:
         # 广播后再添加到队列
         with _get_log_lock(task_uuid):
             _log_queues[task_uuid].append(log_message)
+            self.append_stream_event(
+                task_stream_id(task_uuid),
+                "log_appended",
+                {"task_uuid": task_uuid, "message": log_message},
+            )
 
     async def _broadcast_log(self, task_uuid: str, log_message: str):
         """广播日志到所有 WebSocket 连接"""
@@ -209,6 +269,11 @@ class TaskManager:
                 )
             except Exception as e:
                 logger.warning(f"广播任务状态失败: {e}")
+        self.append_stream_event(
+            task_stream_id(task_uuid),
+            "task_status_changed",
+            {"task_uuid": task_uuid, "status": status, **kwargs},
+        )
 
     def get_status(self, task_uuid: str) -> Optional[dict]:
         """获取任务状态"""
@@ -217,6 +282,15 @@ class TaskManager:
     def set_task_steps(self, task_uuid: str, steps: List[dict]):
         """设置任务步骤快照（轻量内存态，供 API 快速读取）。"""
         _task_steps[task_uuid] = list(steps or [])
+        self.append_stream_event(
+            task_stream_id(task_uuid),
+            "task_step_updated",
+            {
+                "task_uuid": task_uuid,
+                "current_step": _task_steps[task_uuid][-1] if _task_steps[task_uuid] else {},
+                "steps": list(_task_steps[task_uuid]),
+            },
+        )
 
     def get_task_steps(self, task_uuid: str) -> List[dict]:
         """获取任务步骤快照。"""
