@@ -325,8 +325,14 @@ class TaskManager:
         return _task_status.get(task_uuid)
 
     def task_stream_exists(self, task_uuid: str) -> bool:
-        """判断任务 stream 是否存在（至少有状态）"""
-        return task_uuid in _task_status
+        """判断任务 stream 是否存在（状态 / 步骤 / 日志 / 事件任一存在）"""
+        stream_id = task_stream_id(task_uuid)
+        return any([
+            task_uuid in _task_status,
+            bool(_task_steps.get(task_uuid)),
+            bool(_log_queues.get(task_uuid)),
+            bool(_stream_events.get(stream_id)),
+        ])
 
     def set_task_steps(self, task_uuid: str, steps: List[dict]):
         """设置任务步骤快照（轻量内存态，供 API 快速读取）。"""
@@ -513,8 +519,13 @@ class TaskManager:
         return _batch_status.get(batch_id)
 
     def batch_stream_exists(self, batch_id: str) -> bool:
-        """判断批量 stream 是否存在（至少有状态）"""
-        return batch_id in _batch_status
+        """判断批量 stream 是否存在（状态 / 日志 / 事件任一存在）"""
+        stream_id = batch_stream_id(batch_id)
+        return any([
+            batch_id in _batch_status,
+            bool(_batch_logs.get(batch_id)),
+            bool(_stream_events.get(stream_id)),
+        ])
 
     def get_batch_logs(self, batch_id: str) -> List[str]:
         """获取批量任务日志"""
@@ -584,10 +595,16 @@ class TaskManager:
             _task_steps.clear()
             _experiment_status.clear()
             _log_queues.clear()
+            _log_locks.clear()
             _batch_status.clear()
             _batch_logs.clear()
+            _batch_locks.clear()
             _stream_seq.clear()
             _stream_events.clear()
+            _stream_locks.clear()
+            _ws_connections.clear()
+            _ws_sent_index.clear()
+            _task_cancelled.clear()
 
     def create_log_callback(self, task_uuid: str, prefix: str = "", batch_id: str = "") -> Callable[[str], None]:
         """创建日志回调函数，可附加任务编号前缀，并同时推送到批量任务频道"""
