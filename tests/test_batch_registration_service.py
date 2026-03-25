@@ -39,6 +39,7 @@ class FakeTaskManager:
         self._batch_status = {}
         self._batch_logs = {}
         self._cancelled = set()
+        self._closed_streams = []
         self._loop = None
 
     def set_loop(self, loop):
@@ -78,6 +79,9 @@ class FakeTaskManager:
         self._cancelled.add(batch_id)
         self._batch_status.setdefault(batch_id, {})["cancelled"] = True
 
+    def close_batch_stream(self, batch_id, final_status):
+        self._closed_streams.append((batch_id, final_status))
+
 
 @pytest.mark.anyio
 async def test_batch_registration_service_updates_batch_progress_from_run_records(db_factory, temp_db):
@@ -101,9 +105,10 @@ async def test_batch_registration_service_updates_batch_progress_from_run_record
         )
         runs.mark_completed(run.id)
 
+    task_manager = FakeTaskManager()
     service = BatchRegistrationService(
         db_factory=db_factory,
-        task_manager=FakeTaskManager(),
+        task_manager=task_manager,
         batch_tasks_store={},
         registration_task_runner=fake_runner,
     )
@@ -127,6 +132,7 @@ async def test_batch_registration_service_updates_batch_progress_from_run_record
     assert summary.failed == 0
     assert summary.status == "completed"
     assert [run.status for run in summary.runs] == ["completed", "completed"]
+    assert task_manager._closed_streams == [("batch-1", "completed")]
 
 
 @pytest.mark.anyio

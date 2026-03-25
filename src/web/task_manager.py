@@ -49,6 +49,9 @@ _batch_status: Dict[str, dict] = {}
 _batch_logs: Dict[str, List[str]] = defaultdict(list)
 _batch_locks: Dict[str, threading.Lock] = {}
 
+_task_stream_closed: Dict[str, bool] = {}
+_batch_stream_closed: Dict[str, bool] = {}
+
 _stream_seq: Dict[str, int] = {}
 _stream_events: Dict[str, deque] = {}
 _stream_locks: Dict[str, threading.Lock] = {}
@@ -462,7 +465,7 @@ class TaskManager:
     def set_task_steps(self, task_uuid: str, steps: List[dict]):
         """设置任务步骤快照（轻量内存态，供 API 快速读取）。"""
         _task_steps[task_uuid] = list(steps or [])
-        self.append_stream_event(
+        event = self.append_stream_event(
             task_stream_id(task_uuid),
             "task_step_updated",
             {
@@ -471,6 +474,14 @@ class TaskManager:
                 "steps": list(_task_steps[task_uuid]),
             },
         )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_task_stream_event(task_uuid, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"广播 task stream 步骤事件失败: {e}")
 
     def get_task_steps(self, task_uuid: str) -> List[dict]:
         """获取任务步骤快照。"""
@@ -479,6 +490,26 @@ class TaskManager:
     def clear_task_steps(self, task_uuid: str):
         """清理任务步骤快照。"""
         _task_steps.pop(task_uuid, None)
+
+    def close_task_stream(self, task_uuid: str, *, final_status: str):
+        """显式关闭 task stream（用于前端 reducer 停止等待）。"""
+        if _task_stream_closed.get(task_uuid):
+            return
+        _task_stream_closed[task_uuid] = True
+
+        event = self.append_stream_event(
+            task_stream_id(task_uuid),
+            "stream_closed",
+            {"task_uuid": task_uuid, "final_status": final_status},
+        )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_task_stream_event(task_uuid, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"广播 task stream 关闭事件失败: {e}")
 
     def init_experiment(
         self,
@@ -593,6 +624,26 @@ class TaskManager:
                 )
             except Exception as e:
                 logger.warning(f"广播 batch stream 状态事件失败: {e}")
+
+    def close_batch_stream(self, batch_id: str, *, final_status: str):
+        """显式关闭 batch stream（用于前端 reducer 停止等待）。"""
+        if _batch_stream_closed.get(batch_id):
+            return
+        _batch_stream_closed[batch_id] = True
+
+        event = self.append_stream_event(
+            batch_stream_id(batch_id),
+            "stream_closed",
+            {"batch_id": batch_id, "final_status": final_status},
+        )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_batch_stream_event(batch_id, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"广播 batch stream 关闭事件失败: {e}")
 
     def get_batch_status(self, batch_id: str) -> Optional[dict]:
         """获取批量任务状态"""

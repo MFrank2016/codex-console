@@ -175,6 +175,16 @@ class BatchRegistrationService:
                 if key in self.batch_tasks[batch_id]:
                     self.batch_tasks[batch_id][key] = value
             self.task_manager.update_batch_status(batch_id, **kwargs)
+            if kwargs.get("finished") and hasattr(self.task_manager, "close_batch_stream"):
+                final_status = (
+                    kwargs.get("status")
+                    or self.batch_tasks.get(batch_id, {}).get("status")
+                    or "completed"
+                )
+                try:
+                    self.task_manager.close_batch_stream(batch_id, final_status=final_status)
+                except TypeError:
+                    self.task_manager.close_batch_stream(batch_id, final_status)
 
         return add_batch_log, update_batch_status
 

@@ -48,6 +48,12 @@ class PipelineRunner:
                 status="running",
                 started_at=started_at,
             )
+            self._emit_step_snapshot(
+                ctx,
+                step.step_key,
+                status="running",
+                callback=ctx.metadata.get("task_step_callback"),
+            )
 
             try:
                 payload = step.handler(ctx) or {}
@@ -63,9 +69,21 @@ class PipelineRunner:
                     completed_at=failed_at,
                     error_message=str(exc),
                 )
+                self._emit_step_snapshot(
+                    ctx,
+                    step.step_key,
+                    status="failed",
+                    callback=ctx.metadata.get("task_step_callback"),
+                )
                 raise
 
             self._finalize_step(step_run, started_at, status="completed")
+            self._emit_step_snapshot(
+                ctx,
+                step.step_key,
+                status="completed",
+                callback=ctx.metadata.get("task_step_callback"),
+            )
 
         completed_at = self._utc_now()
         crud.update_registration_task(
@@ -76,6 +94,35 @@ class PipelineRunner:
             completed_at=completed_at,
         )
         return ctx
+
+    def _emit_step_snapshot(
+        self,
+        ctx: PipelineContext,
+        step_key: str,
+        *,
+        status: str,
+        callback: Any,
+    ) -> None:
+        if not callable(callback):
+            return
+
+        rows = crud.get_pipeline_step_runs_by_task_uuid(self.db, ctx.task_uuid)
+        steps = [
+            {
+                "step_key": row.step_key,
+                "step_order": row.step_order,
+                "status": row.status,
+                "duration_ms": row.duration_ms,
+                "error_message": row.error_message,
+            }
+            for row in rows
+        ]
+        callback(
+            {
+                "current_step": {"step_key": step_key, "status": status},
+                "steps": steps,
+            }
+        )
 
     def _finalize_step(
         self,

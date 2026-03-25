@@ -38,6 +38,7 @@ class FakeTaskManager:
         self._task_steps = {}
         self._task_cancelled = {}
         self._logs = {}
+        self._closed_streams = []
         self._loop = None
 
     def set_loop(self, loop):
@@ -54,6 +55,9 @@ class FakeTaskManager:
 
     def get_status(self, task_uuid):
         return self._task_status.get(task_uuid)
+
+    def close_task_stream(self, task_uuid, final_status):
+        self._closed_streams.append((task_uuid, final_status))
 
     def add_log(self, task_uuid, message):
         self._logs.setdefault(task_uuid, []).append(message)
@@ -78,6 +82,52 @@ class FakeTaskManager:
     def executor(self):
         return None
 
+
+def test_registration_service_emits_step_snapshot_and_closes_stream(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-step-stream", pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        callback = kwargs.get("task_step_callback")
+        assert callable(callback)
+        callback(
+            {
+                "current_step": {"step_key": "create_email", "status": "running"},
+                "steps": [{"step_key": "create_email", "status": "running"}],
+            }
+        )
+        callback(
+            {
+                "current_step": {"step_key": "create_email", "status": "completed"},
+                "steps": [{"step_key": "create_email", "status": "completed"}],
+            }
+        )
+        return RegistrationJobResult(
+            success=True,
+            account_id=101,
+            email="success@example.com",
+            result_payload={"success": True, "email": "success@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    service.run_single_task_sync(
+        task_uuid="task-step-stream",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    assert task_manager._task_steps["task-step-stream"][-1]["status"] == "completed"
+    assert task_manager.get_status("task-step-stream")["current_step_key"] == "create_email"
+    assert task_manager._closed_streams == [("task-step-stream", "completed")]
 
 
 def test_registration_service_creates_run_records_and_terminal_status(db_factory, temp_db):

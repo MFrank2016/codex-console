@@ -190,3 +190,24 @@ def test_register_pipeline_rejects_duplicate_pipeline_key():
     register_pipeline(PipelineDefinition(pipeline_key="dup", steps=[]))
     with pytest.raises(ValueError, match="dup"):
         register_pipeline(PipelineDefinition(pipeline_key="dup", steps=[]))
+
+
+def test_runner_emits_current_step_snapshot(fake_db):
+    emitted = []
+
+    pipeline = PipelineDefinition(
+        pipeline_key="demo",
+        steps=[StepDefinition("create_email", lambda ctx: {"email": "a@example.com"})],
+    )
+    task_uuid = "task-step-live"
+    crud.create_registration_task(fake_db, task_uuid=task_uuid)
+    ctx = PipelineContext(
+        task_uuid=task_uuid,
+        pipeline_key="demo",
+        metadata={"task_step_callback": lambda payload: emitted.append(payload)},
+    )
+
+    PipelineRunner(fake_db).run(pipeline, ctx)
+
+    assert emitted[0]["current_step"]["step_key"] == "create_email"
+    assert emitted[-1]["steps"][-1]["status"] == "completed"

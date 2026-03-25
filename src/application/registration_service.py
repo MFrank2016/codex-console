@@ -226,6 +226,28 @@ class RegistrationService:
         sub2api_service_ids = sub2api_service_ids or []
         tm_service_ids = tm_service_ids or []
 
+        def _close_task_stream(final_status: str) -> None:
+            if not hasattr(service.task_manager, "close_task_stream"):
+                return
+            try:
+                service.task_manager.close_task_stream(task_uuid, final_status=final_status)
+            except TypeError:
+                service.task_manager.close_task_stream(task_uuid, final_status)
+
+        def _task_step_callback(payload: dict) -> None:
+            """接收 pipeline runner 的步骤快照，并同步到 task stream。"""
+            try:
+                steps = payload.get("steps") if isinstance(payload, dict) else None
+                if steps is not None and hasattr(service.task_manager, "set_task_steps"):
+                    service.task_manager.set_task_steps(task_uuid, steps)
+
+                current_step = payload.get("current_step") if isinstance(payload, dict) else None
+                step_key = (current_step or {}).get("step_key")
+                if step_key:
+                    service.task_manager.update_status(task_uuid, "running", current_step_key=step_key)
+            except Exception as exc:
+                logger.warning("任务 %s 写入步骤快照失败: %s", task_uuid, exc)
+
         try:
             with service.db_factory() as db:
                 runs_service = RegistrationRunsService(db)
@@ -247,8 +269,7 @@ class RegistrationService:
                     runs_service.mark_cancelled(run.id, error_message="cancelled")
                     runs_service.append_event(run.id, level="warning", message="cancelled")
                     service.task_manager.update_status(task_uuid, "cancelled")
-                    if hasattr(service.task_manager, "clear_task_steps"):
-                        service.task_manager.clear_task_steps(task_uuid)
+                    _close_task_stream("cancelled")
                     return service.build_result_for_task(task_uuid, db=db)
 
                 task = crud.update_registration_task(
@@ -306,6 +327,7 @@ class RegistrationService:
                             pipeline_key=effective_pipeline_key,
                             callback_logger=log_callback,
                             task_uuid=task_uuid,
+                            task_step_callback=_task_step_callback,
                         )
                     except Exception as exc:
                         should_retry = (
@@ -371,6 +393,7 @@ class RegistrationService:
                     runs_service.mark_completed(run.id)
                     runs_service.append_event(run.id, level="info", message="completed")
                     service.task_manager.update_status(task_uuid, "completed", email=job_result.email)
+                    _close_task_stream("completed")
                 else:
                     crud.update_registration_task(
                         db,
@@ -383,9 +406,7 @@ class RegistrationService:
                     runs_service.mark_failed(run.id, error_message=job_result.error_message)
                     runs_service.append_event(run.id, level="error", message="failed")
                     service.task_manager.update_status(task_uuid, "failed", error=job_result.error_message)
-
-                if hasattr(service.task_manager, "clear_task_steps"):
-                    service.task_manager.clear_task_steps(task_uuid)
+                    _close_task_stream("failed")
 
                 return service.build_result_for_task(task_uuid, db=db, job_result=job_result)
         except Exception as exc:
@@ -414,8 +435,7 @@ class RegistrationService:
                 logger.exception("注册任务异常后写回失败: %s", task_uuid)
 
             service.task_manager.update_status(task_uuid, "failed", error=str(exc))
-            if hasattr(service.task_manager, "clear_task_steps"):
-                service.task_manager.clear_task_steps(task_uuid)
+            _close_task_stream("failed")
             failed_result = RegistrationJobResult(success=False, error_message=str(exc))
             return service.build_result_for_task(task_uuid, job_result=failed_result)
 

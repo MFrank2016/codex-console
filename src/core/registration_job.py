@@ -195,6 +195,7 @@ def run_registration_job(
     pipeline_key: str = "current_pipeline",
     auto_upload: bool = False,
     callback_logger: Callable[[str], None] | None = None,
+    task_step_callback: Callable[[dict], None] | None = None,
     task_uuid: str | None = None,
 ) -> RegistrationJobResult:
     """执行单账号注册并落库，返回统一结果供路由和定时任务复用。"""
@@ -220,6 +221,7 @@ def run_registration_job(
                 email_service=email_service,
                 proxy=proxy,
                 callback_logger=callback_logger,
+                task_step_callback=task_step_callback,
                 task_uuid=task_uuid,
                 resolved_service_id=resolved_service_id,
             )
@@ -328,6 +330,7 @@ def _run_pipeline_registration(
     email_service,
     proxy: str | None,
     callback_logger: Callable[[str], None] | None,
+    task_step_callback: Callable[[dict], None] | None,
     task_uuid: str | None,
     resolved_service_id: int | None,
 ) -> tuple[Account | None, dict[str, Any] | None]:
@@ -346,7 +349,10 @@ def _run_pipeline_registration(
         task_uuid=effective_task_uuid,
         pipeline_key=pipeline_key,
         proxy_url=proxy,
-        metadata={"registration_engine": runtime},
+        metadata={
+            "registration_engine": runtime,
+            "task_step_callback": task_step_callback,
+        },
     )
 
     PipelineRunner(db).run(pipeline, ctx)
