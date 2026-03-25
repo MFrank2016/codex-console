@@ -49,8 +49,8 @@ _batch_status: Dict[str, dict] = {}
 _batch_logs: Dict[str, List[str]] = defaultdict(list)
 _batch_locks: Dict[str, threading.Lock] = {}
 
-_stream_seq: Dict[str, int] = defaultdict(int)
-_stream_events: Dict[str, deque] = defaultdict(lambda: deque(maxlen=STREAM_BUFFER_SIZE))
+_stream_seq: Dict[str, int] = {}
+_stream_events: Dict[str, deque] = {}
 _stream_locks: Dict[str, threading.Lock] = {}
 
 
@@ -112,7 +112,7 @@ class TaskManager:
         """记录 stream 事件并维护递增 seq"""
         lock = _get_stream_lock(stream_id)
         with lock:
-            seq = _stream_seq[stream_id] + 1
+            seq = _stream_seq.get(stream_id, 0) + 1
             _stream_seq[stream_id] = seq
             payload_copy = payload.copy() if isinstance(payload, dict) else payload
             event = {
@@ -122,7 +122,11 @@ class TaskManager:
                 "timestamp": utc_now().isoformat(),
                 "payload": payload_copy,
             }
-            _stream_events[stream_id].append(event)
+            buffer = _stream_events.get(stream_id)
+            if buffer is None:
+                buffer = deque(maxlen=STREAM_BUFFER_SIZE)
+                _stream_events[stream_id] = buffer
+            buffer.append(event)
         return event
 
     def build_task_stream_snapshot(self, task_uuid: str) -> dict:
@@ -588,24 +592,6 @@ class TaskManager:
                 _ws_sent_index[key].pop(id(websocket), None)
         logger.info(f"批量任务 WebSocket 连接已注销: {batch_id}")
 
-    def _clear_stream_state_for_tests(self):
-        """测试专用：清理 stream 相关的全局状态，避免跨测试污染"""
-        with _meta_lock:
-            _task_status.clear()
-            _task_steps.clear()
-            _experiment_status.clear()
-            _log_queues.clear()
-            _log_locks.clear()
-            _batch_status.clear()
-            _batch_logs.clear()
-            _batch_locks.clear()
-            _stream_seq.clear()
-            _stream_events.clear()
-            _stream_locks.clear()
-            _ws_connections.clear()
-            _ws_sent_index.clear()
-            _task_cancelled.clear()
-
     def create_log_callback(self, task_uuid: str, prefix: str = "", batch_id: str = "") -> Callable[[str], None]:
         """创建日志回调函数，可附加任务编号前缀，并同时推送到批量任务频道"""
         def callback(msg: str):
@@ -625,3 +611,22 @@ class TaskManager:
 
 # 全局实例
 task_manager = TaskManager()
+
+
+def clear_realtime_state_for_tests():
+    """测试专用：清理 stream 相关的全局状态，避免跨测试污染"""
+    with _meta_lock:
+        _task_status.clear()
+        _task_steps.clear()
+        _experiment_status.clear()
+        _log_queues.clear()
+        _log_locks.clear()
+        _batch_status.clear()
+        _batch_logs.clear()
+        _batch_locks.clear()
+        _stream_seq.clear()
+        _stream_events.clear()
+        _stream_locks.clear()
+        _ws_connections.clear()
+        _ws_sent_index.clear()
+        _task_cancelled.clear()
