@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Callable
 
 from sqlalchemy import func
 
+from src.core.time import utc_now_naive
 from src.core.account_survival import probe_claimed_account_survival
 from src.database import crud
 from src.database.models import Account, AccountSurvivalCheck, RegistrationTask
@@ -73,7 +74,7 @@ class DatabaseAccountSurvivalRepository:
 
         session = self.session_factory()
         try:
-            cutoff = datetime.utcnow() - self.due_after
+            cutoff = utc_now_naive() - self.due_after
             latest_checks = (
                 session.query(
                     AccountSurvivalCheck.account_id.label("account_id"),

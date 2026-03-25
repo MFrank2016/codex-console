@@ -125,6 +125,21 @@ class SettingsService:
             }
         )
 
+    def update_outlook_settings(self, payload: dict[str, Any]) -> settings_module.Settings:
+        update_dict = {}
+        if payload.get("default_client_id") is not None:
+            update_dict["outlook_default_client_id"] = payload["default_client_id"]
+        return self.update_runtime_settings(update_dict)
+
+    def update_team_manager_settings(self, payload: dict[str, Any]) -> settings_module.Settings:
+        update_dict = {
+            "tm_enabled": payload.get("enabled", False),
+            "tm_api_url": payload.get("api_url", ""),
+        }
+        if payload.get("api_key"):
+            update_dict["tm_api_key"] = payload["api_key"]
+        return self.update_runtime_settings(update_dict)
+
     def _validate_runtime_settings(
         self,
         payload: dict[str, Any],

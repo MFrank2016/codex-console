@@ -6,10 +6,11 @@ from typing import Optional, Dict, Any
 import json
 from sqlalchemy import Column, Integer, Float, String, Text, Boolean, DateTime, ForeignKey
 from sqlalchemy.types import TypeDecorator
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import DeclarativeBase, relationship
 
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 
 def _utc_now_naive():

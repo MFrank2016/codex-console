@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ...application import SettingsService
-from ...config.settings import get_settings, update_settings
+from ...config.settings import get_settings
 from ...core.dynamic_proxy import (
     build_dynamic_proxy_request,
     fetch_dynamic_proxy,
@@ -374,9 +374,10 @@ async def cleanup_database(
     keep_failed: bool = True
 ):
     """清理过期数据"""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
+    from ...core.time import utc_now_naive
 
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    cutoff_date = utc_now_naive() - timedelta(days=days)
 
     with get_db() as db:
         from ...database.models import RegistrationTask
@@ -958,13 +959,8 @@ async def get_outlook_settings():
 @router.post("/outlook")
 async def update_outlook_settings(request: OutlookSettings):
     """更新 Outlook 设置"""
-    update_dict = {}
-
-    if request.default_client_id is not None:
-        update_dict["outlook_default_client_id"] = request.default_client_id
-
-    if update_dict:
-        update_settings(**update_dict)
+    with get_db() as db:
+        _build_settings_service(db).update_outlook_settings(request.model_dump())
 
     return {"success": True, "message": "Outlook 设置已更新"}
 
@@ -998,13 +994,8 @@ async def get_team_manager_settings():
 @router.post("/team-manager")
 async def update_team_manager_settings(request: TeamManagerSettings):
     """更新 Team Manager 设置"""
-    update_dict = {
-        "tm_enabled": request.enabled,
-        "tm_api_url": request.api_url,
-    }
-    if request.api_key:
-        update_dict["tm_api_key"] = request.api_key
-    update_settings(**update_dict)
+    with get_db() as db:
+        _build_settings_service(db).update_team_manager_settings(request.model_dump())
     return {"success": True, "message": "Team Manager 设置已更新"}
 
 
