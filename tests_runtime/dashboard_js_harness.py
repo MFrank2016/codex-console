@@ -33,6 +33,7 @@ function createMockElement(id = '') {{
 }}
 
 const elementsById = new Map();
+const domListeners = {{}};
 const document = {{
   getElementById(id) {{
     if (!elementsById.has(id)) {{
@@ -40,15 +41,34 @@ const document = {{
     }}
     return elementsById.get(id);
   }},
-  addEventListener() {{
-    // harness 不触发 DOMContentLoaded，避免触发网络请求
+  addEventListener(type, handler) {{
+    domListeners[type] = handler;
   }},
 }};
+
+const logs = {{
+  fetchPaths: [],
+}};
+
+async function flushPromises() {{
+  return new Promise((resolve) => setImmediate(resolve));
+}}
 
 const context = {{
   console,
   document,
   window: {{}},
+  setImmediate,
+  fetch: async (url) => {{
+    logs.fetchPaths.push(String(url));
+    return {{
+      ok: true,
+      status: 200,
+      async json() {{
+        return sampleSummary();
+      }},
+    }};
+  }},
 }};
 
 vm.createContext(context);
@@ -90,6 +110,11 @@ function sampleSummary() {{
         href: 'data:text/html,<b>bad</b>',
         description: '不应被允许',
       }},
+      {{
+        label: '协议相对',
+        href: '//evil.example/path',
+        description: '不应被允许',
+      }},
     ],
     recent_activity: [
       {{
@@ -106,6 +131,13 @@ function sampleSummary() {{
         timestamp: '2026-03-25T09:00:00Z',
         description: '外部链接允许 https',
       }},
+      {{
+        title: '协议相对活动',
+        status: 'running',
+        href: '//evil.example/activity',
+        timestamp: '2026-03-25T10:00:00Z',
+        description: '不应被允许',
+      }},
     ],
   }};
 }}
@@ -116,27 +148,54 @@ function ensureFunction(name) {{
   }}
 }}
 
-const result = {{}};
+async function main() {{
+  const result = {{}};
 
-if (scenarioName === 'render_dashboard') {{
-  const summary = sampleSummary();
-  ensureFunction('renderDashboardHero');
-  ensureFunction('renderRecentActivity');
-  ensureFunction('renderQuickActions');
-  result.metric_html = context.renderDashboardHero(summary);
-  result.activity_html = context.renderRecentActivity(summary.recent_activity);
-  result.quick_actions_html = context.renderQuickActions(summary.quick_links);
-}} else if (scenarioName === 'render_error') {{
-  ensureFunction('renderDashboardError');
-  context.renderDashboardError(new Error('boom'));
-  result.metric_html = document.getElementById('dashboard-metric-grid').innerHTML;
-  result.activity_html = document.getElementById('dashboard-activity-feed').innerHTML;
-  result.quick_actions_html = document.getElementById('dashboard-quick-actions').innerHTML;
-}} else {{
-  throw new Error(`unknown scenario: ${{scenarioName}}`);
+  if (scenarioName === 'render_dashboard') {{
+    const summary = sampleSummary();
+    ensureFunction('renderDashboardHero');
+    ensureFunction('renderRecentActivity');
+    ensureFunction('renderQuickActions');
+    result.metric_html = context.renderDashboardHero(summary);
+    result.activity_html = context.renderRecentActivity(summary.recent_activity);
+    result.quick_actions_html = context.renderQuickActions(summary.quick_links);
+  }} else if (scenarioName === 'render_error') {{
+    ensureFunction('renderDashboardError');
+    context.renderDashboardError(new Error('boom'));
+    result.metric_html = document.getElementById('dashboard-metric-grid').innerHTML;
+    result.activity_html = document.getElementById('dashboard-activity-feed').innerHTML;
+    result.quick_actions_html = document.getElementById('dashboard-quick-actions').innerHTML;
+  }} else if (scenarioName === 'safe_href_matrix') {{
+    ensureFunction('safeHref');
+    result.relative_ok = context.safeHref('/registration-workbench');
+    result.https_ok = context.safeHref('https://example.com/activity');
+    result.protocol_relative_rejected = context.safeHref('//evil.example/path');
+    result.javascript_rejected = context.safeHref('javascript:alert(1)');
+    result.data_rejected = context.safeHref('data:text/html,<b>bad</b>');
+  }} else if (scenarioName === 'dom_content_loaded_flow') {{
+    if (typeof domListeners.DOMContentLoaded !== 'function') {{
+      throw new Error('missing DOMContentLoaded listener');
+    }}
+
+    // 触发真实主链路：DOMContentLoaded -> loadDashboardSummary -> mountDashboard
+    await domListeners.DOMContentLoaded();
+    await flushPromises();
+
+    result.fetch_paths = logs.fetchPaths;
+    result.metric_grid_html = document.getElementById('dashboard-metric-grid').innerHTML;
+    result.activity_html = document.getElementById('dashboard-activity-feed').innerHTML;
+    result.quick_actions_html = document.getElementById('dashboard-quick-actions').innerHTML;
+  }} else {{
+    throw new Error(`unknown scenario: ${{scenarioName}}`);
+  }}
+
+  process.stdout.write(JSON.stringify(result));
 }}
 
-process.stdout.write(JSON.stringify(result));
+main().catch((error) => {{
+  console.error(error);
+  process.exitCode = 1;
+}});
 """
 
     completed = subprocess.run(

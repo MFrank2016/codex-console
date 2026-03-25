@@ -8,7 +8,8 @@ function escapeHtml(value) {
 }
 
 function safeHref(rawHref) {
-  const href = String(rawHref ?? '');
+  const href = String(rawHref ?? '').trim();
+  if (href.startsWith('//')) return '#';
   if (href.startsWith('/')) return href;
   if (/^https?:\/\//i.test(href)) return href;
   return '#';

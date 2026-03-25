@@ -87,6 +87,25 @@ def test_dashboard_js_harness_renders_error_state_without_invalid_ul_children():
     assert "<p" not in result["activity_html"]
 
 
+def test_dashboard_js_harness_safe_href_rejects_protocol_relative_urls():
+    result = run_dashboard_js_scenario("safe_href_matrix")
+    assert result == {
+        "relative_ok": "/registration-workbench",
+        "https_ok": "https://example.com/activity",
+        "protocol_relative_rejected": "#",
+        "javascript_rejected": "#",
+        "data_rejected": "#",
+    }
+
+
+def test_dashboard_js_harness_dom_content_loaded_flow_mounts_all_sections_and_fetches_summary():
+    result = run_dashboard_js_scenario("dom_content_loaded_flow")
+
+    assert result["fetch_paths"] == ["/api/dashboard/summary"]
+    assert "dashboard-metric-card" in result["metric_grid_html"]
+    assert 'class="dashboard-activity-item"' in result["activity_html"]
+    assert 'class="dashboard-quick-action"' in result["quick_actions_html"]
+
 def test_dashboard_summary_api_requires_auth():
     app = create_app()
     with TestClient(app) as client:
