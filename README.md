@@ -102,7 +102,7 @@ cp .env.example .env
 ## 启动 Web UI
 
 ```bash
-# 默认启动（127.0.0.1:8000）
+# 默认启动（监听 0.0.0.0:8000，本机可通过 http://127.0.0.1:8000 访问）
 python webui.py
 
 # 指定地址和端口
@@ -120,6 +120,8 @@ python webui.py --host 0.0.0.0 --port 8080 --access-password mypassword
 
 说明:
 
+- 推荐通过 `python webui.py` 作为统一启动入口，它会负责 `.env` 加载、数据库初始化、日志初始化等启动前准备工作。
+- 不建议在生产环境直接用 `uvicorn src.web.app:app` 替代上述入口，否则可能绕过项目自己的启动装配逻辑。
 - `--access-password` 的优先级高于数据库中的密钥设置
 - 该参数只对本次启动生效
 - 打包后的 exe 也支持这个参数
@@ -139,7 +141,7 @@ codex-console.exe --access-password mypassword
 ### 使用 docker-compose
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 你可以在 `docker-compose.yml` 中修改环境变量，比如端口和访问密码。
@@ -169,6 +171,11 @@ docker run -d \
 
 `-v $(pwd)/data:/app/data` 很重要，这会把数据库和账号数据持久化到宿主机。否则容器一重启，数据也可能跟着表演消失术。
 
+补充说明:
+
+- 当前 `Dockerfile` 默认入口就是 `python webui.py`，这也是推荐保留的容器启动方式。
+- 如果你只是本地体验或单机临时使用，直接用仓库自带的 `docker-compose.yml` 就够了。
+
 ## 使用远程 PostgreSQL
 
 ```bash
@@ -187,6 +194,169 @@ python webui.py
 
 - 当前仓库仍包含账号密码、第三方服务密钥等敏感字段的历史兼容存储方式。
 - 后续会继续推进字段级保护、脱敏展示和密钥管理硬化；在此之前请谨慎保管数据库、日志和备份文件。
+
+## 生产环境部署建议
+
+如果你准备长期运行、持续批量任务或对外提供公网访问，推荐采用下面这套组合:
+
+- `Docker Compose`
+- `PostgreSQL`
+- `Nginx / Caddy` 反向代理
+- `HTTPS`
+
+推荐原因:
+
+- 项目已经内置 `Dockerfile`，落地和迁移都比较直接
+- PostgreSQL 更适合长期运行和并发任务场景
+- 反向代理更方便统一处理 HTTPS、域名、WebSocket 和访问控制
+- 容器内继续使用 `python webui.py`，可以保留项目自己的启动初始化逻辑
+
+### 推荐的 docker-compose 生产示例
+
+仓库已提供 `docker-compose.prod.yml`，你可以直接使用，或按自己的环境再复制出一份定制版本:
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: codex-console-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  webui:
+    build:
+      context: .
+    image: codex-console:prod
+    container_name: codex-console
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WEBUI_HOST: 0.0.0.0
+      WEBUI_PORT: 1455
+      WEBUI_ACCESS_PASSWORD: ${WEBUI_ACCESS_PASSWORD}
+      APP_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      LOG_LEVEL: info
+      DEBUG: "0"
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "127.0.0.1:1455:1455"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+```
+
+上面这个端口映射刻意用了:
+
+```yaml
+ports:
+  - "127.0.0.1:1455:1455"
+```
+
+这样 Web UI 只监听宿主机本地回环地址，适合交给 Nginx / Caddy 做前置反代，不建议把应用端口直接裸露到公网。
+
+### 推荐的 .env.prod 示例
+
+仓库已提供 `.env.prod.example`，建议先复制:
+
+```bash
+cp .env.prod.example .env.prod
+```
+
+再按实际环境修改:
+
+```env
+POSTGRES_DB=codex_console
+POSTGRES_USER=codex
+POSTGRES_PASSWORD=请替换成强密码
+WEBUI_ACCESS_PASSWORD=请替换成强密码
+TZ=Asia/Shanghai
+```
+
+### 启动命令
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+查看服务状态:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+```
+
+查看 Web UI 日志:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f webui
+```
+
+### 生产环境注意事项
+
+1. 关闭调试模式  
+   保持 `DEBUG=0`，不要在生产环境开启 `--debug` 或热重载。
+
+2. 修改访问密码  
+   `WEBUI_ACCESS_PASSWORD` 不要继续使用默认值。
+
+3. 修改默认密钥  
+   项目默认的 `webui_secret_key` 只是开发占位值。首次启动并登录后，建议尽快在设置页中修改。
+
+4. 使用公网域名时加 HTTPS  
+   不建议直接将应用端口暴露到公网，应通过 Nginx / Caddy 终止 TLS 并转发到本机 `1455`。
+
+5. WebSocket 需要反向代理支持  
+   项目使用了 `/ws/task/...` 和 `/ws/batch/...`，反向代理时记得保留 Upgrade / Connection 头。
+
+6. OAuth 回调地址要改成公网地址  
+   如果你在生产环境使用 OpenAI OAuth 回调，默认的 `http://localhost:1455/auth/callback` 不够用，需要改成你的公网 HTTPS 地址，例如:
+
+   ```text
+   https://your-domain.com/auth/callback
+   ```
+
+7. 做好备份  
+   至少定期备份下面这些数据:
+   - PostgreSQL 数据卷 `postgres_data`
+   - `data/`
+   - `logs/`
+
+### Nginx 反向代理示例
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:1455;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+上线前再为域名配置 TLS 证书即可。
 
 ## 打包为可执行文件
 

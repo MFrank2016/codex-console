@@ -79,6 +79,32 @@ def test_main_uses_process_local_boot_settings_without_update_settings(monkeypat
     assert boot.access_password_override == "cli-secret"
 
 
+def test_main_loads_dotenv_before_building_boot_settings(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("APP_HOST=0.0.0.0\nAPP_PORT=8123\n", encoding="utf-8")
+
+    monkeypatch.delenv("APP_HOST", raising=False)
+    monkeypatch.delenv("APP_PORT", raising=False)
+    monkeypatch.delenv("WEBUI_HOST", raising=False)
+    monkeypatch.delenv("WEBUI_PORT", raising=False)
+    monkeypatch.setattr(webui, "project_root", tmp_path)
+    monkeypatch.setattr("argparse.ArgumentParser.parse_args", lambda self: _Args())
+
+    captured: dict[str, object] = {}
+
+    def fake_start_webui(boot_settings):
+        captured["boot"] = boot_settings
+
+    monkeypatch.setattr(webui, "start_webui", fake_start_webui)
+
+    webui.main()
+
+    boot = captured["boot"]
+    assert isinstance(boot, BootSettings)
+    assert boot.host == "0.0.0.0"
+    assert boot.port == 8123
+
+
 def test_login_accepts_boot_access_password_override():
     set_boot_settings(BootSettings(access_password_override="override-secret"))
     try:

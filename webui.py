@@ -116,6 +116,8 @@ def start_webui(boot_settings: BootSettings):
 def main():
     import argparse
 
+    _load_dotenv()
+
     parser = argparse.ArgumentParser(description="OpenAI/Codex CLI 自动注册系统 Web UI")
     parser.add_argument("--host", help="监听主机 (也可通过 WEBUI_HOST 环境变量设置)")
     parser.add_argument("--port", type=int, help="监听端口 (也可通过 WEBUI_PORT 环境变量设置)")
