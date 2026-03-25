@@ -87,25 +87,23 @@ function renderRegistrationStreamStatus() {
 function syncRegistrationStreamDom(previous, next, event) {
     renderRegistrationStreamStatus();
 
+    // 日志渲染：以事件类型驱动，避免依赖 logs 数组长度差量（ring buffer 长度可能恒定）。
     if (event?.kind === 'snapshot') {
         resetConsoleLogDom();
-        registrationStreamRenderedLogCount = 0;
+        const nextLogs = Array.isArray(next?.logs) ? next.logs : [];
+        for (const entry of nextLogs) {
+            const message = typeof entry === 'string' ? entry : (entry ? entry.message : '');
+            if (!message) continue;
+            appendLogLine(getLogType(message), message, { dedupeByMessage: false });
+        }
+        registrationStreamRenderedLogCount = nextLogs.length;
+    } else if (event?.kind === 'log_appended') {
+        const message = event?.payload?.message;
+        if (message) {
+            appendLogLine(getLogType(message), message, { dedupeByMessage: false });
+            registrationStreamRenderedLogCount = Array.isArray(next?.logs) ? next.logs.length : registrationStreamRenderedLogCount;
+        }
     }
-
-    // 日志：仅追加渲染新增项，避免重复重刷 DOM。
-    const prevLogs = Array.isArray(previous?.logs) ? previous.logs : [];
-    const nextLogs = Array.isArray(next?.logs) ? next.logs : [];
-    let startIndex = Math.max(prevLogs.length, registrationStreamRenderedLogCount);
-    if (nextLogs.length < startIndex) {
-        startIndex = 0;
-    }
-    for (let i = startIndex; i < nextLogs.length; i += 1) {
-        const entry = nextLogs[i];
-        const message = typeof entry === 'string' ? entry : (entry ? entry.message : '');
-        if (!message) continue;
-        appendLogLine(getLogType(message), message, { dedupeByMessage: false });
-    }
-    registrationStreamRenderedLogCount = nextLogs.length;
 
     // 步骤瀑布流：仅在相关事件时刷新
     if (event?.kind === 'snapshot' || event?.kind === 'task_step_updated') {
@@ -1361,7 +1359,8 @@ function appendLogLine(type, message, options = {}) {
 
     const lines = elements.consoleLog.querySelectorAll('.log-line');
     if (lines.length > 500) {
-        lines[0].remove();
+        // 使用 removeChild，便于 JS harness 同步 children 列表；浏览器同样支持。
+        elements.consoleLog.removeChild(lines[0]);
     }
     return true;
 }

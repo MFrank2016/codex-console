@@ -454,6 +454,53 @@ async function runScenario() {{
         connection_status: state.connection ? String(state.connection.status || '') : '',
       }};
     }}
+    case 'realtime_store_full_window_log_append': {{
+      const reduce = context.window?.registrationStream?.reduce;
+      if (typeof reduce !== 'function') {{
+        throw new Error('registrationStream.reduce missing');
+      }}
+
+      const stream = 'task:task-single-01';
+      const tail = Array.from({{ length: 500 }}, (_, i) => `line-${{i}}`);
+      const events = [
+        {{
+          seq: 1,
+          stream,
+          kind: 'snapshot',
+          payload: {{
+            task: {{ task_uuid: 'task-single-01', status: 'running' }},
+            current_step: {{ step_key: 'submit_login_email' }},
+            steps: [],
+            logs_tail: tail,
+          }},
+        }},
+        {{ seq: 2, stream, kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'after-full' }} }},
+      ];
+
+      let state = {{
+        cursors: {{}},
+        currentStep: null,
+        steps: [],
+        batch: {{}},
+        logs: [],
+        connection: {{ status: 'disconnected' }},
+      }};
+
+      for (const event of events) {{
+        state = reduce(state, event);
+        exported.reduceRegistrationStream(event);
+      }}
+
+      const logLines = getElement('console-log').querySelectorAll('.log-line');
+      const lastLine = logLines.length ? logLines[logLines.length - 1] : null;
+      const lastHtml = lastLine ? String(lastLine.innerHTML || '') : '';
+
+      return {{
+        log_count: Array.isArray(state.logs) ? state.logs.length : 0,
+        rendered_log_count: logLines.length,
+        last_rendered_contains_after_full: lastHtml.includes('after-full'),
+      }};
+    }}
     default:
       throw new Error(`Unknown scenario: ${{scenarioName}}`);
   }}

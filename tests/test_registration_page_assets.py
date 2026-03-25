@@ -142,6 +142,13 @@ def test_registration_realtime_store_reduces_snapshot_and_tracks_connection_stat
     assert result["connection_status"] == "polling"
 
 
+def test_registration_realtime_store_appends_log_when_window_is_full():
+    result = run_app_js_scenario("realtime_store_full_window_log_append")
+    assert result["log_count"] == 500
+    assert result["rendered_log_count"] == 500
+    assert result["last_rendered_contains_after_full"] is True
+
+
 def test_execution_and_configuration_templates_extend_workspace_shell():
     for path in [
         "templates/accounts.html",
