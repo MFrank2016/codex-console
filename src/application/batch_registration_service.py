@@ -12,6 +12,7 @@ from ..core.registration_batch_stats import finalize_batch_statistics
 from ..core.time import utc_now_naive
 from ..database import crud
 from ..database.models import RegistrationRun, RegistrationTask
+from .proxy_dispatch_service import ProxyDispatchService, ResolvedProxyCandidate
 from .registration_runs_service import RegistrationRunsService
 
 logger = logging.getLogger(__name__)
@@ -41,11 +42,13 @@ class BatchRegistrationService:
         db_factory,
         task_manager=None,
         batch_tasks_store: dict[str, dict] | None = None,
+        batch_proxy_pools_store: dict[str, Any] | None = None,
         registration_task_runner: Callable[..., Any] | None = None,
         batch_domain_stats_finalizer: Callable[[str, list[str]], None] | None = None,
         domain_stats_builder: Callable[[list[RegistrationTask]], list[dict]] = build_domain_stats,
         batch_outcome_applier: Callable[[dict, str], None] = apply_task_outcome,
         batch_statistics_finalizer: Callable[..., Any] = finalize_batch_statistics,
+        proxy_dispatcher: ProxyDispatchService | None = None,
         utc_now_provider: Callable[[], Any] = utc_now_naive,
     ):
         self.db_factory = db_factory
@@ -55,11 +58,13 @@ class BatchRegistrationService:
             task_manager = default_task_manager
         self.task_manager = task_manager
         self.batch_tasks = batch_tasks_store if batch_tasks_store is not None else {}
+        self.batch_proxy_pools = batch_proxy_pools_store if batch_proxy_pools_store is not None else {}
         self.registration_task_runner = registration_task_runner
         self.batch_domain_stats_finalizer = batch_domain_stats_finalizer
         self.domain_stats_builder = domain_stats_builder
         self.batch_outcome_applier = batch_outcome_applier
         self.batch_statistics_finalizer = batch_statistics_finalizer
+        self.proxy_dispatcher = proxy_dispatcher
         self.utc_now_provider = utc_now_provider
 
     def create_batch_tasks(
@@ -133,6 +138,25 @@ class BatchRegistrationService:
             "domain_stats": [],
             "statistics_context": statistics_context,
         }
+
+    def prepare_batch_proxy_pool(
+        self,
+        *,
+        batch_id: str,
+        task_group: str,
+        concurrency: int,
+        overrides: dict[str, Any] | None,
+    ):
+        if self.proxy_dispatcher is None:
+            raise RuntimeError("proxy dispatcher is not configured")
+        pool = self.proxy_dispatcher.prepare_batch_proxy_pool(
+            batch_id=batch_id,
+            task_group=task_group,
+            concurrency=concurrency,
+            overrides=overrides or {},
+        )
+        self.batch_proxy_pools[batch_id] = pool
+        return pool
 
     def make_batch_helpers(self, batch_id: str):
         def add_batch_log(message: str):
@@ -250,6 +274,65 @@ class BatchRegistrationService:
             task = crud.get_registration_task(db, task_uuid)
             return task.status if task is not None else None
 
+    def _get_batch_proxy_pool(self, batch_id: str):
+        return self.batch_proxy_pools.get(batch_id)
+
+    def _clear_batch_proxy_pool(self, batch_id: str) -> None:
+        self.batch_proxy_pools.pop(batch_id, None)
+
+    def _lease_proxy_for_batch_task(
+        self,
+        *,
+        batch_id: str,
+        explicit_proxy: str | None,
+    ) -> tuple[str | None, ResolvedProxyCandidate | None]:
+        if explicit_proxy:
+            return explicit_proxy, None
+        pool = self._get_batch_proxy_pool(batch_id)
+        if pool is None:
+            return None, None
+        candidate = pool.lease()
+        return candidate.proxy_url, candidate
+
+    def _release_batch_proxy(
+        self,
+        *,
+        batch_id: str,
+        candidate: ResolvedProxyCandidate | None,
+        success: bool,
+    ) -> None:
+        if candidate is None:
+            return
+        pool = self._get_batch_proxy_pool(batch_id)
+        if pool is None:
+            return
+        pool.complete(candidate, success=success)
+
+    def _mark_proxy_pool_failure(self, batch_id: str, task_uuid: str, error_message: str) -> None:
+        with self.db_factory() as db:
+            task = crud.get_registration_task(db, task_uuid)
+            if task is None:
+                return
+            runs_service = RegistrationRunsService(db)
+            run = runs_service.get_run_by_task_uuid(task_uuid)
+            if run is None:
+                run = runs_service.create_run(task_uuid=task_uuid, batch_id=batch_id, trigger_source="batch")
+            crud.update_registration_task(
+                db,
+                task_uuid,
+                status="failed",
+                pipeline_status="failed",
+                completed_at=self.utc_now_provider(),
+                error_message=error_message,
+            )
+            runs_service.mark_failed(run.id, error_message=error_message)
+            runs_service.append_event(run.id, level="error", message="failed")
+
+        if hasattr(self.task_manager, "update_status"):
+            self.task_manager.update_status(task_uuid, "failed", error=error_message)
+        if hasattr(self.task_manager, "clear_task_steps"):
+            self.task_manager.clear_task_steps(task_uuid)
+
     async def _run_single_task(self, *args, **kwargs):
         if self.registration_task_runner is None:
             raise RuntimeError("registration_task_runner is required")
@@ -295,23 +378,52 @@ class BatchRegistrationService:
             with self.db_factory() as db:
                 crud.create_registration_task(db, task_uuid=task_uuid, proxy=proxy, pipeline_key=pipeline_key)
 
-            async with semaphore:
-                await self._run_single_task(
-                    task_uuid,
-                    email_service_type,
-                    proxy,
-                    email_service_config,
-                    email_service_id,
-                    log_prefix=f"[任务{index}]",
+            leased_candidate = None
+            effective_proxy = proxy
+            try:
+                effective_proxy, leased_candidate = self._lease_proxy_for_batch_task(
                     batch_id=batch_id,
-                    auto_upload_cpa=auto_upload_cpa,
-                    cpa_service_ids=cpa_service_ids or [],
-                    auto_upload_sub2api=auto_upload_sub2api,
-                    sub2api_service_ids=sub2api_service_ids or [],
-                    auto_upload_tm=auto_upload_tm,
-                    tm_service_ids=tm_service_ids or [],
-                    pipeline_key=pipeline_key,
+                    explicit_proxy=proxy,
                 )
+            except RuntimeError as exc:
+                self._mark_proxy_pool_failure(batch_id, task_uuid, str(exc))
+                async with counter_lock:
+                    self.batch_outcome_applier(self.batch_tasks[batch_id], "failed")
+                    self.batch_tasks[batch_id]["stop_reason"] = "proxy_pool_exhausted"
+                    update_batch_status(
+                        completed=self.batch_tasks[batch_id]["completed"],
+                        success=self.batch_tasks[batch_id]["success"],
+                        failed=self.batch_tasks[batch_id]["failed"],
+                        stop_reason="proxy_pool_exhausted",
+                    )
+                    add_batch_log(f"[任务{index}] [失败] 代理池耗尽: {exc}")
+                return
+
+            async with semaphore:
+                try:
+                    await self._run_single_task(
+                        task_uuid,
+                        email_service_type,
+                        effective_proxy,
+                        email_service_config,
+                        email_service_id,
+                        log_prefix=f"[任务{index}]",
+                        batch_id=batch_id,
+                        auto_upload_cpa=auto_upload_cpa,
+                        cpa_service_ids=cpa_service_ids or [],
+                        auto_upload_sub2api=auto_upload_sub2api,
+                        sub2api_service_ids=sub2api_service_ids or [],
+                        auto_upload_tm=auto_upload_tm,
+                        tm_service_ids=tm_service_ids or [],
+                        pipeline_key=pipeline_key,
+                    )
+                finally:
+                    status = self._load_outcome_status(task_uuid) or "failed"
+                    self._release_batch_proxy(
+                        batch_id=batch_id,
+                        candidate=leased_candidate,
+                        success=status == "completed",
+                    )
 
             status = self._load_outcome_status(task_uuid)
             if status is None:
@@ -376,6 +488,7 @@ class BatchRegistrationService:
             update_batch_status(finished=True, status="failed")
         finally:
             self.batch_tasks[batch_id]["finished"] = True
+            self._clear_batch_proxy_pool(batch_id)
 
         return self.build_summary(batch_id, task_uuids=task_uuids)
 
@@ -421,23 +534,50 @@ class BatchRegistrationService:
 
         async def _run_one(index: int, task_uuid: str):
             prefix = f"[任务{index + 1}]"
-            async with semaphore:
-                await self._run_single_task(
-                    task_uuid,
-                    email_service_type,
-                    proxy,
-                    email_service_config,
-                    email_service_id,
-                    log_prefix=prefix,
+            leased_candidate = None
+            effective_proxy = proxy
+            try:
+                effective_proxy, leased_candidate = self._lease_proxy_for_batch_task(
                     batch_id=batch_id,
-                    auto_upload_cpa=auto_upload_cpa,
-                    cpa_service_ids=cpa_service_ids or [],
-                    auto_upload_sub2api=auto_upload_sub2api,
-                    sub2api_service_ids=sub2api_service_ids or [],
-                    auto_upload_tm=auto_upload_tm,
-                    tm_service_ids=tm_service_ids or [],
-                    pipeline_key=pipeline_key,
+                    explicit_proxy=proxy,
                 )
+            except RuntimeError as exc:
+                self._mark_proxy_pool_failure(batch_id, task_uuid, str(exc))
+                async with counter_lock:
+                    self.batch_outcome_applier(self.batch_tasks[batch_id], "failed")
+                    add_batch_log(f"{prefix} [失败] 代理池耗尽: {exc}")
+                    update_batch_status(
+                        completed=self.batch_tasks[batch_id]["completed"],
+                        success=self.batch_tasks[batch_id]["success"],
+                        failed=self.batch_tasks[batch_id]["failed"],
+                        consecutive_failures=self.batch_tasks[batch_id]["consecutive_failures"],
+                    )
+                return
+            async with semaphore:
+                try:
+                    await self._run_single_task(
+                        task_uuid,
+                        email_service_type,
+                        effective_proxy,
+                        email_service_config,
+                        email_service_id,
+                        log_prefix=prefix,
+                        batch_id=batch_id,
+                        auto_upload_cpa=auto_upload_cpa,
+                        cpa_service_ids=cpa_service_ids or [],
+                        auto_upload_sub2api=auto_upload_sub2api,
+                        sub2api_service_ids=sub2api_service_ids or [],
+                        auto_upload_tm=auto_upload_tm,
+                        tm_service_ids=tm_service_ids or [],
+                        pipeline_key=pipeline_key,
+                    )
+                finally:
+                    status = self._load_outcome_status(task_uuid) or "failed"
+                    self._release_batch_proxy(
+                        batch_id=batch_id,
+                        candidate=leased_candidate,
+                        success=status == "completed",
+                    )
 
             status = self._load_outcome_status(task_uuid)
             if status is None:
@@ -482,6 +622,7 @@ class BatchRegistrationService:
             update_batch_status(finished=True, status="failed")
         finally:
             self.batch_tasks[batch_id]["finished"] = True
+            self._clear_batch_proxy_pool(batch_id)
 
         return self.build_summary(batch_id, task_uuids=task_uuids)
 
@@ -527,11 +668,31 @@ class BatchRegistrationService:
         add_batch_log(f"[系统] 流水线模式启动，并发数: {concurrency}，总任务: {len(task_uuids)}")
 
         async def _run_and_release(index: int, task_uuid: str, prefix: str):
+            leased_candidate = None
+            effective_proxy = proxy
             try:
+                try:
+                    effective_proxy, leased_candidate = self._lease_proxy_for_batch_task(
+                        batch_id=batch_id,
+                        explicit_proxy=proxy,
+                    )
+                except RuntimeError as exc:
+                    self._mark_proxy_pool_failure(batch_id, task_uuid, str(exc))
+                    async with counter_lock:
+                        self.batch_outcome_applier(self.batch_tasks[batch_id], "failed")
+                        add_batch_log(f"{prefix} [失败] 代理池耗尽: {exc}")
+                        update_batch_status(
+                            completed=self.batch_tasks[batch_id]["completed"],
+                            success=self.batch_tasks[batch_id]["success"],
+                            failed=self.batch_tasks[batch_id]["failed"],
+                            consecutive_failures=self.batch_tasks[batch_id]["consecutive_failures"],
+                        )
+                    return
+
                 await self._run_single_task(
                     task_uuid,
                     email_service_type,
-                    proxy,
+                    effective_proxy,
                     email_service_config,
                     email_service_id,
                     log_prefix=prefix,
@@ -561,6 +722,12 @@ class BatchRegistrationService:
                             consecutive_failures=self.batch_tasks[batch_id]["consecutive_failures"],
                         )
             finally:
+                status = self._load_outcome_status(task_uuid) or "failed"
+                self._release_batch_proxy(
+                    batch_id=batch_id,
+                    candidate=leased_candidate,
+                    success=status == "completed",
+                )
                 semaphore.release()
 
         try:
@@ -606,6 +773,7 @@ class BatchRegistrationService:
             update_batch_status(finished=True, status="failed")
         finally:
             self.batch_tasks[batch_id]["finished"] = True
+            self._clear_batch_proxy_pool(batch_id)
 
         return self.build_summary(batch_id, task_uuids=task_uuids)
 

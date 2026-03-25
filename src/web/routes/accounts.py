@@ -19,7 +19,7 @@ from ...core.upload.cpa_upload import generate_token_json, batch_upload_to_cpa, 
 from ...core.upload.team_manager_upload import upload_to_team_manager, batch_upload_to_team_manager
 from ...core.upload.sub2api_upload import batch_upload_to_sub2api, upload_to_sub2api
 
-from ...core.dynamic_proxy import get_proxy_url_for_task
+from ...application import ProxyDispatchService
 from ...database import crud
 from ...database.models import Account
 from ...database.session import get_db
@@ -29,18 +29,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _get_proxy(request_proxy: Optional[str] = None) -> Optional[str]:
-    """获取代理 URL，策略与注册流程一致：代理列表 → 动态代理 → 静态配置"""
-    if request_proxy:
-        return request_proxy
+def _proxy_list_provider(limit: int) -> List[dict]:
     with get_db() as db:
-        proxy = crud.get_random_proxy(db)
-        if proxy:
-            return proxy.proxy_url
-    proxy_url = get_proxy_url_for_task()
-    if proxy_url:
-        return proxy_url
-    return get_settings().proxy_url
+        proxies = crud.get_enabled_proxies(db)
+        return [
+            {
+                "proxy_url": proxy.proxy_url,
+                "proxy_id": proxy.id,
+                "proxy_key": f"proxy-list:{proxy.id}",
+            }
+            for proxy in proxies
+        ]
+
+
+def _build_proxy_dispatch_service() -> ProxyDispatchService:
+    return ProxyDispatchService(proxy_list_provider=_proxy_list_provider)
+
+
+def _get_proxy(request_proxy: Optional[str] = None) -> Optional[str]:
+    """通过统一代理调度层为账号操作选择代理。"""
+    candidate = _build_proxy_dispatch_service().resolve_single_proxy(
+        task_group="generic_single",
+        explicit_proxy=request_proxy,
+        overrides={},
+    )
+    return candidate.proxy_url if candidate is not None else None
 
 
 # ============== Pydantic Models ==============

@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 
+from src.application.proxy_dispatch_service import ResolvedProxyCandidate
 from src.application.registration_runs_service import RegistrationRunsService
 from src.core.time import utc_now_naive
 from src.database import crud
@@ -184,3 +185,130 @@ async def test_batch_registration_service_finalizes_ordinary_batch_stats(db_fact
         "interval_max": 5,
         "concurrency": 2,
     }
+
+
+@pytest.mark.anyio
+async def test_batch_registration_service_uses_batch_proxy_pool_for_parallel_batch(db_factory, temp_db):
+    from src.application.batch_registration_service import BatchRegistrationService
+
+    task_ids = []
+    for idx in range(2):
+        task = crud.create_registration_task(temp_db, task_uuid=f"proxy-batch-task-{idx}")
+        task_ids.append(task.task_uuid)
+
+    proxies_seen: list[str | None] = []
+
+    class FakePool:
+        def __init__(self):
+            self._queue = [
+                ResolvedProxyCandidate(proxy_url="http://pool-1:8000", source="dynamic_pool"),
+                ResolvedProxyCandidate(proxy_url="http://pool-2:8000", source="dynamic_pool"),
+            ]
+            self.completed: list[tuple[str, bool]] = []
+
+        def lease(self):
+            return self._queue.pop(0)
+
+        def complete(self, candidate, *, success):
+            self.completed.append((candidate.proxy_url, success))
+
+    async def fake_runner(task_uuid, *args, **kwargs):
+        proxies_seen.append(args[1])
+        runs = RegistrationRunsService(temp_db)
+        run = runs.create_run(task_uuid=task_uuid, batch_id="batch-proxy", trigger_source="batch")
+        crud.update_registration_task(
+            temp_db,
+            task_uuid,
+            status="completed",
+            pipeline_status="completed",
+            completed_at=utc_now_naive(),
+        )
+        runs.mark_completed(run.id)
+
+    pool = FakePool()
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={},
+        batch_proxy_pools_store={"batch-proxy": pool},
+        registration_task_runner=fake_runner,
+    )
+
+    summary = await service.run_batch_parallel(
+        batch_id="batch-proxy",
+        task_uuids=task_ids,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        email_service_id=None,
+        concurrency=1,
+    )
+
+    assert summary.success == 2
+    assert proxies_seen == ["http://pool-1:8000", "http://pool-2:8000"]
+    assert pool.completed == [
+        ("http://pool-1:8000", True),
+        ("http://pool-2:8000", True),
+    ]
+
+
+@pytest.mark.anyio
+async def test_batch_registration_service_marks_task_failed_when_proxy_pool_exhausts(db_factory, temp_db):
+    from src.application.batch_registration_service import BatchRegistrationService
+
+    task_ids = []
+    for idx in range(2):
+        task = crud.create_registration_task(temp_db, task_uuid=f"proxy-exhaust-task-{idx}")
+        task_ids.append(task.task_uuid)
+
+    class ExhaustingPool:
+        def __init__(self):
+            self._leased = False
+
+        def lease(self):
+            if self._leased:
+                raise RuntimeError("batch proxy pool exhausted: batch-exhaust")
+            self._leased = True
+            return ResolvedProxyCandidate(proxy_url="http://pool-only:8000", source="dynamic_pool")
+
+        def complete(self, candidate, *, success):
+            return None
+
+    async def fake_runner(task_uuid, *args, **kwargs):
+        runs = RegistrationRunsService(temp_db)
+        run = runs.create_run(task_uuid=task_uuid, batch_id="batch-exhaust", trigger_source="batch")
+        crud.update_registration_task(
+            temp_db,
+            task_uuid,
+            status="completed",
+            pipeline_status="completed",
+            completed_at=utc_now_naive(),
+        )
+        runs.mark_completed(run.id)
+
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={},
+        batch_proxy_pools_store={"batch-exhaust": ExhaustingPool()},
+        registration_task_runner=fake_runner,
+    )
+
+    summary = await service.run_batch_pipeline(
+        batch_id="batch-exhaust",
+        task_uuids=task_ids,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        email_service_id=None,
+        interval_min=0,
+        interval_max=0,
+        concurrency=1,
+    )
+
+    failed_task = crud.get_registration_task(temp_db, task_ids[1])
+    assert summary.success == 1
+    assert summary.failed == 1
+    assert failed_task is not None
+    assert failed_task.status == "failed"
+    assert "proxy pool exhausted" in (failed_task.error_message or "")

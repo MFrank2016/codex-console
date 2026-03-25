@@ -9,6 +9,7 @@ from ..core.registration_job import RegistrationJobResult, run_registration_job
 from ..core.time import utc_now_naive
 from ..database import crud
 from ..database.models import Account, RegistrationRun, RegistrationRunEvent, RegistrationTask
+from .proxy_dispatch_service import ProxyDispatchService, ResolvedProxyCandidate
 from .registration_runs_service import RegistrationRunsService
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class RegistrationService:
         sync_runner: Callable[..., SingleTaskExecutionResult] | None = None,
         proxy_resolver: Callable[[Any], tuple[str | None, int | None]] | None = None,
         proxy_usage_updater: Callable[[Any, int | None], None] | None = None,
+        proxy_dispatcher: ProxyDispatchService | None = None,
         utc_now_provider: Callable[[], Any] = utc_now_naive,
     ):
         self.db_factory = db_factory
@@ -44,6 +46,7 @@ class RegistrationService:
         self.sync_runner = sync_runner or self._run_single_task_sync_impl
         self.proxy_resolver = proxy_resolver or self._resolve_proxy_for_registration
         self.proxy_usage_updater = proxy_usage_updater or self._update_proxy_usage
+        self.proxy_dispatcher = proxy_dispatcher
         self.utc_now_provider = utc_now_provider
 
     def create_task(
@@ -96,6 +99,8 @@ class RegistrationService:
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
+        proxy_task_group: str = "single_registration",
+        proxy_overrides: dict[str, Any] | None = None,
     ) -> SingleTaskExecutionResult:
         loop = self.task_manager.get_loop()
         if loop is None:
@@ -126,6 +131,8 @@ class RegistrationService:
             "auto_upload_tm": auto_upload_tm,
             "tm_service_ids": tm_service_ids or [],
             "pipeline_key": pipeline_key,
+            "proxy_task_group": proxy_task_group,
+            "proxy_overrides": proxy_overrides or {},
             "utc_now_provider": self.utc_now_provider,
         }
 
@@ -168,6 +175,8 @@ class RegistrationService:
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
+        proxy_task_group: str = "single_registration",
+        proxy_overrides: dict[str, Any] | None = None,
     ) -> SingleTaskExecutionResult:
         return self.sync_runner(
             service=self,
@@ -185,6 +194,8 @@ class RegistrationService:
             auto_upload_tm=auto_upload_tm,
             tm_service_ids=tm_service_ids or [],
             pipeline_key=pipeline_key,
+            proxy_task_group=proxy_task_group,
+            proxy_overrides=proxy_overrides or {},
             utc_now_provider=self.utc_now_provider,
         )
 
@@ -206,6 +217,8 @@ class RegistrationService:
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
+        proxy_task_group: str = "single_registration",
+        proxy_overrides: dict[str, Any] | None = None,
         utc_now_provider: Callable[[], Any] | None = None,
     ) -> SingleTaskExecutionResult:
         now = utc_now_provider or service.utc_now_provider
@@ -255,12 +268,6 @@ class RegistrationService:
                 runs_service.append_event(run.id, level="info", message="running")
                 service.task_manager.update_status(task_uuid, "running")
 
-                actual_proxy_url = proxy
-                proxy_id = None
-                if not actual_proxy_url:
-                    actual_proxy_url, proxy_id = service.proxy_resolver(db)
-                crud.update_registration_task(db, task_uuid, proxy=actual_proxy_url)
-
                 effective_pipeline_key = pipeline_key or task.pipeline_key or "current_pipeline"
                 if task.pipeline_key != effective_pipeline_key:
                     task = crud.update_registration_task(
@@ -274,16 +281,58 @@ class RegistrationService:
                     prefix=log_prefix,
                     batch_id=batch_id,
                 )
-                job_result = service.job_runner(
-                    db=db,
-                    email_service_type=email_service_type,
-                    email_service_id=email_service_id,
-                    proxy=actual_proxy_url,
-                    email_service_config=email_service_config,
-                    pipeline_key=effective_pipeline_key,
-                    callback_logger=log_callback,
-                    task_uuid=task_uuid,
+                candidates = service._resolve_proxy_candidates(
+                    db,
+                    explicit_proxy=proxy,
+                    task_group=proxy_task_group,
+                    overrides=proxy_overrides or {},
                 )
+                candidate_sequence: list[ResolvedProxyCandidate | None] = candidates or [None]
+                job_result: RegistrationJobResult | None = None
+                selected_candidate: ResolvedProxyCandidate | None = None
+
+                for index, candidate in enumerate(candidate_sequence):
+                    selected_candidate = candidate
+                    actual_proxy_url = candidate.proxy_url if candidate is not None else None
+                    crud.update_registration_task(db, task_uuid, proxy=actual_proxy_url)
+
+                    try:
+                        job_result = service.job_runner(
+                            db=db,
+                            email_service_type=email_service_type,
+                            email_service_id=email_service_id,
+                            proxy=actual_proxy_url,
+                            email_service_config=email_service_config,
+                            pipeline_key=effective_pipeline_key,
+                            callback_logger=log_callback,
+                            task_uuid=task_uuid,
+                        )
+                    except Exception as exc:
+                        should_retry = (
+                            candidate is not None
+                            and service.proxy_dispatcher is not None
+                            and index < len(candidate_sequence) - 1
+                            and service.proxy_dispatcher.is_proxy_related_failure(exc)
+                        )
+                        if should_retry:
+                            log_callback(f"[代理] 当前代理失败，切换下一个候选: {exc}")
+                            continue
+                        raise
+
+                    if (
+                        candidate is not None
+                        and service.proxy_dispatcher is not None
+                        and not job_result.success
+                        and index < len(candidate_sequence) - 1
+                        and service.proxy_dispatcher.is_proxy_related_failure(job_result.error_message or "")
+                    ):
+                        log_callback(f"[代理] 当前代理失败，切换下一个候选: {job_result.error_message}")
+                        continue
+
+                    break
+
+                if job_result is None:
+                    job_result = RegistrationJobResult(success=False, error_message="proxy dispatch exhausted")
 
                 if job_result.email:
                     crud.update_registration_task(db, task_uuid, email_address=job_result.email)
@@ -292,6 +341,7 @@ class RegistrationService:
                     crud.update_registration_task(db, task_uuid, email_service_id=job_result.email_service_id)
 
                 if job_result.success:
+                    proxy_id = selected_candidate.proxy_id if selected_candidate is not None else None
                     service.proxy_usage_updater(db, proxy_id)
                     service._run_auto_uploads(
                         db,
@@ -380,6 +430,31 @@ class RegistrationService:
         if proxy_url:
             return proxy_url, None
         return None, None
+
+    def _resolve_proxy_candidates(
+        self,
+        db,
+        *,
+        explicit_proxy: str | None,
+        task_group: str,
+        overrides: dict[str, Any],
+    ) -> list[ResolvedProxyCandidate]:
+        if explicit_proxy:
+            return [ResolvedProxyCandidate(proxy_url=explicit_proxy, source="explicit")]
+
+        if self.proxy_dispatcher is not None:
+            return self.proxy_dispatcher.resolve_single_candidates(task_group, None, overrides)
+
+        proxy_url, proxy_id = self.proxy_resolver(db)
+        if proxy_url:
+            return [
+                ResolvedProxyCandidate(
+                    proxy_url=proxy_url,
+                    source="legacy",
+                    proxy_id=proxy_id,
+                )
+            ]
+        return []
 
     def _update_proxy_usage(self, db, proxy_id: int | None) -> None:
         if proxy_id:

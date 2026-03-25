@@ -1,12 +1,12 @@
 import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from src.core.registration_job import RegistrationJobResult
+from src.core.time import utc_now_naive
 from src.web import task_manager as task_manager_module
 from src.web.routes import registration as registration_routes
 
@@ -41,10 +41,13 @@ def route_db(monkeypatch, temp_db):
 @pytest.fixture
 def batch_state():
     original_batch_tasks = deepcopy(registration_routes.batch_tasks)
+    original_batch_proxy_pools = deepcopy(getattr(registration_routes, "batch_proxy_pools", {}))
     original_batch_status = deepcopy(task_manager_module._batch_status)
     original_batch_logs = deepcopy(task_manager_module._batch_logs)
     original_task_steps = deepcopy(getattr(task_manager_module, "_task_steps", {}))
     registration_routes.batch_tasks.clear()
+    if hasattr(registration_routes, "batch_proxy_pools"):
+        registration_routes.batch_proxy_pools.clear()
     task_manager_module._batch_status.clear()
     task_manager_module._batch_logs.clear()
     if hasattr(task_manager_module, "_task_steps"):
@@ -54,6 +57,9 @@ def batch_state():
     finally:
         registration_routes.batch_tasks.clear()
         registration_routes.batch_tasks.update(original_batch_tasks)
+        if hasattr(registration_routes, "batch_proxy_pools"):
+            registration_routes.batch_proxy_pools.clear()
+            registration_routes.batch_proxy_pools.update(original_batch_proxy_pools)
         task_manager_module._batch_status.clear()
         task_manager_module._batch_status.update(original_batch_status)
         task_manager_module._batch_logs.clear()
@@ -110,6 +116,7 @@ def test_start_batch_registration_persists_pipeline_key_for_each_task(route_db, 
                 count=2,
                 email_service_type="tempmail",
                 pipeline_key="codexgen_pipeline",
+                proxy="http://manual-batch:8000",
             ),
             background,
         )
@@ -234,7 +241,11 @@ def test_start_batch_registration_accepts_zero_and_queues_unlimited_runner(route
 
     response = asyncio.run(
         registration_routes.start_batch_registration(
-            registration_routes.BatchRegistrationRequest(count=0, email_service_type="tempmail"),
+            registration_routes.BatchRegistrationRequest(
+                count=0,
+                email_service_type="tempmail",
+                proxy="http://manual-unlimited:8000",
+            ),
             background,
         )
     )
@@ -260,20 +271,155 @@ def test_start_batch_registration_rejects_counts_outside_zero_to_500():
                 BackgroundTasks(),
             )
         )
-    with pytest.raises(HTTPException):
+
+
+def test_start_registration_queues_proxy_override_metadata(route_db, batch_state, monkeypatch):
+    monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
+    background = BackgroundTasks()
+
+    asyncio.run(
+        registration_routes.start_registration(
+            registration_routes.RegistrationTaskCreate(
+                email_service_type="tempmail",
+                dynamic_proxy_request_count=4,
+                proxy_list_candidate_limit=2,
+            ),
+            background,
+        )
+    )
+
+    queued = background.tasks[0]
+    assert queued.kwargs["proxy_task_group"] == "single_registration"
+    assert queued.kwargs["proxy_overrides"] == {
+        "dynamic_request_count": 4,
+        "proxy_list_candidate_limit": 2,
+    }
+
+
+def test_start_batch_registration_prepares_proxy_pool_with_overrides(route_db, batch_state, monkeypatch):
+    monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
+    captured: dict = {}
+
+    class FakeBatchService:
+        def prepare_batch_proxy_pool(self, **kwargs):
+            captured.update(kwargs)
+
+        def create_batch_tasks(self, *, count, proxy, pipeline_key):
+            return [
+                crud.create_registration_task(route_db, task_uuid=f"prepared-task-{idx}", proxy=proxy, pipeline_key=pipeline_key)
+                for idx in range(count)
+            ]
+
+    monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: FakeBatchService())
+    background = BackgroundTasks()
+
+    response = asyncio.run(
+        registration_routes.start_batch_registration(
+            registration_routes.BatchRegistrationRequest(
+                count=2,
+                email_service_type="tempmail",
+                concurrency=3,
+                dynamic_proxy_request_count=9,
+                dynamic_proxy_probe_url="https://probe.example.com/ip",
+                dynamic_proxy_strategy="exclusive",
+            ),
+            background,
+        )
+    )
+
+    assert response.count == 2
+    assert captured["batch_id"] == response.batch_id
+    assert captured["task_group"] == "batch_registration"
+    assert captured["concurrency"] == 3
+    assert captured["overrides"] == {
+        "dynamic_request_count": 9,
+        "probe_url": "https://probe.example.com/ip",
+        "allocation_strategy": "exclusive",
+    }
+
+
+def test_start_batch_registration_rejects_when_proxy_pool_prepare_fails(route_db, batch_state, monkeypatch):
+    monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
+
+    class FakeBatchService:
+        def prepare_batch_proxy_pool(self, **kwargs):
+            raise RuntimeError("insufficient proxy candidates for batch pool")
+
+    monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: FakeBatchService())
+
+    with pytest.raises(HTTPException) as exc_info:
         asyncio.run(
             registration_routes.start_batch_registration(
-                registration_routes.BatchRegistrationRequest(count=-1, email_service_type="tempmail"),
+                registration_routes.BatchRegistrationRequest(
+                    count=2,
+                    email_service_type="tempmail",
+                    concurrency=2,
+                    dynamic_proxy_strategy="exclusive",
+                ),
                 BackgroundTasks(),
             )
         )
+
+    assert exc_info.value.status_code == 400
+    assert "insufficient proxy candidates" in exc_info.value.detail
+
+
+def test_start_outlook_batch_registration_prepares_proxy_pool(route_db, batch_state, monkeypatch):
+    monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
+    captured: dict = {}
+
+    class FakeBatchService:
+        def prepare_batch_proxy_pool(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: FakeBatchService())
+
+    from src.database.models import EmailService as EmailServiceModel
+
+    route_db.add(
+        EmailServiceModel(
+            service_type="outlook",
+            name="acc-1",
+            config={"email": "user1@example.com"},
+            enabled=True,
+        )
+    )
+    route_db.commit()
+    service = route_db.query(EmailServiceModel).first()
+    background = BackgroundTasks()
+
+    response = asyncio.run(
+        registration_routes.start_outlook_batch_registration(
+            registration_routes.OutlookBatchRegistrationRequest(
+                service_ids=[service.id],
+                concurrency=2,
+                dynamic_proxy_request_count=6,
+                dynamic_proxy_probe_url="https://probe.example.com/outlook",
+                dynamic_proxy_strategy="strict_isolation",
+            ),
+            background,
+        )
+    )
+
+    assert response.to_register == 1
+    assert captured["task_group"] == "outlook_batch"
+    assert captured["concurrency"] == 2
+    assert captured["overrides"] == {
+        "dynamic_request_count": 6,
+        "probe_url": "https://probe.example.com/outlook",
+        "allocation_strategy": "strict_isolation",
+    }
 
 
 def test_get_batch_status_includes_unlimited_metadata(batch_state):
     background = BackgroundTasks()
     response = asyncio.run(
         registration_routes.start_batch_registration(
-            registration_routes.BatchRegistrationRequest(count=0, email_service_type="tempmail"),
+            registration_routes.BatchRegistrationRequest(
+                count=0,
+                email_service_type="tempmail",
+                proxy="http://manual-unlimited:8000",
+            ),
             background,
         )
     )
@@ -437,7 +583,7 @@ def test_run_batch_registration_attaches_sorted_domain_stats(route_db, fake_task
             task_uuid,
             status=status,
             email_address=email,
-            completed_at=datetime.utcnow(),
+            completed_at=utc_now_naive(),
             result={"email": email} if status == "completed" else None,
             error_message=None if status == "completed" else "boom",
         )
@@ -474,7 +620,7 @@ def test_run_batch_parallel_finalizes_statistics_on_completed_batch(route_db, fa
             route_db,
             task_uuid,
             status="completed",
-            completed_at=datetime.utcnow(),
+            completed_at=utc_now_naive(),
             total_duration_ms=1200,
         )
 
@@ -563,7 +709,7 @@ def test_run_batch_parallel_finalizes_statistics_on_failed_batch(route_db, fake_
             route_db,
             task_uuid,
             status="failed",
-            completed_at=datetime.utcnow(),
+            completed_at=utc_now_naive(),
             error_message="boom",
         )
 
@@ -611,7 +757,7 @@ def test_run_batch_parallel_finalizes_statistics_failure_does_not_override_statu
             route_db,
             task_uuid,
             status="completed",
-            completed_at=datetime.utcnow(),
+            completed_at=utc_now_naive(),
             total_duration_ms=900,
         )
 
@@ -691,7 +837,7 @@ def test_run_unlimited_batch_registration_stops_after_eleven_consecutive_failure
             task_uuid,
             status=status,
             email_address=email,
-            completed_at=datetime.utcnow(),
+            completed_at=utc_now_naive(),
             result={"email": email} if status == "completed" else None,
             error_message=None if status == "completed" else "boom",
         )
@@ -732,7 +878,7 @@ def test_run_unlimited_batch_registration_preserves_pre_start_cancellation(route
             route_db,
             task_uuid,
             status="failed",
-            completed_at=datetime.utcnow(),
+            completed_at=utc_now_naive(),
             error_message="should-not-run",
         )
 
@@ -834,7 +980,7 @@ def test_run_outlook_batch_registration_does_not_finalize_ordinary_batch_stats(r
             route_db,
             task_uuid,
             status="completed",
-            completed_at=datetime.utcnow(),
+            completed_at=utc_now_naive(),
             total_duration_ms=500,
         )
 

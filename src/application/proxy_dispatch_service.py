@@ -6,6 +6,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from ..core.dynamic_proxy import (
+    build_dynamic_proxy_request,
+    fetch_dynamic_proxy_candidates,
+    probe_proxy_candidate,
+)
 from .proxy_batch_pool import ProxyBatchPool
 
 logger = logging.getLogger(__name__)
@@ -17,6 +22,7 @@ class ResolvedProxyCandidate:
     source: str
     egress_ip: str | None = None
     proxy_key: str | None = None
+    proxy_id: int | None = None
 
 
 class ProxyDispatchService:
@@ -55,29 +61,53 @@ class ProxyDispatchService:
         candidates: list[ResolvedProxyCandidate] = []
 
         try:
+            dynamic_provider_kwargs = {
+                "task_group": task_group,
+                "request_count": dynamic_request_count,
+            }
+            if effective.get("probe_url"):
+                dynamic_provider_kwargs["probe_url"] = effective.get("probe_url")
             dynamic_candidates = self.dynamic_candidates_provider(
-                task_group=task_group,
-                request_count=dynamic_request_count,
+                **dynamic_provider_kwargs,
             )
         except Exception:
             logger.exception("Failed to resolve dynamic proxy candidates for task group %s", task_group)
             dynamic_candidates = []
-        for proxy_url in dynamic_candidates or []:
-            if proxy_url:
-                candidates.append(ResolvedProxyCandidate(proxy_url=str(proxy_url), source="dynamic_pool"))
+        for item in dynamic_candidates or []:
+            candidate = self._normalize_single_candidate(item, source="dynamic_pool")
+            if candidate is not None:
+                candidates.append(candidate)
 
         proxy_list = list(self.proxy_list_provider(proxy_list_candidate_limit) or [])
         if proxy_list and len(proxy_list) > proxy_list_candidate_limit:
             proxy_list = random.sample(proxy_list, k=proxy_list_candidate_limit)
-        for proxy_url in proxy_list:
-            if proxy_url:
-                candidates.append(ResolvedProxyCandidate(proxy_url=str(proxy_url), source="proxy_list"))
+        for item in proxy_list:
+            candidate = self._normalize_single_candidate(item, source="proxy_list")
+            if candidate is not None:
+                candidates.append(candidate)
 
         static_proxy = self.static_proxy_provider()
         if static_proxy:
             candidates.append(ResolvedProxyCandidate(proxy_url=str(static_proxy), source="static"))
 
         return candidates
+
+    def resolve_single_proxy(
+        self,
+        task_group: str,
+        explicit_proxy: str | None,
+        overrides: dict[str, Any] | None,
+    ) -> ResolvedProxyCandidate | None:
+        candidates = self.resolve_single_candidates(task_group, explicit_proxy, overrides)
+        return candidates[0] if candidates else None
+
+    def resolve_proxy_candidates(
+        self,
+        task_group: str,
+        explicit_proxy: str | None,
+        overrides: dict[str, Any] | None,
+    ) -> list[ResolvedProxyCandidate]:
+        return self.resolve_single_candidates(task_group, explicit_proxy, overrides)
 
     def is_proxy_related_failure(self, error: Exception | str) -> bool:
         text = str(error).lower()
@@ -113,21 +143,33 @@ class ProxyDispatchService:
         overrides: dict[str, Any],
     ) -> ProxyBatchPool:
         effective = self._build_effective_config(task_group, overrides)
+        concurrency_value = self._coerce_positive_int(concurrency, fallback=1)
+        batch_prefetch_multiplier = self._coerce_positive_int(
+            effective.get("batch_prefetch_multiplier"),
+            fallback=3,
+        )
+        batch_prefetch_max = self._coerce_positive_int(
+            effective.get("batch_prefetch_max"),
+            fallback=100,
+        )
 
         request_count = self._coerce_positive_int(
             effective.get("dynamic_request_count"),
-            fallback=max(self._coerce_positive_int(concurrency, fallback=1) * 3, 1),
+            fallback=min(concurrency_value * batch_prefetch_multiplier, batch_prefetch_max),
         )
         required_candidates = self._coerce_positive_int(
             effective.get("required_candidate_count"),
-            fallback=self._coerce_positive_int(concurrency, fallback=1),
+            fallback=concurrency_value,
         )
         strategy = str(effective.get("allocation_strategy") or "random").strip().lower()
 
-        raw_candidates = self.dynamic_candidates_provider(
-            task_group=task_group,
-            request_count=request_count,
-        )
+        dynamic_provider_kwargs = {
+            "task_group": task_group,
+            "request_count": request_count,
+        }
+        if effective.get("probe_url"):
+            dynamic_provider_kwargs["probe_url"] = effective.get("probe_url")
+        raw_candidates = self.dynamic_candidates_provider(**dynamic_provider_kwargs)
         candidates = [
             candidate
             for candidate in (
@@ -148,6 +190,14 @@ class ProxyDispatchService:
             strategy=strategy,
             candidates=candidates,
         )
+
+    @staticmethod
+    def lease_batch_proxy(pool: ProxyBatchPool) -> ResolvedProxyCandidate:
+        return pool.lease()
+
+    @staticmethod
+    def report_proxy_result(pool: ProxyBatchPool, candidate: ResolvedProxyCandidate, *, success: bool) -> None:
+        pool.complete(candidate, success=success)
 
     def _build_effective_config(self, task_group: str, overrides: dict[str, Any] | None) -> dict[str, Any]:
         settings = self.settings_provider()
@@ -196,14 +246,94 @@ class ProxyDispatchService:
         return None
 
     @staticmethod
+    def _normalize_single_candidate(raw_candidate: Any, *, source: str) -> ResolvedProxyCandidate | None:
+        if isinstance(raw_candidate, ResolvedProxyCandidate):
+            return raw_candidate
+
+        if isinstance(raw_candidate, str):
+            text = raw_candidate.strip()
+            if not text:
+                return None
+            return ResolvedProxyCandidate(proxy_url=text, source=source)
+
+        if isinstance(raw_candidate, dict):
+            proxy_url = str(raw_candidate.get("proxy_url") or "").strip()
+            if not proxy_url:
+                return None
+            egress_ip = raw_candidate.get("egress_ip")
+            proxy_key = raw_candidate.get("proxy_key")
+            proxy_id = raw_candidate.get("proxy_id")
+            return ResolvedProxyCandidate(
+                proxy_url=proxy_url,
+                source=str(raw_candidate.get("source") or source),
+                egress_ip=str(egress_ip) if egress_ip else None,
+                proxy_key=str(proxy_key) if proxy_key else None,
+                proxy_id=int(proxy_id) if proxy_id not in (None, "") else None,
+            )
+
+        return None
+
+    @staticmethod
     def _default_settings_provider():
         from ..config.settings import get_settings
 
         return get_settings()
 
-    @staticmethod
-    def _default_dynamic_candidates_provider(**_: Any) -> list[str]:
-        return []
+    def _default_dynamic_candidates_provider(
+        self,
+        *,
+        task_group: str,
+        request_count: int,
+        probe_url: str | None = None,
+        **_: Any,
+    ) -> list[dict[str, Any]]:
+        settings = self.settings_provider()
+        request_url = getattr(settings, "proxy_dynamic_request_url", "")
+        if not getattr(settings, "proxy_dynamic_enabled", False) or not request_url:
+            return []
+
+        api_key_secret = getattr(settings, "proxy_dynamic_api_key", None)
+        api_key = api_key_secret.get_secret_value() if api_key_secret else ""
+        request = build_dynamic_proxy_request(
+            request_method=getattr(settings, "proxy_dynamic_request_method", "GET"),
+            request_url=request_url,
+            request_headers_template=getattr(settings, "proxy_dynamic_request_headers_template", {}) or {},
+            request_body_template=getattr(settings, "proxy_dynamic_request_body_template", {}) or {},
+            request_count_param_name=getattr(settings, "proxy_dynamic_request_count_param_name", "count"),
+            count=request_count,
+            request_body_mode=getattr(settings, "proxy_dynamic_request_body_mode", "auto"),
+            request_timeout_seconds=getattr(settings, "proxy_dynamic_request_timeout_seconds", 10),
+            api_key=api_key,
+            api_key_header=getattr(settings, "proxy_dynamic_api_key_header", "X-API-Key"),
+        )
+        candidates = fetch_dynamic_proxy_candidates(
+            request,
+            response_root_field=getattr(settings, "proxy_dynamic_response_root_field", ""),
+            response_item_mode=getattr(settings, "proxy_dynamic_response_item_mode", "string_list"),
+            response_field_mapping=getattr(settings, "proxy_dynamic_response_field_mapping", {}) or {},
+        )
+
+        effective_probe_url = (
+            probe_url
+            or (getattr(settings, "proxy_dynamic_task_defaults", {}) or {}).get(task_group, {}).get("probe_url")
+            or "https://api.ipify.org?format=json"
+        )
+        resolved: list[dict[str, Any]] = []
+        for candidate in candidates:
+            probe = probe_proxy_candidate(
+                candidate,
+                probe_url=effective_probe_url,
+                timeout_seconds=request.timeout_seconds,
+            )
+            if probe.ok:
+                resolved.append(
+                    {
+                        "proxy_url": candidate.proxy_url,
+                        "egress_ip": probe.egress_ip,
+                        "proxy_key": candidate.proxy_url,
+                    }
+                )
+        return resolved
 
     @staticmethod
     def _default_proxy_list_provider(_limit: int) -> list[str]:

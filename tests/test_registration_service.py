@@ -3,6 +3,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from src.application.proxy_dispatch_service import ResolvedProxyCandidate
 from src.core.registration_job import RegistrationJobResult
 from src.database import crud
 from src.database.models import Base
@@ -188,3 +189,101 @@ async def test_registration_service_async_run_initializes_pending_status_and_que
 
     assert task_manager.get_status("task-3")["status"] == "completed"
     assert any("已加入队列" in line for line in task_manager.get_logs("task-3"))
+
+
+def test_registration_service_retries_proxy_related_failure_with_next_candidate(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-proxy-retry", pipeline_key="current_pipeline")
+    task_manager = FakeTaskManager()
+    attempts: list[str | None] = []
+    used_proxy_ids: list[int | None] = []
+
+    class FakeDispatcher:
+        def resolve_single_candidates(self, task_group, explicit_proxy, overrides):
+            assert task_group == "single_registration"
+            assert explicit_proxy is None
+            assert overrides == {"dynamic_request_count": 2}
+            return [
+                ResolvedProxyCandidate(proxy_url="http://dynamic-1:8000", source="dynamic_pool"),
+                ResolvedProxyCandidate(proxy_url="http://proxy-list-1:8000", source="proxy_list", proxy_id=17),
+            ]
+
+        def is_proxy_related_failure(self, error):
+            return "timeout" in str(error).lower()
+
+    def fake_job_runner(**kwargs):
+        attempts.append(kwargs["proxy"])
+        if len(attempts) == 1:
+            return RegistrationJobResult(success=False, error_message="connection timeout")
+        return RegistrationJobResult(
+            success=True,
+            email="recovered@example.com",
+            account_id=202,
+            result_payload={"success": True, "email": "recovered@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+        proxy_dispatcher=FakeDispatcher(),
+        proxy_usage_updater=lambda db, proxy_id: used_proxy_ids.append(proxy_id),
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid="task-proxy-retry",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        proxy_task_group="single_registration",
+        proxy_overrides={"dynamic_request_count": 2},
+    )
+
+    persisted = crud.get_registration_task(temp_db, "task-proxy-retry")
+    assert attempts == ["http://dynamic-1:8000", "http://proxy-list-1:8000"]
+    assert used_proxy_ids == [17]
+    assert persisted is not None
+    assert persisted.proxy == "http://proxy-list-1:8000"
+    assert result.run.status == "completed"
+
+
+def test_registration_service_does_not_retry_non_proxy_failure(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-non-proxy-fail", pipeline_key="current_pipeline")
+    task_manager = FakeTaskManager()
+    attempts: list[str | None] = []
+
+    class FakeDispatcher:
+        def resolve_single_candidates(self, task_group, explicit_proxy, overrides):
+            return [
+                ResolvedProxyCandidate(proxy_url="http://dynamic-1:8000", source="dynamic_pool"),
+                ResolvedProxyCandidate(proxy_url="http://proxy-list-1:8000", source="proxy_list"),
+            ]
+
+        def is_proxy_related_failure(self, error):
+            return "timeout" in str(error).lower()
+
+    def fake_job_runner(**kwargs):
+        attempts.append(kwargs["proxy"])
+        return RegistrationJobResult(success=False, error_message="invalid password")
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+        proxy_dispatcher=FakeDispatcher(),
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid="task-non-proxy-fail",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        proxy_task_group="single_registration",
+        proxy_overrides={},
+    )
+
+    assert attempts == ["http://dynamic-1:8000"]
+    assert result.run.status == "failed"
