@@ -18,6 +18,7 @@ from .scheduled_tasks import runs_router as scheduled_runs_router
 from .upload.cpa_services import router as cpa_services_router
 from .upload.sub2api_services import router as sub2api_services_router
 from .upload.tm_services import router as tm_services_router
+from .registration_streams import router as registration_streams_router
 
 api_router = APIRouter()
 
@@ -35,6 +36,11 @@ api_router.include_router(
     registration_experiments_router,
     prefix="/registration/experiments",
     tags=["registration-experiments"],
+)
+api_router.include_router(
+    registration_streams_router,
+    prefix="/registration/streams",
+    tags=["registration-streams"],
 )
 api_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 api_router.include_router(email_services_router, prefix="/email-services", tags=["email-services"])

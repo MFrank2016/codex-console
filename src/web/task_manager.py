@@ -15,6 +15,7 @@ from src.web.realtime_streams import (
     STREAM_BUFFER_SIZE,
     LOG_TAIL_SIZE,
     task_stream_id,
+    batch_stream_id,
 )
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,22 @@ def _get_stream_lock(stream_id: str) -> threading.Lock:
 def _get_logs_tail(task_uuid: str, tail_size: int) -> List[str]:
     with _get_log_lock(task_uuid):
         logs = _log_queues.get(task_uuid, [])
+        if tail_size >= len(logs):
+            return list(logs)
+        return list(logs[-tail_size:])
+
+
+def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[str]:
+    with _get_batch_lock(batch_id):
+        logs = _batch_logs.get(batch_id, [])
+        if tail_size >= len(logs):
+            return list(logs)
+        return list(logs[-tail_size:])
+
+
+def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[str]:
+    with _get_batch_lock(batch_id):
+        logs = _batch_logs.get(batch_id, [])
         if tail_size >= len(logs):
             return list(logs)
         return list(logs[-tail_size:])
@@ -134,6 +151,25 @@ class TaskManager:
                 "task": task_snapshot,
                 "current_step": current_step,
                 "steps": steps,
+                "logs_tail": logs_tail,
+            },
+        }
+
+    def build_batch_stream_snapshot(self, batch_id: str) -> dict:
+        stream_id = batch_stream_id(batch_id)
+        batch_snapshot = self.get_batch_status(batch_id) or {}
+        logs_tail = _get_batch_logs_tail(batch_id, LOG_TAIL_SIZE)
+        lock = _get_stream_lock(stream_id)
+        with lock:
+            seq = _stream_seq.get(stream_id, 0)
+        next_seq = seq + 1
+        return {
+            "seq": next_seq,
+            "stream": stream_id,
+            "kind": "snapshot",
+            "timestamp": utc_now().isoformat(),
+            "payload": {
+                "batch": batch_snapshot,
                 "logs_tail": logs_tail,
             },
         }
@@ -402,6 +438,11 @@ class TaskManager:
         # 广播后再添加到队列
         with _get_batch_lock(batch_id):
             _batch_logs[batch_id].append(log_message)
+            self.append_stream_event(
+                batch_stream_id(batch_id),
+                "log_appended",
+                {"batch_id": batch_id, "message": log_message},
+            )
 
     async def _broadcast_batch_log(self, batch_id: str, log_message: str):
         """广播批量任务日志"""
@@ -446,6 +487,11 @@ class TaskManager:
                 )
             except Exception as e:
                 logger.warning(f"广播批量状态失败: {e}")
+        self.append_stream_event(
+            batch_stream_id(batch_id),
+            "batch_progress_updated",
+            {"batch_id": batch_id, **_batch_status[batch_id]},
+        )
 
     async def _broadcast_batch_status(self, batch_id: str):
         """广播批量任务状态"""
