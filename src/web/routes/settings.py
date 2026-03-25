@@ -5,13 +5,20 @@
 import asyncio
 import logging
 import os
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ...application import SettingsService
 from ...config.settings import get_settings, update_settings
+from ...core.dynamic_proxy import (
+    build_dynamic_proxy_request,
+    fetch_dynamic_proxy,
+    fetch_dynamic_proxy_candidates,
+    parse_dynamic_proxy_candidates,
+    probe_proxy_candidate,
+)
 from ...core.ip_location import lookup_locations
 from ...core.proxy_import import (
     allocate_proxy_names,
@@ -136,6 +143,18 @@ async def get_dynamic_proxy_settings():
         "api_url": settings.proxy_dynamic_api_url,
         "api_key_header": settings.proxy_dynamic_api_key_header,
         "result_field": settings.proxy_dynamic_result_field,
+        "request_method": settings.proxy_dynamic_request_method,
+        "request_url": settings.proxy_dynamic_request_url,
+        "request_headers_template": settings.proxy_dynamic_request_headers_template,
+        "request_body_mode": settings.proxy_dynamic_request_body_mode,
+        "request_body_template": settings.proxy_dynamic_request_body_template,
+        "request_timeout_seconds": settings.proxy_dynamic_request_timeout_seconds,
+        "request_count_param_name": settings.proxy_dynamic_request_count_param_name,
+        "request_count_default": settings.proxy_dynamic_request_count_default,
+        "response_root_field": settings.proxy_dynamic_response_root_field,
+        "response_item_mode": settings.proxy_dynamic_response_item_mode,
+        "response_field_mapping": settings.proxy_dynamic_response_field_mapping,
+        "task_defaults": settings.proxy_dynamic_task_defaults,
         "has_api_key": bool(settings.proxy_dynamic_api_key and settings.proxy_dynamic_api_key.get_secret_value()),
     }
 
@@ -147,61 +166,109 @@ class DynamicProxySettings(BaseModel):
     api_key: Optional[str] = None
     api_key_header: str = "X-API-Key"
     result_field: str = ""
+    request_method: Literal["GET", "POST"] = "GET"
+    request_url: str = ""
+    request_headers_template: dict[str, Any] = Field(default_factory=dict)
+    request_body_mode: Literal["auto", "json", "form", "raw"] = "auto"
+    request_body_template: dict[str, Any] = Field(default_factory=dict)
+    request_timeout_seconds: int = Field(default=10, gt=0)
+    request_count_param_name: str = "count"
+    request_count_default: int = Field(default=3, gt=0)
+    response_root_field: str = ""
+    response_item_mode: Literal["string_list", "object_list"] = "string_list"
+    response_field_mapping: dict[str, Any] = Field(default_factory=dict)
+    task_defaults: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.post("/proxy/dynamic")
 async def update_dynamic_proxy_settings(request: DynamicProxySettings):
     """更新动态代理设置"""
     with get_db() as db:
-        _build_settings_service(db).update_dynamic_proxy_settings(request.model_dump())
+        _build_settings_service(db).update_dynamic_proxy_settings(
+            request.model_dump(exclude_unset=True)
+        )
     return {"success": True, "message": "动态代理设置已更新"}
 
 
 @router.post("/proxy/dynamic/test")
 async def test_dynamic_proxy(request: DynamicProxySettings):
-    """测试动态代理 API"""
-    from ...core.dynamic_proxy import fetch_dynamic_proxy
-
-    if not request.api_url:
+    """测试动态代理 API。"""
+    request_url = request.request_url or request.api_url
+    if not request_url:
         raise HTTPException(status_code=400, detail="请填写动态代理 API 地址")
 
-    # 若未传入 api_key，使用已保存的
     api_key = request.api_key or ""
     if not api_key:
         settings = get_settings()
         if settings.proxy_dynamic_api_key:
             api_key = settings.proxy_dynamic_api_key.get_secret_value()
 
-    proxy_url = fetch_dynamic_proxy(
-        api_url=request.api_url,
+    dynamic_request = build_dynamic_proxy_request(
+        request_method=request.request_method,
+        request_url=request_url,
+        request_headers_template=request.request_headers_template,
+        request_body_template=request.request_body_template,
+        request_body_mode=request.request_body_mode,
+        request_count_param_name=request.request_count_param_name,
+        count=request.request_count_default,
+        request_timeout_seconds=request.request_timeout_seconds,
         api_key=api_key,
         api_key_header=request.api_key_header,
-        result_field=request.result_field,
     )
 
-    if not proxy_url:
+    candidates = fetch_dynamic_proxy_candidates(
+        dynamic_request,
+        response_root_field=request.response_root_field or request.result_field,
+        response_item_mode=request.response_item_mode,
+        response_field_mapping=request.response_field_mapping,
+    )
+
+    if not candidates and request.api_url:
+        legacy_proxy = fetch_dynamic_proxy(
+            api_url=request.api_url,
+            api_key=api_key,
+            api_key_header=request.api_key_header,
+            result_field=request.result_field,
+        )
+        if legacy_proxy:
+            candidates = parse_dynamic_proxy_candidates(
+                payload=[legacy_proxy],
+                response_root_field="",
+                response_item_mode="string_list",
+                response_field_mapping={},
+            )
+
+    if not candidates:
         return {"success": False, "message": "动态代理 API 返回为空或请求失败"}
 
-    # 用获取到的代理测试连通性
-    import time
-    from curl_cffi import requests as cffi_requests
-    try:
-        proxies = {"http": proxy_url, "https": proxy_url}
-        start = time.time()
-        resp = cffi_requests.get(
-            "https://api.ipify.org?format=json",
-            proxies=proxies,
-            timeout=10,
-            impersonate="chrome110"
-        )
-        elapsed = round((time.time() - start) * 1000)
-        if resp.status_code == 200:
-            ip = resp.json().get("ip", "")
-            return {"success": True, "proxy_url": proxy_url, "ip": ip, "response_time": elapsed,
-                    "message": f"动态代理可用，出口 IP: {ip}，响应时间: {elapsed}ms"}
-        return {"success": False, "proxy_url": proxy_url, "message": f"代理连接失败: HTTP {resp.status_code}"}
-    except Exception as e:
-        return {"success": False, "proxy_url": proxy_url, "message": f"代理连接失败: {e}"}
+    probe_url = "https://api.ipify.org?format=json"
+    single_defaults = request.task_defaults.get("single_registration") if isinstance(request.task_defaults, dict) else None
+    if isinstance(single_defaults, dict) and single_defaults.get("probe_url"):
+        probe_url = str(single_defaults["probe_url"])
+
+    probe_result = probe_proxy_candidate(
+        candidates[0],
+        probe_url=probe_url,
+        timeout_seconds=request.request_timeout_seconds,
+        detect_egress_ip=True,
+    )
+
+    if probe_result.ok:
+        ip = probe_result.egress_ip or ""
+        elapsed = probe_result.response_time_ms or 0
+        return {
+            "success": True,
+            "proxy_url": probe_result.proxy_url,
+            "ip": ip,
+            "response_time": elapsed,
+            "message": f"动态代理可用，出口 IP: {ip or 'unknown'}，响应时间: {elapsed}ms",
+        }
+
+    return {
+        "success": False,
+        "proxy_url": probe_result.proxy_url,
+        "message": f"代理连接失败: {probe_result.error_message or 'unknown error'}",
+    }
 
 
 @router.get("/registration")

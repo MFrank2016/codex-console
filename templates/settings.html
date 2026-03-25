@@ -47,6 +47,76 @@
                                     <input type="text" id="dynamic-proxy-result-field" name="result_field" placeholder="例如: data.proxy 或留空使用响应原文">
                                     <small style="color: var(--text-muted);">若 API 返回 JSON，填写点号分隔的字段路径提取代理 URL；留空则将响应原文作为代理 URL</small>
                                 </div>
+                                <div class="form-group">
+                                    <label for="dynamic-proxy-request-method">请求方法</label>
+                                    <select id="dynamic-proxy-request-method" name="request_method">
+                                        <option value="GET">GET</option>
+                                        <option value="POST">POST</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="dynamic-proxy-request-url">高级请求地址</label>
+                                    <input type="text" id="dynamic-proxy-request-url" name="request_url" placeholder="https://proxy.example.com/fetch">
+                                    <small style="color: var(--text-muted);">用于高级动态代理请求配置，可与基础 API 地址不同</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="dynamic-proxy-curl-input">cURL 快速导入</label>
+                                    <textarea id="dynamic-proxy-curl-input" rows="3" placeholder="粘贴 cURL 命令后可自动填充高级字段"></textarea>
+                                    <button type="button" class="btn btn-secondary btn-sm" id="dynamic-proxy-parse-curl-btn" style="margin-top: var(--spacing-xs);">解析 cURL</button>
+                                </div>
+                                <div class="form-group">
+                                    <label for="dynamic-proxy-request-headers">请求头模板 (JSON)</label>
+                                    <textarea id="dynamic-proxy-request-headers" rows="4" placeholder='{"Authorization":"Bearer xxx"}'></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="dynamic-proxy-request-body">请求体模板 (JSON)</label>
+                                    <textarea id="dynamic-proxy-request-body" rows="4" placeholder='{"count":3}'></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="dynamic-proxy-response-item-mode">响应列表模式</label>
+                                    <select id="dynamic-proxy-response-item-mode" name="response_item_mode">
+                                        <option value="string_list">字符串列表</option>
+                                        <option value="object_list">对象列表</option>
+                                    </select>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="dynamic-proxy-field-map-proxy-url">字段映射：代理地址</label>
+                                        <input type="text" id="dynamic-proxy-field-map-proxy-url" placeholder="proxy">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="dynamic-proxy-field-map-username">字段映射：用户名</label>
+                                        <input type="text" id="dynamic-proxy-field-map-username" placeholder="auth.username">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="dynamic-proxy-field-map-password">字段映射：密码</label>
+                                        <input type="text" id="dynamic-proxy-field-map-password" placeholder="auth.password">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group" data-task-group="single_registration">
+                                        <label for="dynamic-proxy-single-registration-allocation-strategy">单次注册分配策略</label>
+                                        <input type="text" id="dynamic-proxy-single-registration-allocation-strategy" placeholder="round_robin / exclusive">
+                                    </div>
+                                    <div class="form-group" data-task-group="batch_registration">
+                                        <label for="dynamic-proxy-batch-registration-allocation-strategy">批量注册分配策略</label>
+                                        <input type="text" id="dynamic-proxy-batch-registration-allocation-strategy" placeholder="round_robin / exclusive">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group" data-task-group="unlimited_registration">
+                                        <label for="dynamic-proxy-unlimited-registration-allocation-strategy">无限批次分配策略</label>
+                                        <input type="text" id="dynamic-proxy-unlimited-registration-allocation-strategy" placeholder="round_robin / exclusive">
+                                    </div>
+                                    <div class="form-group" data-task-group="outlook_batch">
+                                        <label for="dynamic-proxy-outlook-batch-allocation-strategy">Outlook 批量分配策略</label>
+                                        <input type="text" id="dynamic-proxy-outlook-batch-allocation-strategy" placeholder="round_robin / exclusive">
+                                    </div>
+                                </div>
+                                <div class="form-group" data-task-group="generic_single">
+                                    <label for="dynamic-proxy-generic-single-allocation-strategy">通用单任务分配策略</label>
+                                    <input type="text" id="dynamic-proxy-generic-single-allocation-strategy" placeholder="round_robin / exclusive">
+                                </div>
                                 <div class="form-actions">
                                     <button type="submit" class="btn btn-primary">💾 保存设置</button>
                                     <button type="button" class="btn btn-secondary" id="test-dynamic-proxy-btn">🔌 测试动态代理</button>

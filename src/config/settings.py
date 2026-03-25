@@ -216,6 +216,78 @@ SETTING_DEFINITIONS: Dict[str, SettingDefinition] = {
         category=SettingCategory.PROXY,
         description="从 JSON 响应中提取代理 URL 的字段路径（留空则使用响应原文）"
     ),
+    "proxy_dynamic_request_method": SettingDefinition(
+        db_key="proxy.dynamic_request_method",
+        default_value="GET",
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：请求方法"
+    ),
+    "proxy_dynamic_request_url": SettingDefinition(
+        db_key="proxy.dynamic_request_url",
+        default_value="",
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：请求 URL"
+    ),
+    "proxy_dynamic_request_headers_template": SettingDefinition(
+        db_key="proxy.dynamic_request_headers_template",
+        default_value={},
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：请求头模板"
+    ),
+    "proxy_dynamic_request_body_mode": SettingDefinition(
+        db_key="proxy.dynamic_request_body_mode",
+        default_value="auto",
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：请求体发送模式"
+    ),
+    "proxy_dynamic_request_body_template": SettingDefinition(
+        db_key="proxy.dynamic_request_body_template",
+        default_value={},
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：请求体模板"
+    ),
+    "proxy_dynamic_request_timeout_seconds": SettingDefinition(
+        db_key="proxy.dynamic_request_timeout_seconds",
+        default_value=10,
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：请求超时时间（秒）"
+    ),
+    "proxy_dynamic_request_count_param_name": SettingDefinition(
+        db_key="proxy.dynamic_request_count_param_name",
+        default_value="count",
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：代理数量参数名"
+    ),
+    "proxy_dynamic_request_count_default": SettingDefinition(
+        db_key="proxy.dynamic_request_count_default",
+        default_value=3,
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：默认请求数量"
+    ),
+    "proxy_dynamic_response_root_field": SettingDefinition(
+        db_key="proxy.dynamic_response_root_field",
+        default_value="",
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：响应根字段"
+    ),
+    "proxy_dynamic_response_item_mode": SettingDefinition(
+        db_key="proxy.dynamic_response_item_mode",
+        default_value="string_list",
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：响应项模式"
+    ),
+    "proxy_dynamic_response_field_mapping": SettingDefinition(
+        db_key="proxy.dynamic_response_field_mapping",
+        default_value={},
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：响应字段映射"
+    ),
+    "proxy_dynamic_task_defaults": SettingDefinition(
+        db_key="proxy.dynamic_task_defaults",
+        default_value={},
+        category=SettingCategory.PROXY,
+        description="动态代理高级配置：按任务组默认参数"
+    ),
 
     # 注册配置
     "registration_max_retries": SettingDefinition(
@@ -395,6 +467,13 @@ SETTING_TYPES: Dict[str, Type] = {
     "proxy_enabled": bool,
     "proxy_port": int,
     "proxy_dynamic_enabled": bool,
+    "proxy_dynamic_request_headers_template": dict,
+    "proxy_dynamic_request_body_mode": str,
+    "proxy_dynamic_request_body_template": dict,
+    "proxy_dynamic_request_timeout_seconds": int,
+    "proxy_dynamic_request_count_default": int,
+    "proxy_dynamic_response_field_mapping": dict,
+    "proxy_dynamic_task_defaults": dict,
     "registration_max_retries": int,
     "registration_timeout": int,
     "registration_default_password_length": int,
@@ -625,6 +704,18 @@ class Settings(BaseModel):
     proxy_dynamic_api_key: Optional[SecretStr] = None
     proxy_dynamic_api_key_header: str = "X-API-Key"
     proxy_dynamic_result_field: str = ""
+    proxy_dynamic_request_method: str = "GET"
+    proxy_dynamic_request_url: str = ""
+    proxy_dynamic_request_headers_template: Dict[str, Any] = {}
+    proxy_dynamic_request_body_mode: str = "auto"
+    proxy_dynamic_request_body_template: Dict[str, Any] = {}
+    proxy_dynamic_request_timeout_seconds: int = 10
+    proxy_dynamic_request_count_param_name: str = "count"
+    proxy_dynamic_request_count_default: int = 3
+    proxy_dynamic_response_root_field: str = ""
+    proxy_dynamic_response_item_mode: str = "string_list"
+    proxy_dynamic_response_field_mapping: Dict[str, Any] = {}
+    proxy_dynamic_task_defaults: Dict[str, Any] = {}
 
     @property
     def proxy_url(self) -> Optional[str]:

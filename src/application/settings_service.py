@@ -60,14 +60,32 @@ class SettingsService:
         return updated_settings
 
     def update_dynamic_proxy_settings(self, payload: dict[str, Any]) -> settings_module.Settings:
-        update_dict = {
-            "proxy_dynamic_enabled": payload.get("enabled", False),
-            "proxy_dynamic_api_url": payload.get("api_url", ""),
-            "proxy_dynamic_api_key_header": payload.get("api_key_header", "X-API-Key"),
-            "proxy_dynamic_result_field": payload.get("result_field", ""),
+        field_map = {
+            "enabled": "proxy_dynamic_enabled",
+            "api_url": "proxy_dynamic_api_url",
+            "api_key_header": "proxy_dynamic_api_key_header",
+            "result_field": "proxy_dynamic_result_field",
+            "request_method": "proxy_dynamic_request_method",
+            "request_url": "proxy_dynamic_request_url",
+            "request_headers_template": "proxy_dynamic_request_headers_template",
+            "request_body_mode": "proxy_dynamic_request_body_mode",
+            "request_body_template": "proxy_dynamic_request_body_template",
+            "request_timeout_seconds": "proxy_dynamic_request_timeout_seconds",
+            "request_count_param_name": "proxy_dynamic_request_count_param_name",
+            "request_count_default": "proxy_dynamic_request_count_default",
+            "response_root_field": "proxy_dynamic_response_root_field",
+            "response_item_mode": "proxy_dynamic_response_item_mode",
+            "response_field_mapping": "proxy_dynamic_response_field_mapping",
+            "task_defaults": "proxy_dynamic_task_defaults",
         }
-        if payload.get("api_key") is not None:
-            update_dict["proxy_dynamic_api_key"] = payload.get("api_key")
+        update_dict = {
+            target_key: payload[source_key]
+            for source_key, target_key in field_map.items()
+            if source_key in payload
+        }
+        api_key = payload.get("api_key")
+        if api_key not in (None, ""):
+            update_dict["proxy_dynamic_api_key"] = api_key
         return self.update_runtime_settings(update_dict)
 
     def update_registration_settings(self, payload: dict[str, Any]) -> settings_module.Settings:
@@ -121,6 +139,31 @@ class SettingsService:
             poll_interval = int(updated_settings.email_code_poll_interval)
             if poll_interval < 1 or poll_interval > 30:
                 raise ValueError("poll interval must be between 1 and 30 seconds")
+
+        if "proxy_dynamic_request_method" in payload:
+            request_method = str(updated_settings.proxy_dynamic_request_method)
+            if request_method not in {"GET", "POST"}:
+                raise ValueError("request method must be GET or POST")
+
+        if "proxy_dynamic_request_body_mode" in payload:
+            request_body_mode = str(updated_settings.proxy_dynamic_request_body_mode)
+            if request_body_mode not in {"auto", "json", "form", "raw"}:
+                raise ValueError("request body mode must be auto, json, form or raw")
+
+        if "proxy_dynamic_response_item_mode" in payload:
+            response_item_mode = str(updated_settings.proxy_dynamic_response_item_mode)
+            if response_item_mode not in {"string_list", "object_list"}:
+                raise ValueError("response item mode must be string_list or object_list")
+
+        if "proxy_dynamic_request_timeout_seconds" in payload:
+            request_timeout = int(updated_settings.proxy_dynamic_request_timeout_seconds)
+            if request_timeout <= 0:
+                raise ValueError("request timeout must be greater than 0")
+
+        if "proxy_dynamic_request_count_default" in payload:
+            request_count_default = int(updated_settings.proxy_dynamic_request_count_default)
+            if request_count_default <= 0:
+                raise ValueError("request count must be greater than 0")
 
         if updated_settings.registration_sleep_max < updated_settings.registration_sleep_min:
             raise ValueError("registration sleep range is invalid")

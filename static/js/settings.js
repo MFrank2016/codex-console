@@ -53,6 +53,21 @@ const elements = {
     // 动态代理设置
     dynamicProxyForm: document.getElementById('dynamic-proxy-form'),
     testDynamicProxyBtn: document.getElementById('test-dynamic-proxy-btn'),
+    dynamicProxyRequestMethod: document.getElementById('dynamic-proxy-request-method'),
+    dynamicProxyRequestUrl: document.getElementById('dynamic-proxy-request-url'),
+    dynamicProxyCurlInput: document.getElementById('dynamic-proxy-curl-input'),
+    dynamicProxyParseCurlBtn: document.getElementById('dynamic-proxy-parse-curl-btn'),
+    dynamicProxyRequestHeaders: document.getElementById('dynamic-proxy-request-headers'),
+    dynamicProxyRequestBody: document.getElementById('dynamic-proxy-request-body'),
+    dynamicProxyResponseItemMode: document.getElementById('dynamic-proxy-response-item-mode'),
+    dynamicProxyFieldMapProxyUrl: document.getElementById('dynamic-proxy-field-map-proxy-url'),
+    dynamicProxyFieldMapUsername: document.getElementById('dynamic-proxy-field-map-username'),
+    dynamicProxyFieldMapPassword: document.getElementById('dynamic-proxy-field-map-password'),
+    dynamicProxySingleRegistrationAllocationStrategy: document.getElementById('dynamic-proxy-single-registration-allocation-strategy'),
+    dynamicProxyBatchAllocationStrategy: document.getElementById('dynamic-proxy-batch-registration-allocation-strategy'),
+    dynamicProxyUnlimitedRegistrationAllocationStrategy: document.getElementById('dynamic-proxy-unlimited-registration-allocation-strategy'),
+    dynamicProxyOutlookBatchAllocationStrategy: document.getElementById('dynamic-proxy-outlook-batch-allocation-strategy'),
+    dynamicProxyGenericSingleAllocationStrategy: document.getElementById('dynamic-proxy-generic-single-allocation-strategy'),
     // CPA 服务管理
     addCpaServiceBtn: document.getElementById('add-cpa-service-btn'),
     cpaServicesTable: document.getElementById('cpa-services-table'),
@@ -104,6 +119,15 @@ function getDefaultProxyFilters() {
 
 const proxyFilters = getDefaultProxyFilters();
 const PROXY_TABLE_COLUMN_COUNT = 10;
+const DYNAMIC_PROXY_ADVANCED_CONFIG_BLOCK_MESSAGE = '动态代理高级配置加载失败，已禁止保存以避免覆盖服务器配置';
+const DYNAMIC_PROXY_TASK_GROUP_FIELDS = [
+    ['single_registration', 'dynamicProxySingleRegistrationAllocationStrategy'],
+    ['batch_registration', 'dynamicProxyBatchAllocationStrategy'],
+    ['unlimited_registration', 'dynamicProxyUnlimitedRegistrationAllocationStrategy'],
+    ['outlook_batch', 'dynamicProxyOutlookBatchAllocationStrategy'],
+    ['generic_single', 'dynamicProxyGenericSingleAllocationStrategy'],
+];
+let dynamicProxyAdvancedConfigLoaded = false;
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -303,6 +327,9 @@ function initEventListeners() {
     if (elements.testDynamicProxyBtn) {
         elements.testDynamicProxyBtn.addEventListener('click', handleTestDynamicProxy);
     }
+    if (elements.dynamicProxyParseCurlBtn) {
+        elements.dynamicProxyParseCurlBtn.addEventListener('click', parseDynamicProxyCurlInput);
+    }
 
     // 验证码设置
     if (elements.emailCodeForm) {
@@ -389,11 +416,28 @@ async function loadSettings() {
     try {
         const data = await api.get('/settings');
 
-        // 动态代理设置
-        document.getElementById('dynamic-proxy-enabled').checked = data.proxy?.dynamic_enabled || false;
-        document.getElementById('dynamic-proxy-api-url').value = data.proxy?.dynamic_api_url || '';
-        document.getElementById('dynamic-proxy-api-key-header').value = data.proxy?.dynamic_api_key_header || 'X-API-Key';
-        document.getElementById('dynamic-proxy-result-field').value = data.proxy?.dynamic_result_field || '';
+        // 动态代理设置（基础 + 高级）
+        setDynamicProxyAdvancedConfigLoaded(false);
+        fillDynamicProxyFormFields({
+            enabled: data.proxy?.dynamic_enabled || false,
+            api_url: data.proxy?.dynamic_api_url || '',
+            api_key_header: data.proxy?.dynamic_api_key_header || 'X-API-Key',
+            result_field: data.proxy?.dynamic_result_field || '',
+            response_item_mode: 'string_list',
+            response_field_mapping: {},
+            task_defaults: {},
+            request_method: 'GET',
+            request_headers_template: {},
+            request_body_template: {},
+        });
+        try {
+            const dynamicProxySettings = await api.get('/settings/proxy/dynamic');
+            fillDynamicProxyFormFields(dynamicProxySettings || {});
+            setDynamicProxyAdvancedConfigLoaded(true);
+        } catch (dynamicProxyError) {
+            setDynamicProxyAdvancedConfigLoaded(false);
+            console.warn('加载动态代理高级设置失败:', dynamicProxyError);
+        }
 
         // 注册配置
         document.getElementById('max-retries').value = data.registration?.max_retries || 3;
@@ -421,6 +465,7 @@ async function loadSettings() {
         }
 
     } catch (error) {
+        setDynamicProxyAdvancedConfigLoaded(false);
         console.error('加载设置失败:', error);
         toast.error('加载设置失败');
     }
@@ -1274,15 +1319,265 @@ async function handleSaveOutlookSettings(e) {
 
 // ============== 动态代理设置 ==============
 
-async function handleSaveDynamicProxy(e) {
-    e.preventDefault();
-    const data = {
+function fillDynamicProxyTaskDefaultFields(taskDefaults = {}) {
+    DYNAMIC_PROXY_TASK_GROUP_FIELDS.forEach(([groupName, elementKey]) => {
+        const field = elements[elementKey];
+        if (field) {
+            field.value = taskDefaults?.[groupName]?.allocation_strategy || '';
+        }
+    });
+}
+
+function buildDynamicProxyTaskDefaults() {
+    const taskDefaults = {};
+
+    DYNAMIC_PROXY_TASK_GROUP_FIELDS.forEach(([groupName, elementKey]) => {
+        const value = elements[elementKey]?.value.trim();
+        if (value) {
+            taskDefaults[groupName] = {
+                allocation_strategy: value,
+            };
+        }
+    });
+
+    return taskDefaults;
+}
+
+function setDynamicProxyAdvancedConfigLoaded(isLoaded) {
+    dynamicProxyAdvancedConfigLoaded = !!isLoaded;
+
+    const submitBtn = elements.dynamicProxyForm?.querySelector('button[type="submit"]');
+    if (submitBtn) {
+        submitBtn.disabled = !dynamicProxyAdvancedConfigLoaded;
+        submitBtn.title = dynamicProxyAdvancedConfigLoaded
+            ? ''
+            : DYNAMIC_PROXY_ADVANCED_CONFIG_BLOCK_MESSAGE;
+    }
+}
+
+function fillDynamicProxyFormFields(settings = {}) {
+    document.getElementById('dynamic-proxy-enabled').checked = !!settings.enabled;
+    document.getElementById('dynamic-proxy-api-url').value = settings.api_url || '';
+    document.getElementById('dynamic-proxy-api-key-header').value = settings.api_key_header || 'X-API-Key';
+    document.getElementById('dynamic-proxy-result-field').value = settings.result_field || '';
+
+    if (settings.has_api_key) {
+        document.getElementById('dynamic-proxy-api-key').placeholder = '已配置，留空保持不变';
+    }
+
+    if (elements.dynamicProxyRequestMethod) {
+        elements.dynamicProxyRequestMethod.value = String(settings.request_method || 'GET').toUpperCase();
+    }
+    if (elements.dynamicProxyRequestUrl) {
+        elements.dynamicProxyRequestUrl.value = settings.request_url || settings.api_url || '';
+    }
+    if (elements.dynamicProxyRequestHeaders) {
+        elements.dynamicProxyRequestHeaders.value = JSON.stringify(settings.request_headers_template || {}, null, 2);
+    }
+    if (elements.dynamicProxyRequestBody) {
+        elements.dynamicProxyRequestBody.value = JSON.stringify(settings.request_body_template || {}, null, 2);
+    }
+    if (elements.dynamicProxyResponseItemMode) {
+        elements.dynamicProxyResponseItemMode.value = settings.response_item_mode || 'string_list';
+    }
+
+    const mapping = settings.response_field_mapping || {};
+    if (elements.dynamicProxyFieldMapProxyUrl) {
+        elements.dynamicProxyFieldMapProxyUrl.value = mapping.proxy_url || '';
+    }
+    if (elements.dynamicProxyFieldMapUsername) {
+        elements.dynamicProxyFieldMapUsername.value = mapping.username || '';
+    }
+    if (elements.dynamicProxyFieldMapPassword) {
+        elements.dynamicProxyFieldMapPassword.value = mapping.password || '';
+    }
+
+    fillDynamicProxyTaskDefaultFields(settings.task_defaults || {});
+}
+
+function parseDynamicProxyJsonObject(value, fieldName) {
+    const text = String(value || '').trim();
+    if (!text) {
+        return {};
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    } catch (error) {
+        throw new Error(`${fieldName} 不是合法的 JSON`);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`${fieldName} 必须是 JSON 对象`);
+    }
+    return parsed;
+}
+
+function tokenizeCurlCommand(input) {
+    const tokens = [];
+    let token = '';
+    let quote = '';
+
+    for (let i = 0; i < input.length; i += 1) {
+        const ch = input[i];
+        const prev = input[i - 1];
+        if (quote) {
+            if (ch === quote && prev !== '\\') {
+                quote = '';
+            } else {
+                token += ch;
+            }
+            continue;
+        }
+
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            continue;
+        }
+        if (/\s/.test(ch)) {
+            if (token) {
+                tokens.push(token);
+                token = '';
+            }
+            continue;
+        }
+        token += ch;
+    }
+    if (token) {
+        tokens.push(token);
+    }
+    return tokens;
+}
+
+function prettyJsonOrRaw(value) {
+    const text = String(value || '').trim();
+    if (!text) {
+        return '';
+    }
+    try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+        return text;
+    }
+}
+
+function parseDynamicProxyCurlInput() {
+    if (!elements.dynamicProxyCurlInput) return;
+
+    const curlInput = elements.dynamicProxyCurlInput.value.trim();
+    if (!curlInput) {
+        toast.warning('请先粘贴 cURL 命令');
+        return;
+    }
+
+    const tokens = tokenizeCurlCommand(curlInput);
+    if (!tokens.length || tokens[0].toLowerCase() !== 'curl') {
+        toast.error('请输入有效的 cURL 命令');
+        return;
+    }
+
+    let requestMethod = 'GET';
+    let requestUrl = '';
+    const headers = {};
+    let requestBody = '';
+
+    for (let i = 1; i < tokens.length; i += 1) {
+        const token = tokens[i];
+        const next = tokens[i + 1];
+
+        if ((token === '-X' || token === '--request') && next) {
+            requestMethod = String(next).toUpperCase();
+            i += 1;
+            continue;
+        }
+        if ((token === '-H' || token === '--header') && next) {
+            const separatorIndex = next.indexOf(':');
+            if (separatorIndex > 0) {
+                const key = next.slice(0, separatorIndex).trim();
+                const value = next.slice(separatorIndex + 1).trim();
+                if (key) {
+                    headers[key] = value;
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if (
+            (token === '-d' || token === '--data' || token === '--data-raw' || token === '--data-binary') &&
+            next
+        ) {
+            requestBody = next;
+            if (requestMethod === 'GET') {
+                requestMethod = 'POST';
+            }
+            i += 1;
+            continue;
+        }
+        if (!token.startsWith('-') && !requestUrl) {
+            requestUrl = token;
+        }
+    }
+
+    if (elements.dynamicProxyRequestMethod) {
+        elements.dynamicProxyRequestMethod.value = requestMethod;
+    }
+    if (requestUrl) {
+        if (elements.dynamicProxyRequestUrl) {
+            elements.dynamicProxyRequestUrl.value = requestUrl;
+        }
+        const apiUrlField = document.getElementById('dynamic-proxy-api-url');
+        if (apiUrlField && !apiUrlField.value.trim()) {
+            apiUrlField.value = requestUrl;
+        }
+    }
+    if (elements.dynamicProxyRequestHeaders) {
+        elements.dynamicProxyRequestHeaders.value = JSON.stringify(headers, null, 2);
+    }
+    if (elements.dynamicProxyRequestBody) {
+        elements.dynamicProxyRequestBody.value = prettyJsonOrRaw(requestBody);
+    }
+}
+
+function buildDynamicProxyPayload() {
+    const responseFieldMapping = {};
+    const proxyUrlMapping = elements.dynamicProxyFieldMapProxyUrl?.value.trim();
+    const usernameMapping = elements.dynamicProxyFieldMapUsername?.value.trim();
+    const passwordMapping = elements.dynamicProxyFieldMapPassword?.value.trim();
+    if (proxyUrlMapping) responseFieldMapping.proxy_url = proxyUrlMapping;
+    if (usernameMapping) responseFieldMapping.username = usernameMapping;
+    if (passwordMapping) responseFieldMapping.password = passwordMapping;
+
+    const apiUrl = document.getElementById('dynamic-proxy-api-url').value.trim();
+    const requestUrl = elements.dynamicProxyRequestUrl?.value.trim() || '';
+
+    return {
         enabled: document.getElementById('dynamic-proxy-enabled').checked,
-        api_url: document.getElementById('dynamic-proxy-api-url').value.trim(),
+        api_url: apiUrl,
         api_key: document.getElementById('dynamic-proxy-api-key').value || null,
         api_key_header: document.getElementById('dynamic-proxy-api-key-header').value.trim() || 'X-API-Key',
-        result_field: document.getElementById('dynamic-proxy-result-field').value.trim()
+        result_field: document.getElementById('dynamic-proxy-result-field').value.trim(),
+        request_method: elements.dynamicProxyRequestMethod?.value || 'GET',
+        request_url: requestUrl,
+        request_headers_template: parseDynamicProxyJsonObject(elements.dynamicProxyRequestHeaders?.value, '请求头模板'),
+        request_body_template: parseDynamicProxyJsonObject(elements.dynamicProxyRequestBody?.value, '请求体模板'),
+        response_item_mode: elements.dynamicProxyResponseItemMode?.value || 'string_list',
+        response_field_mapping: responseFieldMapping,
+        task_defaults: buildDynamicProxyTaskDefaults(),
     };
+}
+
+async function handleSaveDynamicProxy(e) {
+    e.preventDefault();
+    if (!dynamicProxyAdvancedConfigLoaded) {
+        toast.error(DYNAMIC_PROXY_ADVANCED_CONFIG_BLOCK_MESSAGE);
+        return;
+    }
+    let data;
+    try {
+        data = buildDynamicProxyPayload();
+    } catch (error) {
+        toast.error(error.message);
+        return;
+    }
     try {
         await api.post('/settings/proxy/dynamic', data);
         toast.success('动态代理设置已保存');
@@ -1293,8 +1588,14 @@ async function handleSaveDynamicProxy(e) {
 }
 
 async function handleTestDynamicProxy() {
-    const apiUrl = document.getElementById('dynamic-proxy-api-url').value.trim();
-    if (!apiUrl) {
+    let payload;
+    try {
+        payload = buildDynamicProxyPayload();
+    } catch (error) {
+        toast.error(error.message);
+        return;
+    }
+    if (!payload.api_url) {
         toast.warning('请先填写动态代理 API 地址');
         return;
     }
@@ -1302,12 +1603,7 @@ async function handleTestDynamicProxy() {
     btn.disabled = true;
     btn.textContent = '测试中...';
     try {
-        const result = await api.post('/settings/proxy/dynamic/test', {
-            api_url: apiUrl,
-            api_key: document.getElementById('dynamic-proxy-api-key').value || null,
-            api_key_header: document.getElementById('dynamic-proxy-api-key-header').value.trim() || 'X-API-Key',
-            result_field: document.getElementById('dynamic-proxy-result-field').value.trim()
-        });
+        const result = await api.post('/settings/proxy/dynamic/test', payload);
         if (result.success) {
             toast.success(result.message);
         } else {

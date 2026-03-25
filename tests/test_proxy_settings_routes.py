@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from src.core.ip_location import IPLocation
@@ -473,3 +475,357 @@ def test_update_proxy_item_clears_stale_location_when_lookup_fails(route_db, mon
     assert result["proxy"]["city"] is None
     assert updated.country is None
     assert updated.city is None
+
+
+def test_dynamic_proxy_settings_route_round_trip_for_advanced_contract(route_db, monkeypatch):
+    from src.application.settings_service import SettingsService
+
+    monkeypatch.setattr(
+        settings_routes,
+        "get_settings",
+        lambda: SettingsService(route_db).get_runtime_settings(),
+    )
+
+    app = FastAPI()
+    app.include_router(settings_routes.router, prefix="/api/settings")
+
+    payload = {
+        "enabled": True,
+        "api_url": "https://proxy.example.com/basic",
+        "api_key": "secret-token",
+        "api_key_header": "X-Proxy-Token",
+        "result_field": "legacy.path",
+        "request_method": "POST",
+        "request_url": "https://proxy.example.com/pool",
+        "request_headers_template": {"Authorization": "Bearer abc"},
+        "request_body_template": {"region": "us-east"},
+        "request_timeout_seconds": 15,
+        "request_count_param_name": "count",
+        "request_count_default": 6,
+        "response_root_field": "data.proxies",
+        "response_item_mode": "object_list",
+        "response_field_mapping": {"proxy_url": "endpoint"},
+        "task_defaults": {
+            "batch_registration": {
+                "allocation_strategy": "exclusive",
+                "lease_seconds": 180,
+            }
+        },
+    }
+
+    with TestClient(app) as client:
+        post_response = client.post("/api/settings/proxy/dynamic", json=payload)
+        assert post_response.status_code == 200
+
+        get_response = client.get("/api/settings/proxy/dynamic")
+        assert get_response.status_code == 200
+        body = get_response.json()
+
+    assert body["enabled"] is True
+    assert body["api_url"] == "https://proxy.example.com/basic"
+    assert body["api_key_header"] == "X-Proxy-Token"
+    assert body["result_field"] == "legacy.path"
+    assert body["request_method"] == "POST"
+    assert body["request_url"] == "https://proxy.example.com/pool"
+    assert body["request_headers_template"]["Authorization"] == "Bearer abc"
+    assert body["request_body_template"]["region"] == "us-east"
+    assert body["request_timeout_seconds"] == 15
+    assert body["request_count_param_name"] == "count"
+    assert body["request_count_default"] == 6
+    assert body["response_root_field"] == "data.proxies"
+    assert body["response_item_mode"] == "object_list"
+    assert body["response_field_mapping"]["proxy_url"] == "endpoint"
+    assert body["task_defaults"]["batch_registration"]["allocation_strategy"] == "exclusive"
+    assert body["task_defaults"]["batch_registration"]["lease_seconds"] == 180
+    assert body["has_api_key"] is True
+
+
+def test_dynamic_proxy_settings_route_uses_request_count_default_three_when_omitted(route_db, monkeypatch):
+    from src.application.settings_service import SettingsService
+
+    monkeypatch.setattr(
+        settings_routes,
+        "get_settings",
+        lambda: SettingsService(route_db).get_runtime_settings(),
+    )
+
+    app = FastAPI()
+    app.include_router(settings_routes.router, prefix="/api/settings")
+
+    payload = {
+        "enabled": True,
+        "api_url": "https://proxy.example.com/basic",
+        "api_key": "secret-token",
+        "request_method": "GET",
+        "request_url": "https://proxy.example.com/pool",
+    }
+
+    with TestClient(app) as client:
+        post_response = client.post("/api/settings/proxy/dynamic", json=payload)
+        assert post_response.status_code == 200
+
+        get_response = client.get("/api/settings/proxy/dynamic")
+        assert get_response.status_code == 200
+        body = get_response.json()
+
+    assert body["request_count_default"] == 3
+    assert body["request_body_mode"] == "auto"
+
+
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({"request_method": "PUT"}, "request_method"),
+        ({"response_item_mode": "flat"}, "response_item_mode"),
+        ({"request_timeout_seconds": 0}, "request_timeout_seconds"),
+        ({"request_count_default": 0}, "request_count_default"),
+    ],
+)
+def test_dynamic_proxy_settings_route_rejects_invalid_advanced_values(route_db, monkeypatch, payload, field):
+    from src.application.settings_service import SettingsService
+
+    monkeypatch.setattr(
+        settings_routes,
+        "get_settings",
+        lambda: SettingsService(route_db).get_runtime_settings(),
+    )
+
+    app = FastAPI()
+    app.include_router(settings_routes.router, prefix="/api/settings")
+
+    base_payload = {
+        "enabled": True,
+        "api_url": "https://proxy.example.com/basic",
+        "request_method": "GET",
+        "request_url": "https://proxy.example.com/pool",
+        "response_item_mode": "string_list",
+        "request_timeout_seconds": 10,
+        "request_count_default": 3,
+    }
+    base_payload.update(payload)
+
+    with TestClient(app) as client:
+        response = client.post("/api/settings/proxy/dynamic", json=base_payload)
+
+    assert response.status_code == 422
+    assert field in response.text
+
+
+def test_dynamic_proxy_settings_route_partial_update_keeps_existing_advanced_fields(route_db, monkeypatch):
+    from src.application.settings_service import SettingsService
+
+    monkeypatch.setattr(
+        settings_routes,
+        "get_settings",
+        lambda: SettingsService(route_db).get_runtime_settings(),
+    )
+
+    app = FastAPI()
+    app.include_router(settings_routes.router, prefix="/api/settings")
+
+    full_payload = {
+        "enabled": True,
+        "api_url": "https://proxy.example.com/full",
+        "api_key": "secret-token",
+        "request_method": "POST",
+        "request_url": "https://proxy.example.com/pool",
+        "request_headers_template": {"Authorization": "Bearer abc"},
+        "request_body_template": {"region": "us-west"},
+        "request_timeout_seconds": 20,
+        "request_count_default": 7,
+        "response_item_mode": "object_list",
+        "task_defaults": {"batch_registration": {"allocation_strategy": "exclusive"}},
+    }
+    partial_payload = {
+        "enabled": False,
+        "api_url": "https://basic2.example.com",
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/api/settings/proxy/dynamic", json=full_payload)
+        assert first.status_code == 200
+
+        second = client.post("/api/settings/proxy/dynamic", json=partial_payload)
+        assert second.status_code == 200
+
+        get_response = client.get("/api/settings/proxy/dynamic")
+        assert get_response.status_code == 200
+        body = get_response.json()
+
+    assert body["enabled"] is False
+    assert body["api_url"] == "https://basic2.example.com"
+    assert body["request_method"] == "POST"
+    assert body["request_url"] == "https://proxy.example.com/pool"
+    assert body["request_headers_template"] == {"Authorization": "Bearer abc"}
+    assert body["request_body_template"] == {"region": "us-west"}
+    assert body["request_timeout_seconds"] == 20
+    assert body["request_count_default"] == 7
+    assert body["response_item_mode"] == "object_list"
+    assert body["task_defaults"]["batch_registration"]["allocation_strategy"] == "exclusive"
+
+
+def test_dynamic_proxy_test_route_reuses_new_dynamic_request_and_probe_helpers(route_db, monkeypatch):
+    from src.core import dynamic_proxy as dynamic_proxy_module
+    from src.application.settings_service import SettingsService
+    from src.core.dynamic_proxy import (
+        DynamicProxyCandidate,
+        DynamicProxyProbeResult,
+        DynamicProxyRequest,
+    )
+
+    monkeypatch.setattr(
+        settings_routes,
+        "get_settings",
+        lambda: SettingsService(route_db).get_runtime_settings(),
+    )
+
+    called: dict[str, object] = {}
+
+    def _fake_build_dynamic_proxy_request(**kwargs):
+        called["build"] = kwargs
+        return DynamicProxyRequest(
+            method="POST",
+            url="https://proxy.example.com/pool",
+            headers={"Authorization": "Bearer abc"},
+            body={"count": 3, "region": "us-east"},
+        )
+
+    def _fake_fetch_dynamic_proxy_candidates(request, **kwargs):
+        called["fetch"] = {
+            "request": request,
+            **kwargs,
+        }
+        return [
+            DynamicProxyCandidate(
+                proxy_url="http://10.0.0.1:8080",
+                scheme="http",
+                host="10.0.0.1",
+                port=8080,
+            )
+        ]
+
+    def _fake_probe_proxy_candidate(candidate, **kwargs):
+        called["probe"] = {
+            "candidate": candidate,
+            **kwargs,
+        }
+        return DynamicProxyProbeResult(
+            ok=True,
+            proxy_url=candidate.proxy_url,
+            egress_ip=None,
+            response_time_ms=18,
+        )
+
+    monkeypatch.setattr(settings_routes, "build_dynamic_proxy_request", _fake_build_dynamic_proxy_request, raising=False)
+    monkeypatch.setattr(settings_routes, "fetch_dynamic_proxy_candidates", _fake_fetch_dynamic_proxy_candidates, raising=False)
+    monkeypatch.setattr(settings_routes, "probe_proxy_candidate", _fake_probe_proxy_candidate, raising=False)
+
+    class _FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ip": "8.8.8.8"}
+
+    monkeypatch.setattr(dynamic_proxy_module, "fetch_dynamic_proxy", lambda **_: "http://10.0.0.1:8080")
+    monkeypatch.setattr(dynamic_proxy_module, "cffi_requests", SimpleNamespace(get=lambda *args, **kwargs: _FakeResponse()), raising=False)
+
+    app = FastAPI()
+    app.include_router(settings_routes.router, prefix="/api/settings")
+
+    payload = {
+        "enabled": True,
+        "api_url": "https://proxy.example.com/basic",
+        "request_method": "POST",
+        "request_url": "https://proxy.example.com/pool",
+        "request_headers_template": {"Authorization": "Bearer abc"},
+        "request_body_template": {"region": "us-east"},
+        "request_count_param_name": "count",
+        "request_count_default": 3,
+        "response_root_field": "data.items",
+        "response_item_mode": "object_list",
+        "response_field_mapping": {"proxy_url": "endpoint"},
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/api/settings/proxy/dynamic/test", json=payload)
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["success"] is True
+    assert body["proxy_url"] == "http://10.0.0.1:8080"
+    assert called["build"]["request_url"] == "https://proxy.example.com/pool"
+    assert called["fetch"]["response_root_field"] == "data.items"
+    assert called["probe"]["candidate"].proxy_url == "http://10.0.0.1:8080"
+
+
+def test_dynamic_proxy_test_route_probes_legacy_proxy_directly_when_new_helpers_return_empty(route_db, monkeypatch):
+    from src.application.settings_service import SettingsService
+    from src.core.dynamic_proxy import DynamicProxyProbeResult
+
+    monkeypatch.setattr(
+        settings_routes,
+        "get_settings",
+        lambda: SettingsService(route_db).get_runtime_settings(),
+    )
+
+    calls: dict[str, object] = {}
+
+    def _fake_fetch_dynamic_proxy_candidates(*args, **kwargs):
+        calls["fetch_candidates_called"] = True
+        return []
+
+    def _fake_fetch_dynamic_proxy(**kwargs):
+        calls["legacy_fetch"] = kwargs
+        return "socks5://legacy-user:legacy-pass@9.9.9.9:1080"
+
+    def _fake_probe_proxy_candidate(candidate, **kwargs):
+        calls["probe"] = {
+            "candidate": candidate,
+            **kwargs,
+        }
+        return DynamicProxyProbeResult(
+            ok=True,
+            proxy_url=candidate.proxy_url,
+            egress_ip="7.7.7.7",
+            response_time_ms=23,
+        )
+
+    monkeypatch.setattr(settings_routes, "fetch_dynamic_proxy_candidates", _fake_fetch_dynamic_proxy_candidates, raising=False)
+    monkeypatch.setattr(settings_routes, "fetch_dynamic_proxy", _fake_fetch_dynamic_proxy, raising=False)
+    monkeypatch.setattr(settings_routes, "probe_proxy_candidate", _fake_probe_proxy_candidate, raising=False)
+
+    app = FastAPI()
+    app.include_router(settings_routes.router, prefix="/api/settings")
+
+    payload = {
+        "enabled": True,
+        "api_url": "https://proxy.example.com/legacy",
+        "api_key": "secret-token",
+        "api_key_header": "X-Proxy-Token",
+        "result_field": "data.proxy",
+        "request_method": "POST",
+        "request_url": "https://proxy.example.com/pool",
+        "request_body_template": {"region": "us-east"},
+        "request_count_default": 3,
+        "response_root_field": "data.items",
+        "response_item_mode": "object_list",
+        "response_field_mapping": {"proxy_url": "endpoint"},
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/api/settings/proxy/dynamic/test", json=payload)
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["success"] is True
+    assert body["proxy_url"] == "socks5://legacy-user:legacy-pass@9.9.9.9:1080"
+    assert body["ip"] == "7.7.7.7"
+    assert calls["legacy_fetch"] == {
+        "api_url": "https://proxy.example.com/legacy",
+        "api_key": "secret-token",
+        "api_key_header": "X-Proxy-Token",
+        "result_field": "data.proxy",
+    }
+    assert calls["probe"]["candidate"].proxy_url == "socks5://legacy-user:legacy-pass@9.9.9.9:1080"
+    assert calls["probe"]["candidate"].scheme == "socks5"

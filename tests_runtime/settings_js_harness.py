@@ -150,8 +150,16 @@ document.body.removeChild = () => {{}};
 
 const logs = {{
   apiGets: [],
+  apiPosts: [],
   toasts: [],
 }};
+
+const apiGetResponses = {{}};
+const apiGetErrors = {{}};
+
+function cloneValue(value) {{
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}}
 
 const context = {{
   console,
@@ -176,9 +184,21 @@ const context = {{
   api: {{
     async get(path) {{
       logs.apiGets.push(path);
-      return {{ proxies: [] }};
+      if (Object.prototype.hasOwnProperty.call(apiGetErrors, path)) {{
+        throw new Error(apiGetErrors[path]);
+      }}
+      if (Object.prototype.hasOwnProperty.call(apiGetResponses, path)) {{
+        return cloneValue(apiGetResponses[path]);
+      }}
+      if (path.startsWith('/settings/proxies')) {{
+        return {{ proxies: [] }};
+      }}
+      return {{}};
     }},
-    async post() {{ return {{ success: true }}; }},
+    async post(path, payload) {{
+      logs.apiPosts.push([path, payload]);
+      return {{ success: true }};
+    }},
     async patch() {{ return {{ success: true }}; }},
     async delete() {{ return {{ success: true }}; }},
   }},
@@ -190,7 +210,7 @@ context.globalThis = context;
 
 vm.createContext(context);
 vm.runInContext(
-  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResult,\n  renderProxies,\n  elements,\n  getProxyFilters: () => ({{ ...proxyFilters }}),\n  getSelectedProxyIds: () => Array.from(selectedProxyIds).sort((a, b) => a - b),\n  resetProxyState: () => {{\n    Object.assign(proxyFilters, getDefaultProxyFilters());\n    selectedProxyIds = new Set();\n  }},\n}};`,
+  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResult,\n  renderProxies,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  elements,\n  getProxyFilters: () => ({{ ...proxyFilters }}),\n  getSelectedProxyIds: () => Array.from(selectedProxyIds).sort((a, b) => a - b),\n  resetProxyState: () => {{\n    Object.assign(proxyFilters, getDefaultProxyFilters());\n    selectedProxyIds = new Set();\n  }},\n}};`,
   context,
 );
 
@@ -274,6 +294,128 @@ async function runScenario() {{
         {{ id: 7, name: '代理-007', type: 'http', host: '7.7.7.7', port: 8080, country: '美国', city: '西雅图', is_default: false, enabled: true, last_used: '2026-03-22T10:00:00', username: 'bob' }},
       ]);
       return {{ html: getElement('proxies-table').innerHTML }};
+    }}
+    case 'parse_dynamic_proxy_curl': {{
+      getElement('dynamic-proxy-curl-input').value = `curl -X POST 'https://proxy.example.com/fetch' -H 'Authorization: Bearer token-123' -H 'Content-Type: application/json' --data '{{"region":"us","count":5}}'`;
+      if (typeof exported.parseDynamicProxyCurlInput !== 'function') {{
+        throw new Error('parseDynamicProxyCurlInput is not implemented');
+      }}
+      exported.parseDynamicProxyCurlInput();
+      return {{
+        request_method: getElement('dynamic-proxy-request-method').value,
+        request_url: getElement('dynamic-proxy-request-url').value,
+        request_headers: getElement('dynamic-proxy-request-headers').value,
+        request_body: getElement('dynamic-proxy-request-body').value,
+      }};
+    }}
+    case 'build_dynamic_proxy_payload': {{
+      getElement('dynamic-proxy-enabled').checked = true;
+      getElement('dynamic-proxy-api-url').value = 'https://api.example.com/get_proxy';
+      getElement('dynamic-proxy-api-key').value = '';
+      getElement('dynamic-proxy-api-key-header').value = 'X-API-Key';
+      getElement('dynamic-proxy-result-field').value = 'data';
+      getElement('dynamic-proxy-request-method').value = 'POST';
+      getElement('dynamic-proxy-request-url').value = 'https://proxy.example.com/fetch';
+      getElement('dynamic-proxy-request-headers').value = '{{"Authorization":"Bearer token-123"}}';
+      getElement('dynamic-proxy-request-body').value = '{{"region":"us"}}';
+      getElement('dynamic-proxy-response-item-mode').value = 'object_list';
+      getElement('dynamic-proxy-field-map-proxy-url').value = 'proxy';
+      getElement('dynamic-proxy-field-map-username').value = 'auth.username';
+      getElement('dynamic-proxy-field-map-password').value = 'auth.password';
+      getElement('dynamic-proxy-single-registration-allocation-strategy').value = 'round_robin';
+      getElement('dynamic-proxy-batch-registration-allocation-strategy').value = 'exclusive';
+      getElement('dynamic-proxy-unlimited-registration-allocation-strategy').value = 'sticky';
+      getElement('dynamic-proxy-outlook-batch-allocation-strategy').value = 'exclusive';
+      getElement('dynamic-proxy-generic-single-allocation-strategy').value = 'round_robin';
+      if (typeof exported.buildDynamicProxyPayload !== 'function') {{
+        throw new Error('buildDynamicProxyPayload is not implemented');
+      }}
+      return exported.buildDynamicProxyPayload();
+    }}
+    case 'load_and_save_dynamic_proxy_settings': {{
+      apiGetResponses['/settings'] = {{
+        proxy: {{
+          dynamic_enabled: true,
+          dynamic_api_url: 'https://api.example.com/get_proxy',
+          dynamic_api_key_header: 'X-API-Key',
+          dynamic_result_field: 'data',
+        }},
+        registration: {{}},
+        email_code: {{}},
+        webui: {{}},
+      }};
+      apiGetResponses['/settings/proxy/dynamic'] = {{
+        enabled: true,
+        api_url: 'https://api.example.com/get_proxy',
+        api_key_header: 'X-API-Key',
+        result_field: 'data',
+        request_method: 'POST',
+        request_url: 'https://proxy.example.com/fetch',
+        request_headers_template: {{ Authorization: 'Bearer token-123' }},
+        request_body_template: {{ region: 'us' }},
+        response_item_mode: 'object_list',
+        response_field_mapping: {{ proxy_url: 'proxy' }},
+        task_defaults: {{
+          batch_registration: {{
+            allocation_strategy: 'exclusive',
+          }},
+        }},
+      }};
+      apiGetResponses['/settings/outlook'] = {{
+        default_client_id: '',
+      }};
+      if (typeof exported.loadSettings !== 'function') {{
+        throw new Error('loadSettings is not implemented');
+      }}
+      if (typeof exported.handleSaveDynamicProxy !== 'function') {{
+        throw new Error('handleSaveDynamicProxy is not implemented');
+      }}
+      await exported.loadSettings();
+      const afterLoad = {{
+        api_url: getElement('dynamic-proxy-api-url').value,
+        request_url: getElement('dynamic-proxy-request-url').value,
+        request_method: getElement('dynamic-proxy-request-method').value,
+        response_item_mode: getElement('dynamic-proxy-response-item-mode').value,
+        batch_registration_allocation_strategy: getElement('dynamic-proxy-batch-registration-allocation-strategy').value,
+      }};
+      await exported.handleSaveDynamicProxy({{ preventDefault() {{}} }});
+      return {{
+        api_gets: logs.apiGets,
+        after_load: afterLoad,
+        saved_payload: logs.apiPosts.at(-1)?.[1] || null,
+      }};
+    }}
+    case 'load_dynamic_proxy_settings_failure_blocks_save': {{
+      apiGetResponses['/settings'] = {{
+        proxy: {{
+          dynamic_enabled: true,
+          dynamic_api_url: 'https://api.example.com/get_proxy',
+          dynamic_api_key_header: 'X-API-Key',
+          dynamic_result_field: 'data',
+        }},
+        registration: {{}},
+        email_code: {{}},
+        webui: {{}},
+      }};
+      apiGetErrors['/settings/proxy/dynamic'] = 'dynamic proxy settings unavailable';
+      apiGetResponses['/settings/outlook'] = {{
+        default_client_id: '',
+      }};
+      if (typeof exported.loadSettings !== 'function') {{
+        throw new Error('loadSettings is not implemented');
+      }}
+      if (typeof exported.handleSaveDynamicProxy !== 'function') {{
+        throw new Error('handleSaveDynamicProxy is not implemented');
+      }}
+      await exported.loadSettings();
+      await exported.handleSaveDynamicProxy({{ preventDefault() {{}} }});
+      return {{
+        api_gets: logs.apiGets,
+        save_post_attempted: logs.apiPosts.some(([path]) => path === '/settings/proxy/dynamic'),
+        error_toasts: logs.toasts
+          .filter(([level]) => level === 'error')
+          .map(([, message]) => message),
+      }};
     }}
     default:
       throw new Error(`Unknown scenario: ${{scenarioName}}`);

@@ -2,7 +2,10 @@ from pathlib import Path
 import importlib
 import re
 
+import pytest
 from fastapi.testclient import TestClient
+
+pytest.importorskip("jinja2")
 
 from src.config.settings import get_settings
 from src.web.app import create_app
@@ -95,3 +98,14 @@ def test_workspace_routes_render_after_login_with_page_specific_scripts():
             assert f'data-page-key="{page_key}"' in response.text
             _assert_versioned_asset(response.text, "/static/js/workspace.js")
             _assert_versioned_asset(response.text, script_path)
+
+
+def test_settings_page_keeps_versioned_settings_assets():
+    app = create_app()
+    with TestClient(app) as client:
+        _login(client, "/settings")
+        response = client.get("/settings")
+
+    assert response.status_code == 200
+    _assert_versioned_asset(response.text, "/static/js/utils.js")
+    _assert_versioned_asset(response.text, "/static/js/settings.js")
