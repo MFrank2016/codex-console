@@ -177,6 +177,39 @@ class TaskManager:
             events = list(_stream_events.get(stream_id, []))
         return [event for event in events if event["seq"] > after_seq]
 
+    def is_stream_after_seq_expired(self, stream_id: str, after_seq: int) -> bool:
+        """判断 after_seq 是否已过期（事件缓冲区无法覆盖缺失区间）。"""
+        lock = _get_stream_lock(stream_id)
+        with lock:
+            buffer = _stream_events.get(stream_id)
+            if not buffer:
+                return False
+            oldest_seq = buffer[0]["seq"]
+        return after_seq < (oldest_seq - 1)
+
+    async def _broadcast_task_stream_event(self, task_uuid: str, event: dict):
+        """向 task WebSocket 连接广播 stream 事件。"""
+        with _ws_lock:
+            connections = _ws_connections.get(task_uuid, []).copy()
+
+        for ws in connections:
+            try:
+                await ws.send_json(event)
+            except Exception as e:
+                logger.warning(f"WebSocket 发送 task stream 事件失败: {e}")
+
+    async def _broadcast_batch_stream_event(self, batch_id: str, event: dict):
+        """向 batch WebSocket 连接广播 stream 事件。"""
+        key = f"batch_{batch_id}"
+        with _ws_lock:
+            connections = _ws_connections.get(key, []).copy()
+
+        for ws in connections:
+            try:
+                await ws.send_json(event)
+            except Exception as e:
+                logger.warning(f"WebSocket 发送 batch stream 事件失败: {e}")
+
     def get_loop(self) -> Optional[asyncio.AbstractEventLoop]:
         """获取事件循环"""
         return self._loop
@@ -192,25 +225,21 @@ class TaskManager:
 
     def add_log(self, task_uuid: str, log_message: str):
         """添加日志并推送到 WebSocket（线程安全）"""
-        # 先广播到 WebSocket，确保实时推送
-        # 然后再添加到队列，这样 get_unsent_logs 不会获取到这条日志
-        if self._loop and self._loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    self._broadcast_log(task_uuid, log_message),
-                    self._loop
-                )
-            except Exception as e:
-                logger.warning(f"推送日志到 WebSocket 失败: {e}")
-
-        # 广播后再添加到队列
         with _get_log_lock(task_uuid):
             _log_queues[task_uuid].append(log_message)
-            self.append_stream_event(
+            event = self.append_stream_event(
                 task_stream_id(task_uuid),
                 "log_appended",
                 {"task_uuid": task_uuid, "message": log_message},
             )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._broadcast_task_stream_event(task_uuid, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"推送 task stream 事件到 WebSocket 失败: {e}")
 
     async def _broadcast_log(self, task_uuid: str, log_message: str):
         """广播日志到所有 WebSocket 连接"""
@@ -309,20 +338,19 @@ class TaskManager:
         _task_status[task_uuid]["status"] = status
         _task_status[task_uuid].update(kwargs)
 
-        # 异步广播状态更新
-        if self._loop and self._loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    self.broadcast_status(task_uuid, status, **kwargs),
-                    self._loop
-                )
-            except Exception as e:
-                logger.warning(f"广播任务状态失败: {e}")
-        self.append_stream_event(
+        event = self.append_stream_event(
             task_stream_id(task_uuid),
             "task_status_changed",
             {"task_uuid": task_uuid, "status": status, **kwargs},
         )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._broadcast_task_stream_event(task_uuid, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"广播 task stream 状态事件失败: {e}")
 
     def get_status(self, task_uuid: str) -> Optional[dict]:
         """获取任务状态"""
@@ -432,24 +460,21 @@ class TaskManager:
 
     def add_batch_log(self, batch_id: str, log_message: str):
         """添加批量任务日志并推送"""
-        # 先广播到 WebSocket，确保实时推送
-        if self._loop and self._loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    self._broadcast_batch_log(batch_id, log_message),
-                    self._loop
-                )
-            except Exception as e:
-                logger.warning(f"推送批量日志到 WebSocket 失败: {e}")
-
-        # 广播后再添加到队列
         with _get_batch_lock(batch_id):
             _batch_logs[batch_id].append(log_message)
-            self.append_stream_event(
+            event = self.append_stream_event(
                 batch_stream_id(batch_id),
                 "log_appended",
                 {"batch_id": batch_id, "message": log_message},
             )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._broadcast_batch_stream_event(batch_id, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"推送 batch stream 事件到 WebSocket 失败: {e}")
 
     async def _broadcast_batch_log(self, batch_id: str, log_message: str):
         """广播批量任务日志"""
@@ -485,20 +510,19 @@ class TaskManager:
 
         _batch_status[batch_id].update(kwargs)
 
-        # 异步广播状态更新
-        if self._loop and self._loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    self._broadcast_batch_status(batch_id),
-                    self._loop
-                )
-            except Exception as e:
-                logger.warning(f"广播批量状态失败: {e}")
-        self.append_stream_event(
+        event = self.append_stream_event(
             batch_stream_id(batch_id),
             "batch_progress_updated",
             {"batch_id": batch_id, **_batch_status[batch_id]},
         )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._broadcast_batch_stream_event(batch_id, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"广播 batch stream 状态事件失败: {e}")
 
     async def _broadcast_batch_status(self, batch_id: str):
         """广播批量任务状态"""

@@ -1,6 +1,6 @@
 """
 WebSocket 路由
-提供实时日志推送和任务状态更新
+提供任务/批量 stream 事件回放与实时推送
 """
 
 import asyncio
@@ -8,6 +8,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..task_manager import task_manager
+from ..realtime_streams import task_stream_id, batch_stream_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -16,39 +17,46 @@ router = APIRouter()
 @router.websocket("/ws/task/{task_uuid}")
 async def task_websocket(websocket: WebSocket, task_uuid: str):
     """
-    任务日志 WebSocket
+    任务 stream WebSocket
 
     消息格式：
-    - 服务端发送: {"type": "log", "task_uuid": "xxx", "message": "...", "timestamp": "..."}
-    - 服务端发送: {"type": "status", "task_uuid": "xxx", "status": "running|completed|failed|cancelled", ...}
+    - 服务端发送: {"seq": 1, "stream": "task:xxx", "kind": "...", "timestamp": "...", "payload": {...}}
+    - 服务端发送: {"stream": "task:xxx", "kind": "snapshot_required", "payload": {"reason": "after_seq_expired"}}
     - 客户端发送: {"type": "ping"} - 心跳
     - 客户端发送: {"type": "cancel"} - 取消任务
     """
     await websocket.accept()
 
-    # 注册连接（会记录当前日志数量，避免重复发送历史日志）
+    stream_id = task_stream_id(task_uuid)
+    try:
+        after_seq_raw = websocket.query_params.get("after_seq", "0")
+        after_seq = int(after_seq_raw) if after_seq_raw is not None else 0
+    except ValueError:
+        after_seq = 0
+
+    # 先回放（避免注册后并发广播导致乱序/重复）
+    if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
+        await websocket.send_json({
+            "stream": stream_id,
+            "kind": "snapshot_required",
+            "payload": {"reason": "after_seq_expired"},
+        })
+    else:
+        last_seq = after_seq
+        # 两段式回放：尽量覆盖「发送回放期间」产生的新事件，减少边界丢消息概率
+        for _ in range(2):
+            replay = task_manager.get_stream_events_after(stream_id, after_seq=last_seq)
+            if not replay:
+                break
+            for event in replay:
+                await websocket.send_json(event)
+                last_seq = event["seq"]
+
+    # 注册连接：进入实时阶段
     task_manager.register_websocket(task_uuid, websocket)
-    logger.info(f"WebSocket 连接已建立，日志频道正式开麦: {task_uuid}")
+    logger.info(f"WebSocket 连接已建立: {task_uuid}")
 
     try:
-        # 发送当前状态
-        status = task_manager.get_status(task_uuid)
-        if status:
-            await websocket.send_json({
-                "type": "status",
-                "task_uuid": task_uuid,
-                **status
-            })
-
-        # 发送历史日志（只发送注册时已存在的日志，避免与实时推送重复）
-        history_logs = task_manager.get_unsent_logs(task_uuid, websocket)
-        for log in history_logs:
-            await websocket.send_json({
-                "type": "log",
-                "task_uuid": task_uuid,
-                "message": log
-            })
-
         # 保持连接，等待客户端消息
         while True:
             try:
@@ -66,12 +74,11 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
                 # 处理取消请求
                 elif data.get("type") == "cancel":
                     task_manager.cancel_task(task_uuid)
-                    await websocket.send_json({
-                        "type": "status",
-                        "task_uuid": task_uuid,
-                        "status": "cancelling",
-                        "message": "取消请求已提交，正在踩刹车，别慌"
-                    })
+                    task_manager.update_status(
+                        task_uuid,
+                        "cancelling",
+                        message="取消请求已提交，正在踩刹车，别慌",
+                    )
 
             except asyncio.TimeoutError:
                 # 超时，发送心跳检测
@@ -95,41 +102,46 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
 @router.websocket("/ws/batch/{batch_id}")
 async def batch_websocket(websocket: WebSocket, batch_id: str):
     """
-    批量任务 WebSocket
+    批量 stream WebSocket
 
     用于批量注册任务的实时状态更新
 
     消息格式：
-    - 服务端发送: {"type": "log", "batch_id": "xxx", "message": "...", "timestamp": "..."}
-    - 服务端发送: {"type": "status", "batch_id": "xxx", "status": "running|completed|cancelled", ...}
+    - 服务端发送: {"seq": 1, "stream": "batch:xxx", "kind": "...", "timestamp": "...", "payload": {...}}
+    - 服务端发送: {"stream": "batch:xxx", "kind": "snapshot_required", "payload": {"reason": "after_seq_expired"}}
     - 客户端发送: {"type": "ping"} - 心跳
     - 客户端发送: {"type": "cancel"} - 取消批量任务
     """
     await websocket.accept()
 
-    # 注册连接（会记录当前日志数量，避免重复发送历史日志）
+    stream_id = batch_stream_id(batch_id)
+    try:
+        after_seq_raw = websocket.query_params.get("after_seq", "0")
+        after_seq = int(after_seq_raw) if after_seq_raw is not None else 0
+    except ValueError:
+        after_seq = 0
+
+    if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
+        await websocket.send_json({
+            "stream": stream_id,
+            "kind": "snapshot_required",
+            "payload": {"reason": "after_seq_expired"},
+        })
+    else:
+        last_seq = after_seq
+        for _ in range(2):
+            replay = task_manager.get_stream_events_after(stream_id, after_seq=last_seq)
+            if not replay:
+                break
+            for event in replay:
+                await websocket.send_json(event)
+                last_seq = event["seq"]
+
+    # 注册连接：进入实时阶段
     task_manager.register_batch_websocket(batch_id, websocket)
-    logger.info(f"批量任务 WebSocket 连接已建立，群聊频道正式开麦: {batch_id}")
+    logger.info(f"批量任务 WebSocket 连接已建立: {batch_id}")
 
     try:
-        # 发送当前状态
-        status = task_manager.get_batch_status(batch_id)
-        if status:
-            await websocket.send_json({
-                "type": "status",
-                "batch_id": batch_id,
-                **status
-            })
-
-        # 发送历史日志（只发送注册时已存在的日志，避免与实时推送重复）
-        history_logs = task_manager.get_unsent_batch_logs(batch_id, websocket)
-        for log in history_logs:
-            await websocket.send_json({
-                "type": "log",
-                "batch_id": batch_id,
-                "message": log
-            })
-
         # 保持连接，等待客户端消息
         while True:
             try:
@@ -145,12 +157,12 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
                 # 处理取消请求
                 elif data.get("type") == "cancel":
                     task_manager.cancel_batch(batch_id)
-                    await websocket.send_json({
-                        "type": "status",
-                        "batch_id": batch_id,
-                        "status": "cancelling",
-                        "message": "取消请求已提交，正在让整队缓缓靠边停车"
-                    })
+                    task_manager.update_batch_status(
+                        batch_id,
+                        cancelled=True,
+                        status="cancelling",
+                        message="取消请求已提交，正在让整队缓缓靠边停车",
+                    )
 
             except asyncio.TimeoutError:
                 # 超时，发送心跳检测

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 import pytest
 from src.web.app import create_app
+from src.web.realtime_streams import STREAM_BUFFER_SIZE
 from src.web.task_manager import task_manager
 import src.web.task_manager as task_manager_module
 from uuid import uuid4
@@ -121,3 +122,40 @@ def test_registration_stream_routes_return_404_for_missing_streams():
     assert task_events.status_code == 404
     assert batch_snapshot.status_code == 404
     assert batch_events.status_code == 404
+
+
+def test_task_and_batch_websocket_replay_missing_events_after_after_seq():
+    app = create_app()
+    task_manager.update_status("task-ws-1", "running")
+    task_manager.add_log("task-ws-1", "line-1")
+    task_manager.add_log("task-ws-1", "line-2")
+    task_manager.init_batch("batch-ws-1", total=3)
+    task_manager.add_batch_log("batch-ws-1", "batch-line-1")
+    task_manager.add_batch_log("batch-ws-1", "batch-line-2")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/ws/task/task-ws-1?after_seq=1") as task_ws:
+            task_replay = task_ws.receive_json()
+        with client.websocket_connect("/api/ws/batch/batch-ws-1?after_seq=1") as batch_ws:
+            batch_replay = batch_ws.receive_json()
+
+    assert task_replay["seq"] == 2
+    assert task_replay["kind"] == "log_appended"
+    assert batch_replay["seq"] == 2
+    assert batch_replay["stream"] == "batch:batch-ws-1"
+
+
+def test_task_websocket_replies_snapshot_required_when_after_seq_expired():
+    app = create_app()
+    task_uuid = "task-ws-expired"
+    task_manager.update_status(task_uuid, "running")
+    for i in range(STREAM_BUFFER_SIZE + 5):
+        task_manager.add_log(task_uuid, f"line-{i}")
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/ws/task/{task_uuid}?after_seq=1") as ws:
+            payload = ws.receive_json()
+
+    assert payload["stream"] == f"task:{task_uuid}"
+    assert payload["kind"] == "snapshot_required"
+    assert payload["payload"]["reason"] == "after_seq_expired"
