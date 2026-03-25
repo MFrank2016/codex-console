@@ -116,8 +116,12 @@ function syncRegistrationStreamDom(previous, next, event) {
 
     // 批量进度：仅在相关事件时刷新
     if (event?.kind === 'snapshot' || event?.kind === 'batch_progress_updated' || event?.kind === 'stream_closed') {
-        if (next?.batch && typeof next.batch === 'object') {
-            updateBatchProgress(next.batch);
+        const batch = next?.batch;
+        const hasUnlimited = !!(batch && batch.is_unlimited);
+        const hasFiniteTotal = Number.isFinite(batch?.total) && batch.total > 0;
+        const hasCompleted = Number.isFinite(batch?.completed);
+        if (hasUnlimited || (hasFiniteTotal && hasCompleted)) {
+            updateBatchProgress(batch);
         }
     }
 }
