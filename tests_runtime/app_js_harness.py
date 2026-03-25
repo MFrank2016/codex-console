@@ -121,6 +121,7 @@ function createMockElement(id = '') {{
     set(value) {{
       this._innerHTML = String(value ?? '');
       this._textContent = this._innerHTML;
+      this._children = [];
     }},
   }});
 
@@ -407,13 +408,25 @@ async function runScenario() {{
             task: {{ task_uuid: 'task-single-01', status: 'running' }},
             current_step: {{ step_key: 'submit_login_email' }},
             steps: [{{ step_key: 'submit_login_email', status: 'running' }}],
-            logs_tail: [],
+            logs_tail: ['boot'],
           }},
         }},
         // 相同 message，但不同 seq：必须都保留（不能被 message 去重吞掉）
         {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'same-line' }} }},
         {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'same-line-dup-seq' }} }},
         {{ seq: 3, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'same-line' }} }},
+        // 第二次 snapshot：必须覆盖 logs_tail，而不是追加（避免 snapshot 重放导致重复）
+        {{
+          seq: 4,
+          stream: 'task:task-single-01',
+          kind: 'snapshot',
+          payload: {{
+            task: {{ task_uuid: 'task-single-01', status: 'running' }},
+            current_step: {{ step_key: 'submit_login_email' }},
+            steps: [{{ step_key: 'submit_login_email', status: 'running' }}],
+            logs_tail: ['same-line', 'same-line'],
+          }},
+        }},
         {{ seq: 3, stream: 'batch:batch-001', kind: 'batch_progress_updated', payload: {{ batch_id: 'batch-001', success: 3 }} }},
         {{ seq: 999, stream: 'task:task-single-01', kind: 'connection_state_changed', payload: {{ status: 'polling' }}, meta: {{ local: true }} }},
       ];

@@ -74,11 +74,23 @@ function emitConnectionStateChanged(status) {
 function renderRegistrationStreamStatus() {
     const panel = document.getElementById('registration-stream-status');
     if (!panel) return;
-    panel.textContent = registrationStreamState?.connection?.status || '';
+    const rawStatus = registrationStreamState?.connection?.status || '';
+    const statusText = {
+        connected: '已连接',
+        reconnecting: '重连中',
+        polling: '轮询中',
+        disconnected: '已断开',
+    }[rawStatus] || rawStatus;
+    panel.textContent = statusText;
 }
 
 function syncRegistrationStreamDom(previous, next, event) {
     renderRegistrationStreamStatus();
+
+    if (event?.kind === 'snapshot') {
+        resetConsoleLogDom();
+        registrationStreamRenderedLogCount = 0;
+    }
 
     // 日志：仅追加渲染新增项，避免重复重刷 DOM。
     const prevLogs = Array.isArray(previous?.logs) ? previous.logs : [];
@@ -91,7 +103,7 @@ function syncRegistrationStreamDom(previous, next, event) {
         const entry = nextLogs[i];
         const message = typeof entry === 'string' ? entry : (entry ? entry.message : '');
         if (!message) continue;
-        appendRealtimeLogLine(getLogType(message), message);
+        appendLogLine(getLogType(message), message, { dedupeByMessage: false });
     }
     registrationStreamRenderedLogCount = nextLogs.length;
 
@@ -126,27 +138,11 @@ function syncRegistrationStreamDom(previous, next, event) {
     }
 }
 
-function appendRealtimeLogLine(type, message) {
+function resetConsoleLogDom() {
     if (!elements.consoleLog) return;
-
-    const line = document.createElement('div');
-    line.className = `log-line ${type}`;
-
-    const timestamp = new Date().toLocaleTimeString('zh-CN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-
-    line.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}`;
-    elements.consoleLog.appendChild(line);
-
-    elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;
-
-    const lines = elements.consoleLog.querySelectorAll('.log-line');
-    if (lines.length > 500) {
-        lines[0].remove();
-    }
+    elements.consoleLog.innerHTML = '';
+    // 清空旧去重窗口，避免 DOM reset 后 addLog 被错误吞掉
+    displayedLogs.clear();
 }
 
 function resetRegistrationStreamViewState() {
@@ -1328,24 +1324,30 @@ function startAccountsPolling() {
 
 // 添加日志
 function addLog(type, message) {
-    // 日志去重：使用消息内容的 hash 作为键
-    const logKey = `${type}:${message}`;
-    if (displayedLogs.has(logKey)) {
-        return;  // 已经显示过，跳过
-    }
-    displayedLogs.add(logKey);
+    appendLogLine(type, message, { dedupeByMessage: true });
+}
 
-    // 限制去重集合大小，避免内存泄漏
-    if (displayedLogs.size > 1000) {
-        // 清空一半的记录
-        const keys = Array.from(displayedLogs);
-        keys.slice(0, 500).forEach(k => displayedLogs.delete(k));
+function appendLogLine(type, message, options = {}) {
+    if (!elements.consoleLog) return false;
+
+    const dedupeByMessage = options.dedupeByMessage === true;
+    if (dedupeByMessage) {
+        const logKey = `${type}:${message}`;
+        if (displayedLogs.has(logKey)) {
+            return false;
+        }
+        displayedLogs.add(logKey);
+
+        // 限制去重集合大小，避免内存泄漏
+        if (displayedLogs.size > 1000) {
+            const keys = Array.from(displayedLogs);
+            keys.slice(0, 500).forEach(k => displayedLogs.delete(k));
+        }
     }
 
     const line = document.createElement('div');
     line.className = `log-line ${type}`;
 
-    // 添加时间戳
     const timestamp = new Date().toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
@@ -1355,14 +1357,13 @@ function addLog(type, message) {
     line.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}`;
     elements.consoleLog.appendChild(line);
 
-    // 自动滚动到底部
     elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;
 
-    // 限制日志行数
     const lines = elements.consoleLog.querySelectorAll('.log-line');
     if (lines.length > 500) {
         lines[0].remove();
     }
+    return true;
 }
 
 // 获取日志类型

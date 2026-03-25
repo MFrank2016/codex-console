@@ -9,6 +9,8 @@
  * 目前仅提供纯函数 reduce，供 app.js / harness 驱动渲染。
  */
 (function () {
+  const MAX_LOG_LINES = 500;
+
   function reduce(state, event) {
     const currentState = state || {};
 
@@ -44,26 +46,33 @@
     switch (event.kind) {
       case 'snapshot':
         return _applyServerCursor(
-          {
-            ...currentState,
-            ...(event.payload && event.payload.task ? { task: { ...task, ...event.payload.task } } : null),
-            ...(event.payload && event.payload.batch ? { batch: { ...batch, ...event.payload.batch } } : null),
-            ...(event.payload ? { currentStep: event.payload.current_step || currentState.currentStep } : null),
-            ...(event.payload ? { steps: event.payload.steps || currentState.steps } : null),
-            ...(event.payload && Array.isArray(event.payload.logs_tail)
-              ? { logs: [...logs, ...event.payload.logs_tail.map(message => ({ message, meta: { tail: true } }))] }
-              : null),
-          },
+          _trimLogs(
+            {
+              ...currentState,
+              ...(event.payload && event.payload.task ? { task: { ...task, ...event.payload.task } } : null),
+              ...(event.payload && event.payload.batch ? { batch: { ...batch, ...event.payload.batch } } : null),
+              ...(event.payload ? { currentStep: event.payload.current_step || currentState.currentStep } : null),
+              ...(event.payload ? { steps: event.payload.steps || currentState.steps } : null),
+              // snapshot 语义：重建当前窗口，而非增量追加（避免 snapshot_required 重放导致重复）
+              ...(event.payload && Array.isArray(event.payload.logs_tail)
+                ? { logs: event.payload.logs_tail.map(message => ({ message, meta: { tail: true } })) }
+                : { logs: [] }),
+            },
+            MAX_LOG_LINES,
+          ),
           stream,
           event.seq,
           cursors,
         );
       case 'log_appended':
         return _applyServerCursor(
-          {
-            ...currentState,
-            logs: [...logs, { ...event.payload, seq: event.seq, stream }],
-          },
+          _trimLogs(
+            {
+              ...currentState,
+              logs: [...logs, { ...event.payload, seq: event.seq, stream }],
+            },
+            MAX_LOG_LINES,
+          ),
           stream,
           event.seq,
           cursors,
@@ -117,6 +126,14 @@
           cursors,
         );
     }
+  }
+
+  function _trimLogs(nextState, limit) {
+    const rows = Array.isArray(nextState.logs) ? nextState.logs : [];
+    if (rows.length <= limit) {
+      return nextState;
+    }
+    return { ...nextState, logs: rows.slice(-limit) };
   }
 
   function _applyServerCursor(nextState, stream, seq, cursors) {
