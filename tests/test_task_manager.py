@@ -81,5 +81,7 @@ async def test_task_manager_builds_snapshot_and_incremental_events():
     assert snapshot["kind"] == "snapshot"
     assert snapshot["payload"]["task"]["status"] == "running"
     assert snapshot["payload"]["current_step"]["step_key"] == "create_email"
+    assert snapshot["seq"] == len(events) + 1
+    assert snapshot["payload"]["logs_tail"] == ["[12:00:00] create email"]
     assert [item["seq"] for item in events] == [1, 2, 3]
     assert events[-1]["payload"]["message"] == "[12:00:00] create email"

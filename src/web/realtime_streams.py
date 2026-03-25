@@ -1,5 +1,3 @@
-from collections import deque
-
 STREAM_BUFFER_SIZE = 1000
 LOG_TAIL_SIZE = 10
 

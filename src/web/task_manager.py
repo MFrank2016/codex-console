@@ -15,7 +15,6 @@ from src.web.realtime_streams import (
     STREAM_BUFFER_SIZE,
     LOG_TAIL_SIZE,
     task_stream_id,
-    batch_stream_id,
 )
 logger = logging.getLogger(__name__)
 
@@ -99,6 +98,7 @@ class TaskManager:
         task_snapshot = self.get_status(task_uuid) or {}
         steps = self.get_task_steps(task_uuid)
         current_step = steps[-1] if steps else {}
+        logs_tail = self.get_logs(task_uuid)[-LOG_TAIL_SIZE:]
         return {
             "seq": self._stream_seq.get(stream_id, 0) + 1,
             "stream": stream_id,
@@ -108,19 +108,7 @@ class TaskManager:
                 "task": task_snapshot,
                 "current_step": current_step,
                 "steps": steps,
-            },
-        }
-
-    def build_batch_stream_snapshot(self, batch_id: str) -> dict:
-        stream_id = batch_stream_id(batch_id)
-        batch_snapshot = self.get_batch_status(batch_id) or {}
-        return {
-            "seq": self._stream_seq.get(stream_id, 0) + 1,
-            "stream": stream_id,
-            "kind": "snapshot",
-            "timestamp": utc_now().isoformat(),
-            "payload": {
-                "batch": batch_snapshot,
+                "logs_tail": logs_tail,
             },
         }
 
