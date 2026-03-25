@@ -117,6 +117,14 @@ def test_app_js_restore_unlimited_task_uses_batch_endpoint():
     assert result["batch_progress_display"] == "block"
 
 
+def test_registration_realtime_store_reduces_snapshot_and_tracks_connection_state():
+    result = run_app_js_scenario("realtime_store_seq_dedup")
+    assert result["current_step_key"] == "submit_login_email"
+    assert result["batch_success"] == "3"
+    assert result["log_count"] == 2
+    assert result["connection_status"] == "polling"
+
+
 def test_execution_and_configuration_templates_extend_workspace_shell():
     for path in [
         "templates/accounts.html",

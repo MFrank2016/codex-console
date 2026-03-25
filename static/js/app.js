@@ -36,6 +36,46 @@ let batchWsHeartbeatInterval = null;  // 批量任务心跳定时器
 let activeTaskUuid = null;   // 当前活跃的单任务 UUID（用于页面重新可见时重连）
 let activeBatchId = null;    // 当前活跃的批量任务 ID（用于页面重新可见时重连）
 
+// ============== Registration realtime store（最小接入） ==============
+
+let registrationStreamState = {
+    lastSeq: 0,
+    currentStep: null,
+    steps: [],
+    batch: {},
+    logs: [],
+    connection: { status: 'disconnected' },
+};
+let registrationStreamLocalSeq = 0;
+
+function nextRegistrationStreamSeq() {
+    registrationStreamLocalSeq += 1;
+    return registrationStreamLocalSeq;
+}
+
+function reduceRegistrationStream(event) {
+    const reducer = window?.registrationStream?.reduce;
+    if (typeof reducer !== 'function') {
+        return;
+    }
+    registrationStreamState = reducer(registrationStreamState, event);
+    renderRegistrationStreamStatus();
+}
+
+function emitConnectionStateChanged(status) {
+    reduceRegistrationStream({
+        seq: nextRegistrationStreamSeq(),
+        kind: 'connection_state_changed',
+        payload: { status },
+    });
+}
+
+function renderRegistrationStreamStatus() {
+    const panel = document.getElementById('registration-stream-status');
+    if (!panel) return;
+    panel.textContent = registrationStreamState?.connection?.status || '';
+}
+
 // DOM 元素
 const elements = {
     form: document.getElementById('registration-form'),
@@ -545,6 +585,7 @@ async function handleSingleRegistration(requestData) {
 
 // 连接 WebSocket
 function connectWebSocket(taskUuid) {
+    emitConnectionStateChanged('reconnecting');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/ws/task/${taskUuid}`;
 
@@ -554,6 +595,7 @@ function connectWebSocket(taskUuid) {
         webSocket.onopen = () => {
             console.log('WebSocket 连接成功');
             useWebSocket = true;
+            emitConnectionStateChanged('connected');
             // 停止轮询（如果有）
             stopLogPolling();
             // 开始心跳
@@ -615,7 +657,10 @@ function connectWebSocket(taskUuid) {
             if (shouldPoll && currentTask) {
                 console.log('切换到轮询模式');
                 useWebSocket = false;
+                emitConnectionStateChanged('polling');
                 startLogPolling(currentTask.task_uuid);
+            } else if (!shouldPoll) {
+                emitConnectionStateChanged('disconnected');
             }
         };
 
@@ -624,12 +669,14 @@ function connectWebSocket(taskUuid) {
             // 切换到轮询
             useWebSocket = false;
             stopWebSocketHeartbeat();
+            emitConnectionStateChanged('polling');
             startLogPolling(taskUuid);
         };
 
     } catch (error) {
         console.error('WebSocket 连接失败:', error);
         useWebSocket = false;
+        emitConnectionStateChanged('polling');
         startLogPolling(taskUuid);
     }
 }
@@ -783,6 +830,7 @@ async function handleCancelTask() {
 
 // 开始轮询日志
 function startLogPolling(taskUuid) {
+    emitConnectionStateChanged('polling');
     let lastLogIndex = 0;
 
     logPollingInterval = setInterval(async () => {
@@ -1385,6 +1433,7 @@ async function handleOutlookBatchRegistration() {
 
 // 连接批量任务 WebSocket
 function connectBatchWebSocket(batchId) {
+    emitConnectionStateChanged('reconnecting');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/ws/batch/${batchId}`;
 
@@ -1393,6 +1442,7 @@ function connectBatchWebSocket(batchId) {
 
         batchWebSocket.onopen = () => {
             console.log('批量任务 WebSocket 连接成功');
+            emitConnectionStateChanged('connected');
             // 停止轮询（如果有）
             stopBatchPolling();
             // 开始心跳
@@ -1468,7 +1518,10 @@ function connectBatchWebSocket(batchId) {
 
             if (shouldPoll && currentBatch) {
                 console.log('切换到轮询模式');
+                emitConnectionStateChanged('polling');
                 startOutlookBatchPolling(currentBatch.batch_id);
+            } else if (!shouldPoll) {
+                emitConnectionStateChanged('disconnected');
             }
         };
 
@@ -1476,11 +1529,13 @@ function connectBatchWebSocket(batchId) {
             console.error('批量任务 WebSocket 错误:', error);
             stopBatchWebSocketHeartbeat();
             // 切换到轮询
+            emitConnectionStateChanged('polling');
             startOutlookBatchPolling(batchId);
         };
 
     } catch (error) {
         console.error('批量任务 WebSocket 连接失败:', error);
+        emitConnectionStateChanged('polling');
         startOutlookBatchPolling(batchId);
     }
 }
@@ -1521,6 +1576,7 @@ function cancelBatchViaWebSocket() {
 
 // 开始轮询 Outlook 批量状态（降级方案）
 function startOutlookBatchPolling(batchId) {
+    emitConnectionStateChanged('polling');
     batchPollingInterval = setInterval(async () => {
         try {
             const data = await api.get(`/registration/outlook-batch/${batchId}`);

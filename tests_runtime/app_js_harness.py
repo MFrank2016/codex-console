@@ -7,15 +7,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "static" / "js" / "app.js"
+REGISTRATION_STREAM_JS = ROOT / "static" / "js" / "registration_stream.js"
 
 
 def run_app_js_scenario(name: str) -> dict:
     app_source = APP_JS.read_text(encoding="utf-8")
+    registration_stream_source = REGISTRATION_STREAM_JS.read_text(encoding="utf-8")
     node_script = rf"""
 const vm = require('vm');
 
 const scenarioName = {json.dumps(name)};
 const appSource = {json.dumps(app_source)};
+const registrationStreamSource = {json.dumps(registration_stream_source)};
 
 function createClassList() {{
   const classes = new Set();
@@ -263,6 +266,7 @@ context.global = context;
 context.globalThis = context;
 
 vm.createContext(context);
+vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
   appSource + `\n;globalThis.__appTestExports = {{\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
   context,
@@ -386,6 +390,41 @@ async function runScenario() {{
       return {{
         api_get_paths: logs.apiGetPaths.slice(),
         batch_progress_display: getElement('batch-progress-section').style.display || '',
+      }};
+    }}
+    case 'realtime_store_seq_dedup': {{
+      const reduce = context.window?.registrationStream?.reduce;
+      if (typeof reduce !== 'function') {{
+        throw new Error('registrationStream.reduce missing');
+      }}
+
+      const events = [
+        {{ seq: 1, kind: 'snapshot', payload: {{ currentStep: {{ step_key: 'submit_login_email' }}, batch: {{ success: 1 }}, logs: [] }} }},
+        {{ seq: 2, kind: 'log_appended', payload: {{ message: 'line-1' }} }},
+        {{ seq: 2, kind: 'log_appended', payload: {{ message: 'line-1-duplicate' }} }},
+        {{ seq: 3, kind: 'batch_progress_updated', payload: {{ batch: {{ success: 3 }} }} }},
+        {{ seq: 4, kind: 'connection_state_changed', payload: {{ status: 'polling' }} }},
+        {{ seq: 5, kind: 'log_appended', payload: {{ message: 'line-2' }} }},
+      ];
+
+      let state = {{
+        lastSeq: 0,
+        currentStep: null,
+        steps: [],
+        batch: {{}},
+        logs: [],
+        connection: {{ status: 'disconnected' }},
+      }};
+
+      for (const event of events) {{
+        state = reduce(state, event);
+      }}
+
+      return {{
+        current_step_key: state.currentStep ? String(state.currentStep.step_key || '') : '',
+        batch_success: state.batch ? String(state.batch.success ?? '') : '',
+        log_count: Array.isArray(state.logs) ? state.logs.length : 0,
+        connection_status: state.connection ? String(state.connection.status || '') : '',
       }};
     }}
     default:
