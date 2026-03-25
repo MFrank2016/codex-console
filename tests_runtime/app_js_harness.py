@@ -399,16 +399,26 @@ async function runScenario() {{
       }}
 
       const events = [
-        {{ seq: 1, kind: 'snapshot', payload: {{ currentStep: {{ step_key: 'submit_login_email' }}, batch: {{ success: 1 }}, logs: [] }} }},
-        {{ seq: 2, kind: 'log_appended', payload: {{ message: 'line-1' }} }},
-        {{ seq: 2, kind: 'log_appended', payload: {{ message: 'line-1-duplicate' }} }},
-        {{ seq: 3, kind: 'batch_progress_updated', payload: {{ batch: {{ success: 3 }} }} }},
-        {{ seq: 4, kind: 'connection_state_changed', payload: {{ status: 'polling' }} }},
-        {{ seq: 5, kind: 'log_appended', payload: {{ message: 'line-2' }} }},
+        {{
+          seq: 1,
+          stream: 'task:task-single-01',
+          kind: 'snapshot',
+          payload: {{
+            task: {{ task_uuid: 'task-single-01', status: 'running' }},
+            current_step: {{ step_key: 'submit_login_email' }},
+            steps: [{{ step_key: 'submit_login_email', status: 'running' }}],
+            logs_tail: [],
+          }},
+        }},
+        {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'line-1' }} }},
+        {{ seq: 2, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'line-1-duplicate' }} }},
+        {{ seq: 3, stream: 'batch:batch-001', kind: 'batch_progress_updated', payload: {{ batch_id: 'batch-001', success: 3 }} }},
+        {{ seq: 999, stream: 'task:task-single-01', kind: 'connection_state_changed', payload: {{ status: 'polling' }}, meta: {{ local: true }} }},
+        {{ seq: 3, stream: 'task:task-single-01', kind: 'log_appended', payload: {{ task_uuid: 'task-single-01', message: 'line-2' }} }},
       ];
 
       let state = {{
-        lastSeq: 0,
+        cursors: {{}},
         currentStep: null,
         steps: [],
         batch: {{}},

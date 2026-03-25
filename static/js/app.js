@@ -39,34 +39,35 @@ let activeBatchId = null;    // 当前活跃的批量任务 ID（用于页面重
 // ============== Registration realtime store（最小接入） ==============
 
 let registrationStreamState = {
-    lastSeq: 0,
+    cursors: {},
+    task: {},
     currentStep: null,
     steps: [],
     batch: {},
     logs: [],
     connection: { status: 'disconnected' },
 };
-let registrationStreamLocalSeq = 0;
-
-function nextRegistrationStreamSeq() {
-    registrationStreamLocalSeq += 1;
-    return registrationStreamLocalSeq;
-}
+let registrationStreamRenderedLogCount = 0;
 
 function reduceRegistrationStream(event) {
     const reducer = window?.registrationStream?.reduce;
     if (typeof reducer !== 'function') {
         return;
     }
-    registrationStreamState = reducer(registrationStreamState, event);
-    renderRegistrationStreamStatus();
+    const previous = registrationStreamState;
+    const next = reducer(previous, event);
+    if (next === previous) {
+        return;
+    }
+    registrationStreamState = next;
+    syncRegistrationStreamDom(previous, next, event);
 }
 
 function emitConnectionStateChanged(status) {
     reduceRegistrationStream({
-        seq: nextRegistrationStreamSeq(),
         kind: 'connection_state_changed',
         payload: { status },
+        meta: { local: true },
     });
 }
 
@@ -74,6 +75,64 @@ function renderRegistrationStreamStatus() {
     const panel = document.getElementById('registration-stream-status');
     if (!panel) return;
     panel.textContent = registrationStreamState?.connection?.status || '';
+}
+
+function syncRegistrationStreamDom(previous, next, event) {
+    renderRegistrationStreamStatus();
+
+    // 日志：仅追加渲染新增项，避免重复重刷 DOM。
+    const prevLogs = Array.isArray(previous?.logs) ? previous.logs : [];
+    const nextLogs = Array.isArray(next?.logs) ? next.logs : [];
+    let startIndex = Math.max(prevLogs.length, registrationStreamRenderedLogCount);
+    if (nextLogs.length < startIndex) {
+        startIndex = 0;
+    }
+    for (let i = startIndex; i < nextLogs.length; i += 1) {
+        const entry = nextLogs[i];
+        const message = typeof entry === 'string' ? entry : (entry ? entry.message : '');
+        if (!message) continue;
+        addLog(getLogType(message), message);
+    }
+    registrationStreamRenderedLogCount = nextLogs.length;
+
+    // 步骤瀑布流：仅在相关事件时刷新
+    if (event?.kind === 'snapshot' || event?.kind === 'task_step_updated') {
+        renderTaskSteps(Array.isArray(next?.steps) ? next.steps : []);
+    }
+
+    // 任务状态：仅在相关事件时刷新（保持最小侵入，避免影响旧逻辑）
+    if (event?.kind === 'snapshot' || event?.kind === 'task_status_changed') {
+        const status = next?.task?.status;
+        if (status) {
+            updateTaskStatus(status);
+        }
+        if (next?.task?.email && elements.taskEmail) {
+            elements.taskEmail.textContent = next.task.email;
+        }
+        if (next?.task?.email_service && elements.taskService) {
+            elements.taskService.textContent = getServiceTypeText(next.task.email_service);
+        }
+    }
+
+    // 批量进度：仅在相关事件时刷新
+    if (event?.kind === 'snapshot' || event?.kind === 'batch_progress_updated' || event?.kind === 'stream_closed') {
+        if (next?.batch && typeof next.batch === 'object') {
+            updateBatchProgress(next.batch);
+        }
+    }
+}
+
+function resetRegistrationStreamViewState() {
+    registrationStreamState = {
+        ...registrationStreamState,
+        task: {},
+        currentStep: null,
+        steps: [],
+        batch: {},
+        logs: [],
+    };
+    registrationStreamRenderedLogCount = 0;
+    emitConnectionStateChanged('disconnected');
 }
 
 // DOM 元素
@@ -252,6 +311,7 @@ function initEventListeners() {
     elements.clearLogBtn.addEventListener('click', () => {
         elements.consoleLog.innerHTML = '<div class="log-line info">[系统] 日志已清空</div>';
         displayedLogs.clear();  // 清空日志去重集合
+        resetRegistrationStreamViewState();
     });
 
     // 刷新账号列表
@@ -523,6 +583,7 @@ async function handleStartRegistration(e) {
 
     // 清空日志
     elements.consoleLog.innerHTML = '';
+    resetRegistrationStreamViewState();
 
     // 构建请求数据（代理从设置中自动获取）
     const requestData = {
@@ -587,7 +648,9 @@ async function handleSingleRegistration(requestData) {
 function connectWebSocket(taskUuid) {
     emitConnectionStateChanged('reconnecting');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/ws/task/${taskUuid}`;
+    const streamId = `task:${taskUuid}`;
+    const afterSeq = registrationStreamState?.cursors?.[streamId] || 0;
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/task/${taskUuid}?after_seq=${afterSeq}`;
 
     try {
         webSocket = new WebSocket(wsUrl);
@@ -602,9 +665,63 @@ function connectWebSocket(taskUuid) {
             startWebSocketHeartbeat();
         };
 
-        webSocket.onmessage = (event) => {
+        webSocket.onmessage = async (event) => {
             const data = JSON.parse(event.data);
 
+            // 控制消息（旧协议）
+            if (data.type === 'pong') {
+                // 心跳响应，忽略
+                return;
+            }
+
+            // 新协议：stream envelope
+            if (data && typeof data.kind === 'string' && typeof data.stream === 'string') {
+                if (data.kind === 'snapshot_required') {
+                    try {
+                        const snapshot = await api.get(`/registration/streams/task/${taskUuid}/snapshot`);
+                        reduceRegistrationStream(snapshot);
+                    } catch (error) {
+                        console.error('获取 task snapshot 失败:', error);
+                    }
+                    return;
+                }
+
+                if (typeof data.seq === 'number') {
+                    reduceRegistrationStream(data);
+
+                    if (data.kind === 'task_status_changed') {
+                        const status = data?.payload?.status;
+                        if (status) {
+                            refreshTaskDetail(taskUuid);
+                        }
+
+                        // 检查是否完成
+                        if (['completed', 'failed', 'cancelled', 'cancelling'].includes(status)) {
+                            taskFinalStatus = status;
+                            taskCompleted = true;
+                            disconnectWebSocket();
+                            resetButtons();
+
+                            if (!toastShown) {
+                                toastShown = true;
+                                if (status === 'completed') {
+                                    addLog('success', '[成功] 注册成功！');
+                                    toast.success('注册成功！');
+                                    loadRecentAccounts();
+                                } else if (status === 'failed') {
+                                    addLog('error', '[错误] 注册失败');
+                                    toast.error('注册失败');
+                                } else if (status === 'cancelled' || status === 'cancelling') {
+                                    addLog('warning', '[警告] 任务已取消');
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // 兼容：旧 data.type === log/status
             if (data.type === 'log') {
                 const logType = getLogType(data.message);
                 addLog(logType, data.message);
@@ -612,25 +729,17 @@ function connectWebSocket(taskUuid) {
                 updateTaskStatus(data.status);
                 refreshTaskDetail(taskUuid);
 
-                // 检查是否完成
                 if (['completed', 'failed', 'cancelled', 'cancelling'].includes(data.status)) {
-                    // 保存最终状态，用于 onclose 判断
                     taskFinalStatus = data.status;
                     taskCompleted = true;
-
-                    // 断开 WebSocket（异步操作）
                     disconnectWebSocket();
-
-                    // 任务完成后再重置按钮
                     resetButtons();
 
-                    // 只显示一次 toast
                     if (!toastShown) {
                         toastShown = true;
                         if (data.status === 'completed') {
                             addLog('success', '[成功] 注册成功！');
                             toast.success('注册成功！');
-                            // 刷新账号列表
                             loadRecentAccounts();
                         } else if (data.status === 'failed') {
                             addLog('error', '[错误] 注册失败');
@@ -640,8 +749,6 @@ function connectWebSocket(taskUuid) {
                         }
                     }
                 }
-            } else if (data.type === 'pong') {
-                // 心跳响应，忽略
             }
         };
 
@@ -1435,7 +1542,9 @@ async function handleOutlookBatchRegistration() {
 function connectBatchWebSocket(batchId) {
     emitConnectionStateChanged('reconnecting');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/ws/batch/${batchId}`;
+    const streamId = `batch:${batchId}`;
+    const afterSeq = registrationStreamState?.cursors?.[streamId] || 0;
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/batch/${batchId}?after_seq=${afterSeq}`;
 
     try {
         batchWebSocket = new WebSocket(wsUrl);
@@ -1449,14 +1558,68 @@ function connectBatchWebSocket(batchId) {
             startBatchWebSocketHeartbeat();
         };
 
-        batchWebSocket.onmessage = (event) => {
+        batchWebSocket.onmessage = async (event) => {
             const data = JSON.parse(event.data);
 
+            if (data.type === 'pong') {
+                // 心跳响应，忽略
+                return;
+            }
+
+            // 新协议：stream envelope
+            if (data && typeof data.kind === 'string' && typeof data.stream === 'string') {
+                if (data.kind === 'snapshot_required') {
+                    try {
+                        const snapshot = await api.get(`/registration/streams/batch/${batchId}/snapshot`);
+                        reduceRegistrationStream(snapshot);
+                    } catch (error) {
+                        console.error('获取 batch snapshot 失败:', error);
+                    }
+                    return;
+                }
+
+                if (typeof data.seq === 'number') {
+                    reduceRegistrationStream(data);
+
+                    if (data.kind === 'batch_progress_updated' || data.kind === 'stream_closed') {
+                        const payload = data.payload || {};
+                        const status = payload.status || payload.final_status;
+                        const finished = !!payload.finished;
+
+                        if (finished || ['completed', 'failed', 'cancelled', 'cancelling'].includes(status)) {
+                            batchFinalStatus = status || (finished ? 'completed' : null);
+                            batchCompleted = true;
+                            disconnectBatchWebSocket();
+                            resetButtons();
+
+                            if (!toastShown) {
+                                toastShown = true;
+                                if (batchFinalStatus === 'completed') {
+                                    addLog('success', `[完成] Outlook 批量任务完成！成功: ${payload.success || 0}, 失败: ${payload.failed || 0}, 跳过: ${payload.skipped || 0}`);
+                                    if ((payload.success || 0) > 0) {
+                                        toast.success(`Outlook 批量注册完成，成功 ${payload.success} 个`);
+                                        loadRecentAccounts();
+                                    } else {
+                                        toast.warning('Outlook 批量注册完成，但没有成功注册任何账号');
+                                    }
+                                } else if (batchFinalStatus === 'failed') {
+                                    addLog('error', '[错误] 批量任务执行失败');
+                                    toast.error('批量任务执行失败');
+                                } else if (batchFinalStatus === 'cancelled' || batchFinalStatus === 'cancelling') {
+                                    addLog('warning', '[警告] 批量任务已取消');
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // 兼容：旧 data.type === log/status
             if (data.type === 'log') {
                 const logType = getLogType(data.message);
                 addLog(logType, data.message);
             } else if (data.type === 'status') {
-                // 更新进度
                 if (data.total !== undefined) {
                     updateBatchProgress({
                         total: data.total,
@@ -1471,19 +1634,12 @@ function connectBatchWebSocket(batchId) {
                     });
                 }
 
-                // 检查是否完成
                 if (['completed', 'failed', 'cancelled', 'cancelling'].includes(data.status)) {
-                    // 保存最终状态，用于 onclose 判断
                     batchFinalStatus = data.status;
                     batchCompleted = true;
-
-                    // 断开 WebSocket（异步操作）
                     disconnectBatchWebSocket();
-
-                    // 任务完成后再重置按钮
                     resetButtons();
 
-                    // 只显示一次 toast
                     if (!toastShown) {
                         toastShown = true;
                         if (data.status === 'completed') {
@@ -1502,8 +1658,6 @@ function connectBatchWebSocket(batchId) {
                         }
                     }
                 }
-            } else if (data.type === 'pong') {
-                // 心跳响应，忽略
             }
         };
 

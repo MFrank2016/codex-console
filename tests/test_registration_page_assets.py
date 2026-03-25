@@ -28,6 +28,8 @@ def test_registration_workbench_page_requires_auth_and_renders_workspace_shell_h
         assert 'data-page-key="registration_workbench"' in response.text
         assert 'id="registration-form"' in response.text
         assert 'id="task-step-waterfall"' in response.text
+        assert "/static/js/registration_stream.js?v=" in response.text
+        assert response.text.index("/static/js/registration_stream.js?v=") < response.text.index("/static/js/app.js?v=")
         assert 'href="/registration-workbench"' in response.text
         assert 'href="/logout"' in response.text
         assert 'class="theme-toggle"' in response.text
@@ -46,6 +48,15 @@ def test_registration_template_contains_pipeline_selector_and_task_step_waterfal
     assert 'value="current_pipeline"' in template
     assert 'value="codexgen_pipeline"' in template
     assert 'id="task-step-waterfall"' in template
+
+
+def test_registration_template_loads_registration_stream_before_app_js():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    stream_src = "/static/js/registration_stream.js?v="
+    app_src = "/static/js/app.js?v="
+    assert stream_src in template
+    assert app_src in template
+    assert template.index(stream_src) < template.index(app_src)
 
 
 def test_registration_template_uses_workbench_layout_classes():
