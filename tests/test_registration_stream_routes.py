@@ -1,15 +1,37 @@
 from fastapi.testclient import TestClient
 import pytest
 from src.web.app import create_app
-from src.web.task_manager import task_manager, clear_realtime_state_for_tests
+from src.web.task_manager import task_manager
+import src.web.task_manager as task_manager_module
 from uuid import uuid4
 
 
 @pytest.fixture(autouse=True)
 def clean_registration_stream_state():
-    clear_realtime_state_for_tests()
+    _clear_state_for_tests()
     yield
-    clear_realtime_state_for_tests()
+    _clear_state_for_tests()
+
+
+def _clear_state_for_tests():
+    """测试专用：清理 task_manager 全局状态"""
+    for container in (
+        task_manager_module._task_status,
+        task_manager_module._task_steps,
+        task_manager_module._experiment_status,
+        task_manager_module._log_queues,
+        task_manager_module._log_locks,
+        task_manager_module._batch_status,
+        task_manager_module._batch_logs,
+        task_manager_module._batch_locks,
+        task_manager_module._stream_seq,
+        task_manager_module._stream_events,
+        task_manager_module._stream_locks,
+        task_manager_module._ws_connections,
+        task_manager_module._ws_sent_index,
+        task_manager_module._task_cancelled,
+    ):
+        container.clear()
 
 
 def test_task_and_batch_stream_routes_return_expected_contract():

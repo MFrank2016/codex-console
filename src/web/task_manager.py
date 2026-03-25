@@ -611,22 +611,3 @@ class TaskManager:
 
 # 全局实例
 task_manager = TaskManager()
-
-
-def clear_realtime_state_for_tests():
-    """测试专用：清理 stream 相关的全局状态，避免跨测试污染"""
-    with _meta_lock:
-        _task_status.clear()
-        _task_steps.clear()
-        _experiment_status.clear()
-        _log_queues.clear()
-        _log_locks.clear()
-        _batch_status.clear()
-        _batch_logs.clear()
-        _batch_locks.clear()
-        _stream_seq.clear()
-        _stream_events.clear()
-        _stream_locks.clear()
-        _ws_connections.clear()
-        _ws_sent_index.clear()
-        _task_cancelled.clear()
