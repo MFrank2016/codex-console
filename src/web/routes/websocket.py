@@ -39,7 +39,7 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
     task_manager.register_websocket(task_uuid, websocket, mode="replaying", after_seq=after_seq)
 
     if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
-        await websocket.send_json({
+        await task_manager.send_task_control_message(task_uuid, websocket, {
             "stream": stream_id,
             "kind": "snapshot_required",
             "payload": {"reason": "after_seq_expired"},
@@ -65,7 +65,7 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
 
                 # 处理心跳
                 if data.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
+                    await task_manager.send_task_control_message(task_uuid, websocket, {"type": "pong"})
 
                 # 处理取消请求
                 elif data.get("type") == "cancel":
@@ -79,7 +79,7 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
             except asyncio.TimeoutError:
                 # 超时，发送心跳检测
                 try:
-                    await websocket.send_json({"type": "ping"})
+                    await task_manager.send_task_control_message(task_uuid, websocket, {"type": "ping"})
                 except Exception:
                     # 发送失败，可能是连接断开
                     logger.info(f"WebSocket 心跳检测失败: {task_uuid}")
@@ -120,7 +120,7 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
     task_manager.register_batch_websocket(batch_id, websocket, mode="replaying", after_seq=after_seq)
 
     if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
-        await websocket.send_json({
+        await task_manager.send_batch_control_message(batch_id, websocket, {
             "stream": stream_id,
             "kind": "snapshot_required",
             "payload": {"reason": "after_seq_expired"},
@@ -144,7 +144,7 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
 
                 # 处理心跳
                 if data.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
+                    await task_manager.send_batch_control_message(batch_id, websocket, {"type": "pong"})
 
                 # 处理取消请求
                 elif data.get("type") == "cancel":
@@ -159,7 +159,7 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
             except asyncio.TimeoutError:
                 # 超时，发送心跳检测
                 try:
-                    await websocket.send_json({"type": "ping"})
+                    await task_manager.send_batch_control_message(batch_id, websocket, {"type": "ping"})
                 except Exception:
                     logger.info(f"批量任务 WebSocket 心跳检测失败: {batch_id}")
                     break

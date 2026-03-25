@@ -229,6 +229,16 @@ class TaskManager:
             if current is not None:
                 current["last_sent_seq"] = max(current["last_sent_seq"], int(event.get("seq", 0)))
 
+    async def _send_control_message(self, ws_key: str, websocket: Any, payload: dict) -> None:
+        """发送控制消息（ping/pong 等），复用同一 websocket 的 send_lock，避免并发 send。"""
+        state = self._get_ws_state(ws_key, websocket)
+        if state is None:
+            await websocket.send_json(payload)
+            return
+        send_lock = state["send_lock"]
+        async with send_lock:
+            await websocket.send_json(payload)
+
     async def broadcast_task_stream_event(self, task_uuid: str, event: dict) -> None:
         """向 task WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
         ws_key = task_uuid
@@ -278,6 +288,12 @@ class TaskManager:
     async def send_batch_stream_event(self, batch_id: str, websocket: Any, event: dict) -> None:
         """replay 阶段：向指定 batch websocket 发送事件并推进 last_sent_seq。"""
         await self._send_stream_event(self._stream_ws_key_for_batch(batch_id), websocket, event)
+
+    async def send_task_control_message(self, task_uuid: str, websocket: Any, payload: dict) -> None:
+        await self._send_control_message(task_uuid, websocket, payload)
+
+    async def send_batch_control_message(self, batch_id: str, websocket: Any, payload: dict) -> None:
+        await self._send_control_message(self._stream_ws_key_for_batch(batch_id), websocket, payload)
 
     async def finish_task_websocket_replay(self, task_uuid: str, websocket: Any) -> None:
         """结束 replay：按 seq flush pending，再切换为 active。"""

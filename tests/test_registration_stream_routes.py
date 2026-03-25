@@ -214,6 +214,46 @@ def test_batch_websocket_replies_snapshot_required_when_after_seq_expired():
     assert payload["payload"]["reason"] == "after_seq_expired"
 
 
+def test_task_websocket_snapshot_required_connection_keeps_receiving_live_events():
+    app = create_app()
+    task_uuid = "task-ws-expired-live"
+    task_manager.update_status(task_uuid, "running")
+    for i in range(STREAM_BUFFER_SIZE + 5):
+        task_manager.add_log(task_uuid, f"line-{i}")
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/ws/task/{task_uuid}?after_seq=1") as ws:
+            payload = ws.receive_json()
+            assert payload["kind"] == "snapshot_required"
+
+            task_manager.add_log(task_uuid, "after-snapshot-required")
+            event = _receive_json_with_timeout(ws, timeout_s=1.5)
+
+    assert event["stream"] == f"task:{task_uuid}"
+    assert event["kind"] == "log_appended"
+    assert event["payload"]["message"] == "after-snapshot-required"
+
+
+def test_batch_websocket_snapshot_required_connection_keeps_receiving_live_events():
+    app = create_app()
+    batch_id = "batch-ws-expired-live"
+    task_manager.init_batch(batch_id, total=1)
+    for i in range(STREAM_BUFFER_SIZE + 5):
+        task_manager.add_batch_log(batch_id, f"line-{i}")
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/ws/batch/{batch_id}?after_seq=1") as ws:
+            payload = ws.receive_json()
+            assert payload["kind"] == "snapshot_required"
+
+            task_manager.add_batch_log(batch_id, "after-snapshot-required")
+            event = _receive_json_with_timeout(ws, timeout_s=1.5)
+
+    assert event["stream"] == f"batch:{batch_id}"
+    assert event["kind"] == "log_appended"
+    assert event["payload"]["message"] == "after-snapshot-required"
+
+
 def test_task_websocket_keeps_ping_pong_and_cancel_as_control_messages():
     app = create_app()
     task_uuid = "task-ws-control"
