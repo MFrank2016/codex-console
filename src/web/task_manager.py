@@ -127,7 +127,7 @@ class TaskManager:
 
     def build_task_stream_snapshot(self, task_uuid: str) -> dict:
         stream_id = task_stream_id(task_uuid)
-        task_snapshot = self.get_status(task_uuid) or {}
+        task_snapshot = dict(self.get_status(task_uuid) or {})
         steps = self.get_task_steps(task_uuid)
         current_step = steps[-1] if steps else {}
         logs_tail = _get_logs_tail(task_uuid, LOG_TAIL_SIZE)
@@ -150,7 +150,7 @@ class TaskManager:
 
     def build_batch_stream_snapshot(self, batch_id: str) -> dict:
         stream_id = batch_stream_id(batch_id)
-        batch_snapshot = self.get_batch_status(batch_id) or {}
+        batch_snapshot = dict(self.get_batch_status(batch_id) or {})
         logs_tail = _get_batch_logs_tail(batch_id, LOG_TAIL_SIZE)
         lock = _get_stream_lock(stream_id)
         with lock:
