@@ -7,7 +7,7 @@ import asyncio
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Optional, List, Callable, Any
+from typing import Dict, Optional, List, Callable, Any, Literal
 from collections import defaultdict, deque
 
 from ..core.time import utc_now
@@ -30,10 +30,10 @@ _log_queues: Dict[str, List[str]] = defaultdict(list)
 _log_locks: Dict[str, threading.Lock] = {}
 
 # WebSocket 连接管理 (task_uuid -> list of websockets)
-_ws_connections: Dict[str, List] = defaultdict(list)
+_ws_connections: Dict[str, Dict[int, dict]] = defaultdict(dict)
 _ws_lock = threading.Lock()
 
-# WebSocket 已发送日志索引 (task_uuid -> {websocket: sent_count})
+# 旧协议遗留：用于“增量日志”那套逻辑（Task 3 迁移后不再使用，但测试清理会用到）
 _ws_sent_index: Dict[str, Dict] = defaultdict(dict)
 
 # 任务状态
@@ -138,9 +138,8 @@ class TaskManager:
         lock = _get_stream_lock(stream_id)
         with lock:
             seq = _stream_seq.get(stream_id, 0)
-        next_seq = seq + 1
         return {
-            "seq": next_seq,
+            "seq": seq,
             "stream": stream_id,
             "kind": "snapshot",
             "timestamp": utc_now().isoformat(),
@@ -159,9 +158,8 @@ class TaskManager:
         lock = _get_stream_lock(stream_id)
         with lock:
             seq = _stream_seq.get(stream_id, 0)
-        next_seq = seq + 1
         return {
-            "seq": next_seq,
+            "seq": seq,
             "stream": stream_id,
             "kind": "snapshot",
             "timestamp": utc_now().isoformat(),
@@ -187,28 +185,164 @@ class TaskManager:
             oldest_seq = buffer[0]["seq"]
         return after_seq < (oldest_seq - 1)
 
-    async def _broadcast_task_stream_event(self, task_uuid: str, event: dict):
-        """向 task WebSocket 连接广播 stream 事件。"""
-        with _ws_lock:
-            connections = _ws_connections.get(task_uuid, []).copy()
+    def _stream_ws_key_for_batch(self, batch_id: str) -> str:
+        return f"batch_{batch_id}"
 
-        for ws in connections:
+    def _ensure_ws_state(
+        self,
+        ws_key: str,
+        websocket: Any,
+        *,
+        mode: Literal["replaying", "active"],
+        after_seq: int,
+    ) -> None:
+        ws_id = id(websocket)
+        with _ws_lock:
+            states = _ws_connections[ws_key]
+            if ws_id in states:
+                states[ws_id]["mode"] = mode
+                states[ws_id]["last_sent_seq"] = min(states[ws_id]["last_sent_seq"], after_seq)
+                return
+            states[ws_id] = {
+                "ws_id": ws_id,
+                "websocket": websocket,
+                "mode": mode,
+                "pending": [],
+                "last_sent_seq": after_seq,
+                "send_lock": asyncio.Lock(),
+            }
+
+    def _get_ws_state(self, ws_key: str, websocket: Any) -> Optional[dict]:
+        ws_id = id(websocket)
+        with _ws_lock:
+            return _ws_connections.get(ws_key, {}).get(ws_id)
+
+    async def _send_stream_event(self, ws_key: str, websocket: Any, event: dict) -> None:
+        state = self._get_ws_state(ws_key, websocket)
+        if state is None:
+            return
+        send_lock = state["send_lock"]
+        async with send_lock:
+            await websocket.send_json(event)
+        with _ws_lock:
+            current = _ws_connections.get(ws_key, {}).get(state["ws_id"])
+            if current is not None:
+                current["last_sent_seq"] = max(current["last_sent_seq"], int(event.get("seq", 0)))
+
+    async def broadcast_task_stream_event(self, task_uuid: str, event: dict) -> None:
+        """向 task WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
+        ws_key = task_uuid
+        with _ws_lock:
+            targets = list(_ws_connections.get(ws_key, {}).values())
+
+        for target in targets:
+            ws_id = target["ws_id"]
+            mode = target["mode"]
+            websocket = target["websocket"]
+            if mode == "replaying":
+                with _ws_lock:
+                    current = _ws_connections.get(ws_key, {}).get(ws_id)
+                    if current is not None and current["mode"] == "replaying":
+                        current["pending"].append(event)
+                continue
             try:
-                await ws.send_json(event)
+                await self._send_stream_event(ws_key, websocket, event)
             except Exception as e:
                 logger.warning(f"WebSocket 发送 task stream 事件失败: {e}")
 
-    async def _broadcast_batch_stream_event(self, batch_id: str, event: dict):
-        """向 batch WebSocket 连接广播 stream 事件。"""
-        key = f"batch_{batch_id}"
+    async def broadcast_batch_stream_event(self, batch_id: str, event: dict) -> None:
+        """向 batch WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
+        ws_key = self._stream_ws_key_for_batch(batch_id)
         with _ws_lock:
-            connections = _ws_connections.get(key, []).copy()
+            targets = list(_ws_connections.get(ws_key, {}).values())
 
-        for ws in connections:
+        for target in targets:
+            ws_id = target["ws_id"]
+            mode = target["mode"]
+            websocket = target["websocket"]
+            if mode == "replaying":
+                with _ws_lock:
+                    current = _ws_connections.get(ws_key, {}).get(ws_id)
+                    if current is not None and current["mode"] == "replaying":
+                        current["pending"].append(event)
+                continue
             try:
-                await ws.send_json(event)
+                await self._send_stream_event(ws_key, websocket, event)
             except Exception as e:
                 logger.warning(f"WebSocket 发送 batch stream 事件失败: {e}")
+
+    async def send_task_stream_event(self, task_uuid: str, websocket: Any, event: dict) -> None:
+        """replay 阶段：向指定 task websocket 发送事件并推进 last_sent_seq。"""
+        await self._send_stream_event(task_uuid, websocket, event)
+
+    async def send_batch_stream_event(self, batch_id: str, websocket: Any, event: dict) -> None:
+        """replay 阶段：向指定 batch websocket 发送事件并推进 last_sent_seq。"""
+        await self._send_stream_event(self._stream_ws_key_for_batch(batch_id), websocket, event)
+
+    async def finish_task_websocket_replay(self, task_uuid: str, websocket: Any) -> None:
+        """结束 replay：按 seq flush pending，再切换为 active。"""
+        ws_key = task_uuid
+        while True:
+            state = self._get_ws_state(ws_key, websocket)
+            if state is None:
+                return
+            with _ws_lock:
+                current = _ws_connections.get(ws_key, {}).get(state["ws_id"])
+                if current is None:
+                    return
+                last_sent_seq = current["last_sent_seq"]
+                pending = list(current["pending"])
+                current["pending"] = []
+
+            to_send = [item for item in pending if int(item.get("seq", 0)) > last_sent_seq]
+            to_send.sort(key=lambda item: int(item.get("seq", 0)))
+            for item in to_send:
+                try:
+                    await self._send_stream_event(ws_key, websocket, item)
+                except Exception as e:
+                    logger.warning(f"WebSocket replay flush 发送失败: {e}")
+                    return
+
+            with _ws_lock:
+                current = _ws_connections.get(ws_key, {}).get(state["ws_id"])
+                if current is None:
+                    return
+                if current["pending"]:
+                    continue
+                current["mode"] = "active"
+                return
+
+    async def finish_batch_websocket_replay(self, batch_id: str, websocket: Any) -> None:
+        ws_key = self._stream_ws_key_for_batch(batch_id)
+        while True:
+            state = self._get_ws_state(ws_key, websocket)
+            if state is None:
+                return
+            with _ws_lock:
+                current = _ws_connections.get(ws_key, {}).get(state["ws_id"])
+                if current is None:
+                    return
+                last_sent_seq = current["last_sent_seq"]
+                pending = list(current["pending"])
+                current["pending"] = []
+
+            to_send = [item for item in pending if int(item.get("seq", 0)) > last_sent_seq]
+            to_send.sort(key=lambda item: int(item.get("seq", 0)))
+            for item in to_send:
+                try:
+                    await self._send_stream_event(ws_key, websocket, item)
+                except Exception as e:
+                    logger.warning(f"WebSocket replay flush 发送失败: {e}")
+                    return
+
+            with _ws_lock:
+                current = _ws_connections.get(ws_key, {}).get(state["ws_id"])
+                if current is None:
+                    return
+                if current["pending"]:
+                    continue
+                current["mode"] = "active"
+                return
 
     def get_loop(self) -> Optional[asyncio.AbstractEventLoop]:
         """获取事件循环"""
@@ -235,94 +369,37 @@ class TaskManager:
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self._broadcast_task_stream_event(task_uuid, event),
+                    self.broadcast_task_stream_event(task_uuid, event),
                     self._loop,
                 )
             except Exception as e:
                 logger.warning(f"推送 task stream 事件到 WebSocket 失败: {e}")
 
-    async def _broadcast_log(self, task_uuid: str, log_message: str):
-        """广播日志到所有 WebSocket 连接"""
-        with _ws_lock:
-            connections = _ws_connections.get(task_uuid, []).copy()
-            # 注意：不在这里更新 sent_index，因为日志已经通过 add_log 添加到队列
-            # sent_index 应该只在 get_unsent_logs 或发送历史日志时更新
-            # 这样可以避免竞态条件
+    def register_websocket(
+        self,
+        task_uuid: str,
+        websocket: Any,
+        *,
+        mode: Literal["replaying", "active"] = "active",
+        after_seq: int = 0,
+    ):
+        """注册 task WebSocket 连接。
 
-        for ws in connections:
-            try:
-                await ws.send_json({
-                    "type": "log",
-                    "task_uuid": task_uuid,
-                    "message": log_message,
-                    "timestamp": utc_now().isoformat()
-                })
-                # 发送成功后更新 sent_index
-                with _ws_lock:
-                    ws_id = id(ws)
-                    if task_uuid in _ws_sent_index and ws_id in _ws_sent_index[task_uuid]:
-                        _ws_sent_index[task_uuid][ws_id] += 1
-            except Exception as e:
-                logger.warning(f"WebSocket 发送失败: {e}")
-
-    async def broadcast_status(self, task_uuid: str, status: str, **kwargs):
-        """广播任务状态更新"""
-        with _ws_lock:
-            connections = _ws_connections.get(task_uuid, []).copy()
-
-        message = {
-            "type": "status",
-            "task_uuid": task_uuid,
-            "status": status,
-            "timestamp": utc_now().isoformat(),
-            **kwargs
-        }
-
-        for ws in connections:
-            try:
-                await ws.send_json(message)
-            except Exception as e:
-                logger.warning(f"WebSocket 发送状态失败: {e}")
-
-    def register_websocket(self, task_uuid: str, websocket):
-        """注册 WebSocket 连接"""
-        with _ws_lock:
-            if task_uuid not in _ws_connections:
-                _ws_connections[task_uuid] = []
-            # 避免重复注册同一个连接
-            if websocket not in _ws_connections[task_uuid]:
-                _ws_connections[task_uuid].append(websocket)
-                # 记录已发送的日志数量，用于发送历史日志时避免重复
-                with _get_log_lock(task_uuid):
-                    _ws_sent_index[task_uuid][id(websocket)] = len(_log_queues.get(task_uuid, []))
-                logger.info(f"WebSocket 连接已注册，日志小喇叭准备开播: {task_uuid}")
-            else:
-                logger.warning(f"WebSocket 连接已存在，跳过重复注册: {task_uuid}")
-
-    def get_unsent_logs(self, task_uuid: str, websocket) -> List[str]:
-        """获取未发送给该 WebSocket 的日志"""
-        with _ws_lock:
-            ws_id = id(websocket)
-            sent_count = _ws_sent_index.get(task_uuid, {}).get(ws_id, 0)
-
-        with _get_log_lock(task_uuid):
-            all_logs = _log_queues.get(task_uuid, [])
-            unsent_logs = all_logs[sent_count:]
-            # 更新已发送索引
-            _ws_sent_index[task_uuid][ws_id] = len(all_logs)
-            return unsent_logs
+        说明：
+        - 业务事件：走 stream envelope（seq/stream/kind/payload）
+        - 控制消息：依然走 {"type": "ping"/"pong"/"cancel"}
+        """
+        self._ensure_ws_state(task_uuid, websocket, mode=mode, after_seq=after_seq)
+        logger.info(f"WebSocket 连接已注册(task): {task_uuid} mode={mode}")
 
     def unregister_websocket(self, task_uuid: str, websocket):
         """注销 WebSocket 连接"""
+        ws_id = id(websocket)
         with _ws_lock:
             if task_uuid in _ws_connections:
-                try:
-                    _ws_connections[task_uuid].remove(websocket)
-                except ValueError:
-                    pass
-            # 清理已发送索引
+                _ws_connections[task_uuid].pop(ws_id, None)
             if task_uuid in _ws_sent_index:
-                _ws_sent_index[task_uuid].pop(id(websocket), None)
+                _ws_sent_index[task_uuid].pop(ws_id, None)
         logger.info(f"WebSocket 连接已注销: {task_uuid}")
 
     def get_logs(self, task_uuid: str) -> List[str]:
@@ -346,7 +423,7 @@ class TaskManager:
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self._broadcast_task_stream_event(task_uuid, event),
+                    self.broadcast_task_stream_event(task_uuid, event),
                     self._loop,
                 )
             except Exception as e:
@@ -470,34 +547,11 @@ class TaskManager:
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self._broadcast_batch_stream_event(batch_id, event),
+                    self.broadcast_batch_stream_event(batch_id, event),
                     self._loop,
                 )
             except Exception as e:
                 logger.warning(f"推送 batch stream 事件到 WebSocket 失败: {e}")
-
-    async def _broadcast_batch_log(self, batch_id: str, log_message: str):
-        """广播批量任务日志"""
-        key = f"batch_{batch_id}"
-        with _ws_lock:
-            connections = _ws_connections.get(key, []).copy()
-            # 注意：不在这里更新 sent_index，避免竞态条件
-
-        for ws in connections:
-            try:
-                await ws.send_json({
-                    "type": "log",
-                    "batch_id": batch_id,
-                    "message": log_message,
-                    "timestamp": utc_now().isoformat()
-                })
-                # 发送成功后更新 sent_index
-                with _ws_lock:
-                    ws_id = id(ws)
-                    if key in _ws_sent_index and ws_id in _ws_sent_index[key]:
-                        _ws_sent_index[key][ws_id] += 1
-            except Exception as e:
-                logger.warning(f"WebSocket 发送批量日志失败: {e}")
 
     def update_batch_status(self, batch_id: str, **kwargs):
         """更新批量任务状态"""
@@ -518,29 +572,11 @@ class TaskManager:
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self._broadcast_batch_stream_event(batch_id, event),
+                    self.broadcast_batch_stream_event(batch_id, event),
                     self._loop,
                 )
             except Exception as e:
                 logger.warning(f"广播 batch stream 状态事件失败: {e}")
-
-    async def _broadcast_batch_status(self, batch_id: str):
-        """广播批量任务状态"""
-        with _ws_lock:
-            connections = _ws_connections.get(f"batch_{batch_id}", []).copy()
-
-        status = _batch_status.get(batch_id, {})
-
-        for ws in connections:
-            try:
-                await ws.send_json({
-                    "type": "status",
-                    "batch_id": batch_id,
-                    "timestamp": utc_now().isoformat(),
-                    **status
-                })
-            except Exception as e:
-                logger.warning(f"WebSocket 发送批量状态失败: {e}")
 
     def get_batch_status(self, batch_id: str) -> Optional[dict]:
         """获取批量任务状态"""
@@ -572,48 +608,32 @@ class TaskManager:
             _batch_status[batch_id]["status"] = "cancelling"
             logger.info(f"批量任务 {batch_id} 已标记为取消")
 
-    def register_batch_websocket(self, batch_id: str, websocket):
-        """注册批量任务 WebSocket 连接"""
-        key = f"batch_{batch_id}"
-        with _ws_lock:
-            if key not in _ws_connections:
-                _ws_connections[key] = []
-            # 避免重复注册同一个连接
-            if websocket not in _ws_connections[key]:
-                _ws_connections[key].append(websocket)
-                # 记录已发送的日志数量，用于发送历史日志时避免重复
-                with _get_batch_lock(batch_id):
-                    _ws_sent_index[key][id(websocket)] = len(_batch_logs.get(batch_id, []))
-                logger.info(f"批量任务 WebSocket 连接已注册，批量频道开始集合: {batch_id}")
-            else:
-                logger.warning(f"批量任务 WebSocket 连接已存在，跳过重复注册: {batch_id}")
-
-    def get_unsent_batch_logs(self, batch_id: str, websocket) -> List[str]:
-        """获取未发送给该 WebSocket 的批量任务日志"""
-        key = f"batch_{batch_id}"
-        with _ws_lock:
-            ws_id = id(websocket)
-            sent_count = _ws_sent_index.get(key, {}).get(ws_id, 0)
-
-        with _get_batch_lock(batch_id):
-            all_logs = _batch_logs.get(batch_id, [])
-            unsent_logs = all_logs[sent_count:]
-            # 更新已发送索引
-            _ws_sent_index[key][ws_id] = len(all_logs)
-            return unsent_logs
+    def register_batch_websocket(
+        self,
+        batch_id: str,
+        websocket: Any,
+        *,
+        mode: Literal["replaying", "active"] = "active",
+        after_seq: int = 0,
+    ):
+        """注册 batch WebSocket 连接（支持 replaying/active）。"""
+        self._ensure_ws_state(
+            self._stream_ws_key_for_batch(batch_id),
+            websocket,
+            mode=mode,
+            after_seq=after_seq,
+        )
+        logger.info(f"批量任务 WebSocket 连接已注册(batch): {batch_id} mode={mode}")
 
     def unregister_batch_websocket(self, batch_id: str, websocket):
         """注销批量任务 WebSocket 连接"""
-        key = f"batch_{batch_id}"
+        key = self._stream_ws_key_for_batch(batch_id)
+        ws_id = id(websocket)
         with _ws_lock:
             if key in _ws_connections:
-                try:
-                    _ws_connections[key].remove(websocket)
-                except ValueError:
-                    pass
-            # 清理已发送索引
+                _ws_connections[key].pop(ws_id, None)
             if key in _ws_sent_index:
-                _ws_sent_index[key].pop(id(websocket), None)
+                _ws_sent_index[key].pop(ws_id, None)
         logger.info(f"批量任务 WebSocket 连接已注销: {batch_id}")
 
     def create_log_callback(self, task_uuid: str, prefix: str = "", batch_id: str = "") -> Callable[[str], None]:

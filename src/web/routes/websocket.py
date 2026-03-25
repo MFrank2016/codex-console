@@ -34,7 +34,10 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
     except ValueError:
         after_seq = 0
 
-    # 先回放（避免注册后并发广播导致乱序/重复）
+    # 业务事件：走 stream envelope；控制消息：走 {"type": "..."}（ping/pong/cancel）
+    # 关键点：先注册为 replaying，replay 期间产生的新事件会进入 pending，避免回放/实时切换丢事件竞态。
+    task_manager.register_websocket(task_uuid, websocket, mode="replaying", after_seq=after_seq)
+
     if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
         await websocket.send_json({
             "stream": stream_id,
@@ -42,19 +45,12 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
             "payload": {"reason": "after_seq_expired"},
         })
     else:
-        last_seq = after_seq
-        # 两段式回放：尽量覆盖「发送回放期间」产生的新事件，减少边界丢消息概率
-        for _ in range(2):
-            replay = task_manager.get_stream_events_after(stream_id, after_seq=last_seq)
-            if not replay:
-                break
-            for event in replay:
-                await websocket.send_json(event)
-                last_seq = event["seq"]
+        replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
+        for event in replay:
+            await task_manager.send_task_stream_event(task_uuid, websocket, event)
 
-    # 注册连接：进入实时阶段
-    task_manager.register_websocket(task_uuid, websocket)
-    logger.info(f"WebSocket 连接已建立: {task_uuid}")
+    await task_manager.finish_task_websocket_replay(task_uuid, websocket)
+    logger.info(f"WebSocket 连接已建立(task): {task_uuid}")
 
     try:
         # 保持连接，等待客户端消息
@@ -121,6 +117,8 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
     except ValueError:
         after_seq = 0
 
+    task_manager.register_batch_websocket(batch_id, websocket, mode="replaying", after_seq=after_seq)
+
     if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
         await websocket.send_json({
             "stream": stream_id,
@@ -128,18 +126,12 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
             "payload": {"reason": "after_seq_expired"},
         })
     else:
-        last_seq = after_seq
-        for _ in range(2):
-            replay = task_manager.get_stream_events_after(stream_id, after_seq=last_seq)
-            if not replay:
-                break
-            for event in replay:
-                await websocket.send_json(event)
-                last_seq = event["seq"]
+        replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
+        for event in replay:
+            await task_manager.send_batch_stream_event(batch_id, websocket, event)
 
-    # 注册连接：进入实时阶段
-    task_manager.register_batch_websocket(batch_id, websocket)
-    logger.info(f"批量任务 WebSocket 连接已建立: {batch_id}")
+    await task_manager.finish_batch_websocket_replay(batch_id, websocket)
+    logger.info(f"批量任务 WebSocket 连接已建立(batch): {batch_id}")
 
     try:
         # 保持连接，等待客户端消息
