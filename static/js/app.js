@@ -718,6 +718,72 @@ function finalizeSingleTaskIfTerminal(taskUuid, status) {
     return true;
 }
 
+function isTerminalBatchStatus(status) {
+    return ['completed', 'failed', 'cancelled', 'cancelling'].includes(status);
+}
+
+function finalizeBatchIfTerminal(batchId, payload) {
+    const safePayload = payload && typeof payload === 'object' ? payload : {};
+    const finished = !!safePayload.finished;
+    const status = safePayload.status || safePayload.final_status;
+    const isTerminal = finished || isTerminalBatchStatus(status);
+    if (!isTerminal) {
+        return false;
+    }
+
+    const finalStatus = status || (finished ? 'completed' : null);
+    if (batchCompleted && batchFinalStatus === finalStatus) {
+        return true;
+    }
+
+    batchFinalStatus = finalStatus;
+    batchCompleted = true;
+
+    stopBatchPolling();
+    disconnectBatchWebSocket();
+
+    // 让 realtime store 的连接状态收口（meta.local=true，不污染服务端 cursor）
+    emitConnectionStateChanged('disconnected');
+
+    resetButtons();
+
+    if (!toastShown) {
+        toastShown = true;
+        const isOutlook = !!(
+            isOutlookBatchMode ||
+            (currentBatch && Array.isArray(currentBatch.service_ids))
+        );
+        const success = safePayload.success || 0;
+        const failed = safePayload.failed || 0;
+        const skipped = safePayload.skipped || 0;
+        if (batchFinalStatus === 'completed') {
+            if (isOutlook) {
+                addLog('success', `[完成] Outlook 批量任务完成！成功: ${success}, 失败: ${failed}, 跳过: ${skipped}`);
+                if (success > 0) {
+                    toast.success(`Outlook 批量注册完成，成功 ${success} 个`);
+                    loadRecentAccounts();
+                } else {
+                    toast.warning('Outlook 批量注册完成，但没有成功注册任何账号');
+                }
+            } else {
+                addLog('info', `[完成] 批量任务完成！成功: ${success}, 失败: ${failed}`);
+                if (success > 0) {
+                    toast.success(`批量注册完成，成功 ${success} 个`);
+                    loadRecentAccounts();
+                } else {
+                    toast.warning('批量注册完成，但没有成功注册任何账号');
+                }
+            }
+        } else if (batchFinalStatus === 'failed') {
+            addLog('error', '[错误] 批量任务执行失败');
+            toast.error('批量任务执行失败');
+        } else if (batchFinalStatus === 'cancelled' || batchFinalStatus === 'cancelling') {
+            addLog('warning', '[警告] 批量任务已取消');
+        }
+    }
+    return true;
+}
+
 // 连接 WebSocket
 function connectWebSocket(taskUuid) {
     emitConnectionStateChanged('reconnecting');
@@ -1106,21 +1172,7 @@ function startBatchPolling(batchId) {
 
             // 检查是否完成
             if (data.finished) {
-                stopBatchPolling();
-                resetButtons();
-
-                // 只显示一次 toast
-                if (!toastShown) {
-                    toastShown = true;
-                    addLog('info', `[完成] 批量任务完成！成功: ${data.success}, 失败: ${data.failed}`);
-                    if (data.success > 0) {
-                        toast.success(`批量注册完成，成功 ${data.success} 个`);
-                        // 刷新账号列表
-                        loadRecentAccounts();
-                    } else {
-                        toast.warning('批量注册完成，但没有成功注册任何账号');
-                    }
-                }
+                finalizeBatchIfTerminal(batchId, { ...data, status: data.status || 'completed', finished: true });
             }
         } catch (error) {
             console.error('轮询批量状态失败:', error);
@@ -1675,6 +1727,7 @@ function connectBatchWebSocket(batchId) {
                     try {
                         const snapshot = await api.get(`/registration/streams/batch/${batchId}/snapshot`);
                         reduceRegistrationStream(snapshot);
+                        finalizeBatchIfTerminal(batchId, snapshot?.payload?.batch);
                     } catch (error) {
                         console.error('获取 batch snapshot 失败:', error);
                     }
@@ -1685,34 +1738,7 @@ function connectBatchWebSocket(batchId) {
                     reduceRegistrationStream(data);
 
                     if (data.kind === 'batch_progress_updated' || data.kind === 'stream_closed') {
-                        const payload = data.payload || {};
-                        const status = payload.status || payload.final_status;
-                        const finished = !!payload.finished;
-
-                        if (finished || ['completed', 'failed', 'cancelled', 'cancelling'].includes(status)) {
-                            batchFinalStatus = status || (finished ? 'completed' : null);
-                            batchCompleted = true;
-                            disconnectBatchWebSocket();
-                            resetButtons();
-
-                            if (!toastShown) {
-                                toastShown = true;
-                                if (batchFinalStatus === 'completed') {
-                                    addLog('success', `[完成] Outlook 批量任务完成！成功: ${payload.success || 0}, 失败: ${payload.failed || 0}, 跳过: ${payload.skipped || 0}`);
-                                    if ((payload.success || 0) > 0) {
-                                        toast.success(`Outlook 批量注册完成，成功 ${payload.success} 个`);
-                                        loadRecentAccounts();
-                                    } else {
-                                        toast.warning('Outlook 批量注册完成，但没有成功注册任何账号');
-                                    }
-                                } else if (batchFinalStatus === 'failed') {
-                                    addLog('error', '[错误] 批量任务执行失败');
-                                    toast.error('批量任务执行失败');
-                                } else if (batchFinalStatus === 'cancelled' || batchFinalStatus === 'cancelling') {
-                                    addLog('warning', '[警告] 批量任务已取消');
-                                }
-                            }
-                        }
+                        finalizeBatchIfTerminal(batchId, data.payload);
                     }
                     return;
                 }
@@ -1738,28 +1764,7 @@ function connectBatchWebSocket(batchId) {
                 }
 
                 if (['completed', 'failed', 'cancelled', 'cancelling'].includes(data.status)) {
-                    batchFinalStatus = data.status;
-                    batchCompleted = true;
-                    disconnectBatchWebSocket();
-                    resetButtons();
-
-                    if (!toastShown) {
-                        toastShown = true;
-                        if (data.status === 'completed') {
-                            addLog('success', `[完成] Outlook 批量任务完成！成功: ${data.success}, 失败: ${data.failed}, 跳过: ${data.skipped || 0}`);
-                            if (data.success > 0) {
-                                toast.success(`Outlook 批量注册完成，成功 ${data.success} 个`);
-                                loadRecentAccounts();
-                            } else {
-                                toast.warning('Outlook 批量注册完成，但没有成功注册任何账号');
-                            }
-                        } else if (data.status === 'failed') {
-                            addLog('error', '[错误] 批量任务执行失败');
-                            toast.error('批量任务执行失败');
-                        } else if (data.status === 'cancelled' || data.status === 'cancelling') {
-                            addLog('warning', '[警告] 批量任务已取消');
-                        }
-                    }
+                    finalizeBatchIfTerminal(batchId, data);
                 }
             }
         };
@@ -1859,20 +1864,7 @@ function startOutlookBatchPolling(batchId) {
 
             // 检查是否完成
             if (data.finished) {
-                stopBatchPolling();
-                resetButtons();
-
-                // 只显示一次 toast
-                if (!toastShown) {
-                    toastShown = true;
-                    addLog('info', `[完成] Outlook 批量任务完成！成功: ${data.success}, 失败: ${data.failed}, 跳过: ${data.skipped || 0}`);
-                    if (data.success > 0) {
-                        toast.success(`Outlook 批量注册完成，成功 ${data.success} 个`);
-                        loadRecentAccounts();
-                    } else {
-                        toast.warning('Outlook 批量注册完成，但没有成功注册任何账号');
-                    }
-                }
+                finalizeBatchIfTerminal(batchId, { ...data, status: data.status || 'completed', finished: true });
             }
         } catch (error) {
             console.error('轮询 Outlook 批量状态失败:', error);

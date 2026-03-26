@@ -242,19 +242,20 @@ class TaskManager:
     async def broadcast_task_stream_event(self, task_uuid: str, event: dict) -> None:
         """向 task WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
         ws_key = task_uuid
+        # 关键点：不能使用 targets 快照里的 mode（replaying/active）来做决策，
+        # 否则在 replay -> active 切换窗口可能发生“既不 append pending 也不发送”的静默丢事件。
         with _ws_lock:
-            targets = list(_ws_connections.get(ws_key, {}).values())
+            ws_ids = list(_ws_connections.get(ws_key, {}).keys())
 
-        for target in targets:
-            ws_id = target["ws_id"]
-            mode = target["mode"]
-            websocket = target["websocket"]
-            if mode == "replaying":
-                with _ws_lock:
-                    current = _ws_connections.get(ws_key, {}).get(ws_id)
-                    if current is not None and current["mode"] == "replaying":
-                        current["pending"].append(event)
-                continue
+        for ws_id in ws_ids:
+            with _ws_lock:
+                current = _ws_connections.get(ws_key, {}).get(ws_id)
+                if current is None:
+                    continue
+                if current["mode"] == "replaying":
+                    current["pending"].append(event)
+                    continue
+                websocket = current["websocket"]
             try:
                 await self._send_stream_event(ws_key, websocket, event)
             except Exception as e:
@@ -264,18 +265,17 @@ class TaskManager:
         """向 batch WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
         ws_key = self._stream_ws_key_for_batch(batch_id)
         with _ws_lock:
-            targets = list(_ws_connections.get(ws_key, {}).values())
+            ws_ids = list(_ws_connections.get(ws_key, {}).keys())
 
-        for target in targets:
-            ws_id = target["ws_id"]
-            mode = target["mode"]
-            websocket = target["websocket"]
-            if mode == "replaying":
-                with _ws_lock:
-                    current = _ws_connections.get(ws_key, {}).get(ws_id)
-                    if current is not None and current["mode"] == "replaying":
-                        current["pending"].append(event)
-                continue
+        for ws_id in ws_ids:
+            with _ws_lock:
+                current = _ws_connections.get(ws_key, {}).get(ws_id)
+                if current is None:
+                    continue
+                if current["mode"] == "replaying":
+                    current["pending"].append(event)
+                    continue
+                websocket = current["websocket"]
             try:
                 await self._send_stream_event(ws_key, websocket, event)
             except Exception as e:

@@ -279,6 +279,30 @@ const context = {{
           }},
         }};
       }}
+      if (path === '/registration/streams/batch/batch-001/snapshot') {{
+        return {{
+          seq: 20,
+          stream: 'batch:batch-001',
+          kind: 'snapshot',
+          payload: {{
+            batch: {{
+              batch_id: 'batch-001',
+              status: 'completed',
+              finished: true,
+              total: 2,
+              completed: 2,
+              success: 2,
+              failed: 0,
+              skipped: 0,
+              is_unlimited: false,
+              consecutive_failures: 0,
+              max_consecutive_failures: 10,
+              domain_stats: [],
+            }},
+            logs_tail: ['batch-done'],
+          }},
+        }};
+      }}
 
       return {{ accounts: [], finished: false }};
     }},
@@ -372,6 +396,35 @@ async function runScenario() {{
       await ws.onmessage({{
         data: JSON.stringify({{
           stream: 'task:task-single-01',
+          kind: 'snapshot_required',
+          payload: {{ reason: 'after_seq_expired' }},
+        }}),
+      }});
+
+      return {{
+        start_disabled: !!getElement('start-btn').disabled,
+        cancel_disabled: !!getElement('cancel-btn').disabled,
+        connection_status: String(getElement('registration-stream-status').textContent || ''),
+        ws_ready_state: ws.readyState,
+      }};
+    }}
+    case 'batch_snapshot_required_terminal_snapshot_should_finalize': {{
+      // 模拟：按钮已进入运行态
+      getElement('start-btn').disabled = true;
+      getElement('cancel-btn').disabled = false;
+
+      // 触发批量注册（创建 batch websocket）
+      const requestPayload = {{ email_service_type: 'tempmail' }};
+      await exported.handleBatchRegistration(requestPayload);
+
+      const ws = wsInstances[0];
+      if (!ws) {{
+        throw new Error('MockWebSocket instance missing');
+      }}
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          stream: 'batch:batch-001',
           kind: 'snapshot_required',
           payload: {{ reason: 'after_seq_expired' }},
         }}),

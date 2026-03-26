@@ -15,6 +15,26 @@ class FakeWebSocket:
         self.messages.append(payload)
 
 
+class _ModeFlipDict(dict):
+    """测试专用：第一次读取 mode 时返回 replaying，但立刻把自身 mode 切到 active。
+
+    用于稳定复现：broadcast 读取到旧 mode 后，状态已切换到 active 的临界区竞态。
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._mode_read_once = False
+
+    def __getitem__(self, key):
+        if key == "mode" and not self._mode_read_once:
+            self._mode_read_once = True
+            # 先返回 replaying，再切 active（模拟 replay -> active 切换窗口）
+            value = "replaying"
+            super().__setitem__("mode", "active")
+            return value
+        return super().__getitem__(key)
+
+
 @pytest.fixture(autouse=True)
 def clean_task_manager_globals():
     names = [
@@ -166,3 +186,59 @@ async def test_batch_websocket_replay_state_buffers_pending_events_and_flushes_i
 
     assert [item["seq"] for item in websocket.messages] == [1, 2, 3]
     assert websocket.messages[-1]["payload"]["message"] == "late-line"
+
+
+@pytest.mark.anyio
+async def test_broadcast_task_stream_event_does_not_drop_event_when_mode_flips_to_active():
+    manager = TaskManager()
+    manager.set_loop(asyncio.get_running_loop())
+
+    websocket = FakeWebSocket()
+    task_uuid = "task-race-mode-flip"
+
+    manager.register_websocket(task_uuid, websocket, mode="replaying", after_seq=0)
+
+    # 将 ws state 替换为“读取 mode 时自动切 active”的 dict，稳定模拟竞态
+    ws_id = id(websocket)
+    original = task_manager_module._ws_connections[task_uuid][ws_id]
+    task_manager_module._ws_connections[task_uuid][ws_id] = _ModeFlipDict(original)
+
+    event = manager.append_stream_event(
+        task_stream_id(task_uuid),
+        "log_appended",
+        {"task_uuid": task_uuid, "message": "line-1"},
+    )
+    await manager.broadcast_task_stream_event(task_uuid, event)
+
+    state = task_manager_module._ws_connections[task_uuid][ws_id]
+    delivered = any(item.get("payload", {}).get("message") == "line-1" for item in websocket.messages)
+    queued = any(item.get("payload", {}).get("message") == "line-1" for item in state.get("pending", []))
+    assert delivered or queued, "事件必须要么被发送，要么进入 pending，不能静默丢失"
+
+
+@pytest.mark.anyio
+async def test_broadcast_batch_stream_event_does_not_drop_event_when_mode_flips_to_active():
+    manager = TaskManager()
+    manager.set_loop(asyncio.get_running_loop())
+
+    websocket = FakeWebSocket()
+    batch_id = "batch-race-mode-flip"
+
+    manager.register_batch_websocket(batch_id, websocket, mode="replaying", after_seq=0)
+
+    ws_key = manager._stream_ws_key_for_batch(batch_id)
+    ws_id = id(websocket)
+    original = task_manager_module._ws_connections[ws_key][ws_id]
+    task_manager_module._ws_connections[ws_key][ws_id] = _ModeFlipDict(original)
+
+    event = manager.append_stream_event(
+        batch_stream_id(batch_id),
+        "log_appended",
+        {"batch_id": batch_id, "message": "batch-line-1"},
+    )
+    await manager.broadcast_batch_stream_event(batch_id, event)
+
+    state = task_manager_module._ws_connections[ws_key][ws_id]
+    delivered = any(item.get("payload", {}).get("message") == "batch-line-1" for item in websocket.messages)
+    queued = any(item.get("payload", {}).get("message") == "batch-line-1" for item in state.get("pending", []))
+    assert delivered or queued, "事件必须要么被发送，要么进入 pending，不能静默丢失"

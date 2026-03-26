@@ -179,6 +179,14 @@ def test_app_js_snapshot_required_terminal_task_snapshot_finalizes_single_task_f
     assert result["connection_status"] == "已断开"
 
 
+def test_app_js_snapshot_required_terminal_batch_snapshot_finalizes_batch_flow():
+    result = run_app_js_scenario("batch_snapshot_required_terminal_snapshot_should_finalize")
+    assert result["start_disabled"] is False
+    assert result["cancel_disabled"] is True
+    assert result["ws_ready_state"] == 3  # MockWebSocket.CLOSED
+    assert result["connection_status"] == "已断开"
+
+
 def test_execution_and_configuration_templates_extend_workspace_shell():
     for path in [
         "templates/accounts.html",
