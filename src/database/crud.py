@@ -155,6 +155,8 @@ def mark_account_expired_by_email_and_cpa(
         .update(
             {
                 Account.status: "expired",
+                Account.cpa_uploaded: False,
+                Account.cpa_uploaded_at: None,
                 Account.invalidated_at: now,
                 Account.invalid_reason: reason,
                 Account.updated_at: now,
@@ -186,6 +188,8 @@ def mark_accounts_expired_by_emails_and_cpa(
         .update(
             {
                 Account.status: "expired",
+                Account.cpa_uploaded: False,
+                Account.cpa_uploaded_at: None,
                 Account.invalidated_at: now,
                 Account.invalid_reason: reason,
                 Account.updated_at: now,

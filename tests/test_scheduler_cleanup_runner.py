@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from src.core.time import utc_now_naive
 from src.database import crud
 from src.database.models import Base, ScheduledRun
 from src.database.session import DatabaseSessionManager
@@ -85,7 +86,14 @@ def test_cleanup_runner_marks_local_accounts_expired_for_matching_primary_cpa(te
     service, plan, run = _create_cleanup_plan_and_run(temp_db)
 
     account = crud.create_account(temp_db, email="a@example.com", email_service="tempmail")
-    crud.update_account(temp_db, account.id, primary_cpa_service_id=service.id, status="active")
+    crud.update_account(
+        temp_db,
+        account.id,
+        primary_cpa_service_id=service.id,
+        status="active",
+        cpa_uploaded=True,
+        cpa_uploaded_at=utc_now_naive(),
+    )
 
     monkeypatch.setattr(
         cleanup_runner,
@@ -100,6 +108,8 @@ def test_cleanup_runner_marks_local_accounts_expired_for_matching_primary_cpa(te
     refreshed = crud.get_account_by_id(temp_db, account.id)
     assert refreshed.status == "expired"
     assert refreshed.invalid_reason == "cpa_cleanup"
+    assert refreshed.cpa_uploaded is False
+    assert refreshed.cpa_uploaded_at is None
     assert summary["local_marked_expired"] == 1
 
 
