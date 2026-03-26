@@ -427,6 +427,9 @@ async def run_scheduled_plan(plan_id: int, request: Request):
             detail = "关联 CPA 服务正在执行其他计划"
         raise HTTPException(status_code=409, detail=detail)
     except SchedulerDispatchError as exc:
+        message = str(exc).strip()
+        if "does not exist" in message.lower():
+            raise HTTPException(status_code=404, detail="定时计划不存在") from exc
         raise HTTPException(status_code=500, detail=str(exc) or "计划触发失败") from exc
 
     return {"success": True, "plan_id": plan_id, "run_id": int(run_id)}

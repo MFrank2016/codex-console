@@ -267,6 +267,24 @@ def test_manual_run_route_returns_500_when_dispatch_fails(client, seeded_schedul
     assert response.status_code == 500
 
 
+def test_manual_run_route_returns_404_when_plan_disappears_during_dispatch(
+    client,
+    seeded_scheduled_data,
+    monkeypatch,
+):
+    plan_id = seeded_scheduled_data["plan"].id
+
+    def _raise_missing_plan(_plan_id: int):
+        raise SchedulerDispatchError(f"scheduled plan {plan_id} does not exist")
+
+    monkeypatch.setattr(client.app.state.scheduler_engine, "trigger_plan_now", _raise_missing_plan)
+
+    response = client.post(f"/api/scheduled-plans/{plan_id}/run")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "定时计划不存在"
+
+
 def test_manual_run_route_returns_cpa_busy_message_when_conflict_is_from_shared_cpa(
     client,
     seeded_scheduled_data,
