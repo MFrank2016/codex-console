@@ -175,3 +175,13 @@ def test_batch_check_subscription_clears_subscription_time_when_result_is_free(t
         assert persisted.subscription_at is None
     finally:
         verify_session.close()
+
+
+def test_open_browser_incognito_rejects_blank_url_after_trim():
+    with pytest.raises(HTTPException) as exc_info:
+        payment_routes.open_browser_incognito(
+            payment_routes.OpenIncognitoRequest(url="   ")
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "URL 不能为空"

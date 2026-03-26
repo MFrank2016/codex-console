@@ -107,7 +107,8 @@ def generate_payment_link(request: GenerateLinkRequest):
 @router.post("/open-incognito")
 def open_browser_incognito(request: OpenIncognitoRequest):
     """后端以无痕模式打开指定 URL，可注入账号 cookie"""
-    if not request.url:
+    normalized_url = (request.url or "").strip()
+    if not normalized_url:
         raise HTTPException(status_code=400, detail="URL 不能为空")
 
     cookies_str = None
@@ -117,7 +118,7 @@ def open_browser_incognito(request: OpenIncognitoRequest):
             if account:
                 cookies_str = account.cookies
 
-    success = open_url_incognito(request.url, cookies_str)
+    success = open_url_incognito(normalized_url, cookies_str)
     if success:
         return {"success": True, "message": "已在无痕模式打开浏览器"}
     return {"success": False, "message": "未找到可用的浏览器，请手动复制链接"}

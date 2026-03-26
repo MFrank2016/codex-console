@@ -153,3 +153,38 @@ def test_refresh_account_token_returns_not_found_for_missing_account(tmp_path, m
 
     assert result.success is False
     assert result.error_message == "账号不存在"
+
+
+def test_validate_token_maps_http_statuses(monkeypatch):
+    manager = TokenRefreshManager(proxy_url="http://proxy.local:8000")
+
+    monkeypatch.setattr(manager, "_create_session", lambda: _FakeSession(_FakeResponse(401, {})))
+    assert manager.validate_token("access-token") == (False, "Token 无效或已过期")
+
+    monkeypatch.setattr(manager, "_create_session", lambda: _FakeSession(_FakeResponse(403, {})))
+    assert manager.validate_token("access-token") == (False, "账号可能被封禁")
+
+    monkeypatch.setattr(manager, "_create_session", lambda: _FakeSession(_FakeResponse(500, {})))
+    assert manager.validate_token("access-token") == (False, "验证失败: HTTP 500")
+
+
+def test_validate_account_token_handles_missing_account_and_missing_access_token(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+
+    missing_result = token_refresh_module.validate_account_token(999999, proxy_url="http://proxy.local:8000")
+    assert missing_result == (False, "账号不存在")
+
+    session = manager.SessionLocal()
+    try:
+        account = crud.create_account(
+            session,
+            email="no-access-token@example.com",
+            email_service="tempmail",
+        )
+        account_id = account.id
+    finally:
+        session.close()
+
+    no_access_token_result = token_refresh_module.validate_account_token(account_id, proxy_url="http://proxy.local:8000")
+    assert no_access_token_result == (False, "账号没有 access_token")
