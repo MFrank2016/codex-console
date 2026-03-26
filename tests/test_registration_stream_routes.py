@@ -311,7 +311,6 @@ def test_task_events_route_returns_live_log_before_database_flush():
     assert response.json()["events"][-1]["payload"]["entry"]["message"] == "live-line"
 
 
-
 def test_registration_stream_alias_routes_delegate_to_realtime_streams():
     app = create_app()
     task_manager.update_status("task-alias-1", "running")

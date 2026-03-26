@@ -47,26 +47,26 @@ async def _serve_stream_websocket(
     await websocket.accept()
     after_seq = _parse_after_seq(websocket)
 
-    register(after_seq)
-
-    if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
-        await send_control(
-            websocket,
-            {
-                "stream": stream_id,
-                "kind": "snapshot_required",
-                "payload": {"reason": "after_seq_expired"},
-            },
-        )
-    else:
-        replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
-        for event in replay:
-            await send_event(websocket, event)
-
-    await finish_replay(websocket)
-    logger.info("%s", connected_log_label)
-
     try:
+        register(after_seq)
+
+        if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
+            await send_control(
+                websocket,
+                {
+                    "stream": stream_id,
+                    "kind": "snapshot_required",
+                    "payload": {"reason": "after_seq_expired"},
+                },
+            )
+        else:
+            replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
+            for event in replay:
+                await send_event(websocket, event)
+
+        await finish_replay(websocket)
+        logger.info("%s", connected_log_label)
+
         while True:
             try:
                 data = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)

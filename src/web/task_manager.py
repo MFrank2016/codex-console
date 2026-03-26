@@ -364,7 +364,7 @@ class TaskManager:
             try:
                 await self._send_stream_event(ws_key, websocket, event)
             except Exception as e:
-                logger.warning(f"WebSocket 发送 {label} stream 事件失败: {e}")
+                logger.warning("WebSocket 发送 %s stream 事件失败: %s", label, e)
 
     async def broadcast_task_stream_event(self, task_uuid: str, event: dict) -> None:
         """向 task WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
@@ -419,7 +419,7 @@ class TaskManager:
                 try:
                     await self._send_stream_event(ws_key, websocket, item)
                 except Exception as e:
-                    logger.warning(f"WebSocket replay flush 发送失败: {e}")
+                    logger.warning("WebSocket replay flush 发送失败: %s", e)
                     return
 
             with _ws_lock:
