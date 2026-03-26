@@ -16,6 +16,8 @@ from src.web.realtime_streams import (
     LOG_TAIL_SIZE,
     task_stream_id,
     batch_stream_id,
+    run_stream_id,
+    build_log_entry,
 )
 logger = logging.getLogger(__name__)
 
@@ -25,8 +27,8 @@ _executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="reg_worker")
 # 全局元锁：保护所有 defaultdict 的首次 key 创建（避免多线程竞态）
 _meta_lock = threading.Lock()
 
-# 任务日志队列 (task_uuid -> list of logs)
-_log_queues: Dict[str, List[str]] = defaultdict(list)
+# 任务日志队列 (task_uuid -> list of structured entries)
+_log_queues: Dict[str, List[dict]] = defaultdict(list)
 _log_locks: Dict[str, threading.Lock] = {}
 
 # WebSocket 连接管理 (task_uuid -> list of websockets)
@@ -47,8 +49,14 @@ _task_cancelled: Dict[str, bool] = {}
 
 # 批量任务状态 (batch_id -> dict)
 _batch_status: Dict[str, dict] = {}
-_batch_logs: Dict[str, List[str]] = defaultdict(list)
+_batch_logs: Dict[str, List[dict]] = defaultdict(list)
 _batch_locks: Dict[str, threading.Lock] = {}
+
+# run 任务状态 (run_id -> dict)
+_run_status: Dict[int, dict] = {}
+_run_progress: Dict[int, dict] = {}
+_run_logs: Dict[int, List[dict]] = defaultdict(list)
+_run_locks: Dict[int, threading.Lock] = {}
 
 _stream_seq: Dict[str, int] = {}
 _stream_events: Dict[str, deque] = {}
@@ -63,7 +71,7 @@ def _get_stream_lock(stream_id: str) -> threading.Lock:
     return _stream_locks[stream_id]
 
 
-def _get_logs_tail(task_uuid: str, tail_size: int) -> List[str]:
+def _get_logs_tail(task_uuid: str, tail_size: int) -> List[dict]:
     with _get_log_lock(task_uuid):
         logs = _log_queues.get(task_uuid, [])
         if tail_size >= len(logs):
@@ -71,9 +79,25 @@ def _get_logs_tail(task_uuid: str, tail_size: int) -> List[str]:
         return list(logs[-tail_size:])
 
 
-def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[str]:
+def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[dict]:
     with _get_batch_lock(batch_id):
         logs = _batch_logs.get(batch_id, [])
+        if tail_size >= len(logs):
+            return list(logs)
+        return list(logs[-tail_size:])
+
+
+def _get_run_lock(run_id: int) -> threading.Lock:
+    if run_id not in _run_locks:
+        with _meta_lock:
+            if run_id not in _run_locks:
+                _run_locks[run_id] = threading.Lock()
+    return _run_locks[run_id]
+
+
+def _get_run_logs_tail(run_id: int, tail_size: int) -> List[dict]:
+    with _get_run_lock(run_id):
+        logs = _run_logs.get(run_id, [])
         if tail_size >= len(logs):
             return list(logs)
         return list(logs[-tail_size:])
@@ -168,6 +192,26 @@ class TaskManager:
             "timestamp": utc_now().isoformat(),
             "payload": {
                 "batch": batch_snapshot,
+                "logs_tail": logs_tail,
+            },
+        }
+
+    def build_run_stream_snapshot(self, run_id: int) -> dict:
+        stream_id = run_stream_id(run_id)
+        run_snapshot = dict(_run_status.get(run_id) or {})
+        run_progress = _run_progress.get(run_id)
+        logs_tail = _get_run_logs_tail(run_id, LOG_TAIL_SIZE)
+        lock = _get_stream_lock(stream_id)
+        with lock:
+            seq = _stream_seq.get(stream_id, 0)
+        return {
+            "seq": seq,
+            "stream": stream_id,
+            "kind": "snapshot",
+            "timestamp": utc_now().isoformat(),
+            "payload": {
+                "run": run_snapshot,
+                "run_progress": dict(run_progress) if isinstance(run_progress, dict) else None,
                 "logs_tail": logs_tail,
             },
         }
@@ -379,12 +423,21 @@ class TaskManager:
     def add_log(self, task_uuid: str, log_message: str):
         """添加日志并推送到 WebSocket（线程安全）"""
         with _get_log_lock(task_uuid):
-            _log_queues[task_uuid].append(log_message)
-            event = self.append_stream_event(
-                task_stream_id(task_uuid),
-                "log_appended",
-                {"task_uuid": task_uuid, "message": log_message},
+            stream_id = task_stream_id(task_uuid)
+            entry = build_log_entry(
+                stream=stream_id,
+                message=log_message,
+                source="task",
             )
+            _log_queues[task_uuid].append(entry)
+            event = self.append_stream_event(
+                stream_id,
+                "log_appended",
+                {"task_uuid": task_uuid, "entry": entry},
+            )
+            event_entry = event["payload"]["entry"]
+            event_entry["seq"] = event["seq"]
+            event_entry["stream"] = event["stream"]
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
@@ -424,7 +477,7 @@ class TaskManager:
     def get_logs(self, task_uuid: str) -> List[str]:
         """获取任务的所有日志"""
         with _get_log_lock(task_uuid):
-            return _log_queues.get(task_uuid, []).copy()
+            return [str(item.get("message", "")) for item in _log_queues.get(task_uuid, [])]
 
     def update_status(self, task_uuid: str, status: str, **kwargs):
         """更新任务状态"""
@@ -531,6 +584,70 @@ class TaskManager:
             except Exception as e:
                 logger.warning(f"广播 task stream 关闭事件失败: {e}")
 
+    def update_run_status(self, run_id: int, status: str, **kwargs):
+        """更新 run 状态快照，并写入 run stream 状态事件。"""
+        snapshot = _run_status.setdefault(run_id, {})
+        snapshot["status"] = status
+        snapshot.update(kwargs)
+
+        if "run_progress" in kwargs and kwargs["run_progress"] is not None:
+            _run_progress[run_id] = dict(kwargs["run_progress"])
+
+        self.append_stream_event(
+            run_stream_id(run_id),
+            "run_status_changed",
+            {"run_id": run_id, "status": status, **kwargs},
+        )
+
+    def add_run_log(self, run_id: int, log_entry: dict):
+        """追加 run 结构化日志，并写入 stream 事件。"""
+        stream_id = run_stream_id(run_id)
+        known_fields = {"timestamp", "display_time", "level", "message", "raw", "source", "stream", "seq"}
+        message = str(log_entry.get("message", ""))
+        extra = {k: v for k, v in log_entry.items() if k not in known_fields}
+
+        with _get_run_lock(run_id):
+            entry = build_log_entry(
+                stream=stream_id,
+                message=message,
+                timestamp=log_entry.get("timestamp"),
+                display_time=log_entry.get("display_time"),
+                level=log_entry.get("level", "INFO"),
+                raw=log_entry.get("raw"),
+                source=log_entry.get("source", "run"),
+                extra=extra,
+            )
+            _run_logs[run_id].append(entry)
+            event = self.append_stream_event(
+                stream_id,
+                "log_appended",
+                {"run_id": run_id, "entry": entry},
+            )
+            event_entry = event["payload"]["entry"]
+            event_entry["seq"] = event["seq"]
+            event_entry["stream"] = event["stream"]
+
+    def run_stream_exists(self, run_id: int) -> bool:
+        stream_id = run_stream_id(run_id)
+        return (
+            run_id in _run_status
+            or run_id in _run_progress
+            or run_id in _run_logs
+            or stream_id in _stream_events
+        )
+
+    def close_run_stream(self, run_id: int, *, final_status: str):
+        snapshot = _run_status.setdefault(run_id, {})
+        if snapshot.get("stream_closed"):
+            return
+        snapshot["stream_closed"] = True
+        snapshot["stream_final_status"] = final_status
+        self.append_stream_event(
+            run_stream_id(run_id),
+            "stream_closed",
+            {"run_id": run_id, "final_status": final_status},
+        )
+
     def init_experiment(
         self,
         experiment_id: int,
@@ -605,12 +722,21 @@ class TaskManager:
     def add_batch_log(self, batch_id: str, log_message: str):
         """添加批量任务日志并推送"""
         with _get_batch_lock(batch_id):
-            _batch_logs[batch_id].append(log_message)
-            event = self.append_stream_event(
-                batch_stream_id(batch_id),
-                "log_appended",
-                {"batch_id": batch_id, "message": log_message},
+            stream_id = batch_stream_id(batch_id)
+            entry = build_log_entry(
+                stream=stream_id,
+                message=log_message,
+                source="batch",
             )
+            _batch_logs[batch_id].append(entry)
+            event = self.append_stream_event(
+                stream_id,
+                "log_appended",
+                {"batch_id": batch_id, "entry": entry},
+            )
+            event_entry = event["payload"]["entry"]
+            event_entry["seq"] = event["seq"]
+            event_entry["stream"] = event["stream"]
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
@@ -683,7 +809,7 @@ class TaskManager:
     def get_batch_logs(self, batch_id: str) -> List[str]:
         """获取批量任务日志"""
         with _get_batch_lock(batch_id):
-            return _batch_logs.get(batch_id, []).copy()
+            return [str(item.get("message", "")) for item in _batch_logs.get(batch_id, [])]
 
     def is_batch_cancelled(self, batch_id: str) -> bool:
         """检查批量任务是否已取消"""

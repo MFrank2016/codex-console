@@ -49,6 +49,10 @@ def clean_task_manager_globals():
         "_batch_status",
         "_batch_logs",
         "_batch_locks",
+        "_run_status",
+        "_run_progress",
+        "_run_logs",
+        "_run_locks",
         "_stream_seq",
         "_stream_events",
         "_stream_locks",
@@ -112,9 +116,9 @@ async def test_task_manager_builds_snapshot_and_incremental_events():
     assert snapshot["payload"]["task"]["status"] == "running"
     assert snapshot["payload"]["current_step"]["step_key"] == "create_email"
     assert snapshot["seq"] == events[-1]["seq"]
-    assert snapshot["payload"]["logs_tail"] == ["[12:00:00] create email"]
+    assert snapshot["payload"]["logs_tail"][0]["message"] == "[12:00:00] create email"
     assert [item["seq"] for item in events] == [1, 2, 3]
-    assert events[-1]["payload"]["message"] == "[12:00:00] create email"
+    assert events[-1]["payload"]["entry"]["message"] == "[12:00:00] create email"
 
 
 def test_task_stream_snapshot_includes_explicit_progress_contract():
@@ -166,6 +170,82 @@ def test_task_step_updated_event_includes_explicit_progress_contract():
     assert events[-1]["kind"] == "task_step_updated"
     assert events[-1]["payload"]["task_progress"]["step_index"] == 2
     assert events[-1]["payload"]["task_progress"]["total_steps"] == 5
+
+
+def test_run_stream_snapshot_uses_structured_log_entries():
+    manager = TaskManager()
+    run_id = 321
+
+    manager.update_run_status(
+        run_id,
+        status="running",
+        id=run_id,
+        plan_id=12,
+        plan_name="cleanup",
+        task_type="cpa_cleanup",
+        is_running=True,
+        can_stop=True,
+        log_version=4,
+        last_log_at="2026-03-26T10:00:00+08:00",
+    )
+    manager.add_run_log(
+        run_id,
+        {
+            "timestamp": "2026-03-26T10:00:00+08:00",
+            "display_time": "10:00:00",
+            "level": "INFO",
+            "message": "cleanup runner start",
+            "raw": "2026-03-26 10:00:00.123 [INFO] cleanup runner start",
+            "source": "scheduler",
+        },
+    )
+
+    snapshot = manager.build_run_stream_snapshot(run_id)
+    assert snapshot["stream"] == "run:321"
+    assert snapshot["kind"] == "snapshot"
+    assert isinstance(snapshot["seq"], int)
+    assert snapshot["payload"]["run"]["status"] == "running"
+    assert snapshot["payload"]["run"]["id"] == 321
+    assert snapshot["payload"]["run"]["plan_id"] == 12
+    assert snapshot["payload"]["run"]["plan_name"] == "cleanup"
+    assert snapshot["payload"]["run"]["task_type"] == "cpa_cleanup"
+    assert snapshot["payload"]["run"]["is_running"] is True
+    assert snapshot["payload"]["run"]["can_stop"] is True
+    assert snapshot["payload"]["run"]["log_version"] == 4
+    assert snapshot["payload"]["logs_tail"][0]["level"] == "INFO"
+    assert snapshot["payload"]["logs_tail"][0]["message"] == "cleanup runner start"
+
+
+def test_task_and_batch_stream_snapshots_also_use_structured_logs_tail():
+    manager = TaskManager()
+    manager.update_status("task-structured-1", "running")
+    manager.add_log("task-structured-1", "proxy bootstrap ok")
+    manager.init_batch("batch-structured-1", total=2)
+    manager.add_batch_log("batch-structured-1", "batch proxy warmup")
+
+    task_snapshot = manager.build_task_stream_snapshot("task-structured-1")
+    batch_snapshot = manager.build_batch_stream_snapshot("batch-structured-1")
+    task_events = manager.get_stream_events_after("task:task-structured-1", after_seq=0)
+    batch_events = manager.get_stream_events_after("batch:batch-structured-1", after_seq=0)
+
+    assert task_snapshot["payload"]["logs_tail"][0]["message"] == "proxy bootstrap ok"
+    assert task_snapshot["payload"]["logs_tail"][0]["level"] == "INFO"
+    assert task_events[-1]["payload"]["entry"]["message"] == "proxy bootstrap ok"
+    assert task_events[-1]["payload"]["entry"]["seq"] == task_events[-1]["seq"]
+    assert batch_snapshot["payload"]["logs_tail"][0]["message"] == "batch proxy warmup"
+    assert batch_events[-1]["payload"]["entry"]["stream"] == batch_events[-1]["stream"]
+
+
+def test_run_stream_close_appends_terminal_event():
+    manager = TaskManager()
+    run_id = 654
+
+    manager.update_run_status(run_id, status="running")
+    manager.close_run_stream(run_id, final_status="failed")
+
+    events = manager.get_stream_events_after("run:654", after_seq=0)
+    assert events[-1]["kind"] == "stream_closed"
+    assert events[-1]["payload"]["final_status"] == "failed"
 
 
 @pytest.mark.anyio
