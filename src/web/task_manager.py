@@ -380,9 +380,8 @@ class TaskManager:
     async def send_run_control_message(self, run_id: int, websocket: Any, payload: dict) -> None:
         await self._send_control_message(self._stream_ws_key_for_run(run_id), websocket, payload)
 
-    async def finish_task_websocket_replay(self, task_uuid: str, websocket: Any) -> None:
+    async def _finish_websocket_replay(self, ws_key: str, websocket: Any) -> None:
         """结束 replay：按 seq flush pending，再切换为 active。"""
-        ws_key = task_uuid
         while True:
             state = self._get_ws_state(ws_key, websocket)
             if state is None:
@@ -412,41 +411,15 @@ class TaskManager:
                     continue
                 current["mode"] = "active"
                 return
+
+    async def finish_task_websocket_replay(self, task_uuid: str, websocket: Any) -> None:
+        await self._finish_websocket_replay(task_uuid, websocket)
 
     async def finish_batch_websocket_replay(self, batch_id: str, websocket: Any) -> None:
-        ws_key = self._stream_ws_key_for_batch(batch_id)
-        while True:
-            state = self._get_ws_state(ws_key, websocket)
-            if state is None:
-                return
-            with _ws_lock:
-                current = _ws_connections.get(ws_key, {}).get(state["ws_id"])
-                if current is None:
-                    return
-                last_sent_seq = current["last_sent_seq"]
-                pending = list(current["pending"])
-                current["pending"] = []
-
-            to_send = [item for item in pending if int(item.get("seq", 0)) > last_sent_seq]
-            to_send.sort(key=lambda item: int(item.get("seq", 0)))
-            for item in to_send:
-                try:
-                    await self._send_stream_event(ws_key, websocket, item)
-                except Exception as e:
-                    logger.warning(f"WebSocket replay flush 发送失败: {e}")
-                    return
-
-            with _ws_lock:
-                current = _ws_connections.get(ws_key, {}).get(state["ws_id"])
-                if current is None:
-                    return
-                if current["pending"]:
-                    continue
-                current["mode"] = "active"
-                return
+        await self._finish_websocket_replay(self._stream_ws_key_for_batch(batch_id), websocket)
 
     async def finish_run_websocket_replay(self, run_id: int, websocket: Any) -> None:
-        await self.finish_task_websocket_replay(self._stream_ws_key_for_run(run_id), websocket)
+        await self._finish_websocket_replay(self._stream_ws_key_for_run(run_id), websocket)
 
     def get_loop(self) -> Optional[asyncio.AbstractEventLoop]:
         """获取事件循环"""

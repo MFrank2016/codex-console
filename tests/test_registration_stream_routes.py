@@ -1,11 +1,12 @@
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 import pytest
-import queue
-import threading
+
 from src.web.app import create_app
 from src.web.realtime_streams import STREAM_BUFFER_SIZE
 from src.web.task_manager import reset_state_for_tests, task_manager
-from uuid import uuid4
+from tests.test_helpers import receive_json_with_timeout
 
 
 @pytest.fixture(autouse=True)
@@ -13,26 +14,6 @@ def clean_registration_stream_state():
     reset_state_for_tests()
     yield
     reset_state_for_tests()
-
-
-def _receive_json_with_timeout(ws, *, timeout_s: float = 1.0):
-    result_queue: queue.Queue = queue.Queue(maxsize=1)
-
-    def _target():
-        try:
-            result_queue.put(ws.receive_json())
-        except Exception as exc:  # pragma: no cover - 测试辅助兜底
-            result_queue.put(exc)
-
-    thread = threading.Thread(target=_target, daemon=True)
-    thread.start()
-    try:
-        result = result_queue.get(timeout=timeout_s)
-    except queue.Empty as exc:
-        raise AssertionError(f"WebSocket receive_json 超时({timeout_s}s)，可能存在丢消息/卡死") from exc
-    if isinstance(result, Exception):
-        raise result
-    return result
 
 
 def test_task_and_batch_stream_routes_return_expected_contract():
@@ -224,7 +205,7 @@ def test_task_websocket_snapshot_required_connection_keeps_receiving_live_events
             assert payload["kind"] == "snapshot_required"
 
             task_manager.add_log(task_uuid, "after-snapshot-required")
-            event = _receive_json_with_timeout(ws, timeout_s=1.5)
+            event = receive_json_with_timeout(ws, timeout_s=1.5)
 
     assert event["stream"] == f"task:{task_uuid}"
     assert event["kind"] == "log_appended"
@@ -245,7 +226,7 @@ def test_batch_websocket_snapshot_required_connection_keeps_receiving_live_event
             assert payload["kind"] == "snapshot_required"
 
             task_manager.add_batch_log(batch_id, "after-snapshot-required")
-            event = _receive_json_with_timeout(ws, timeout_s=1.5)
+            event = receive_json_with_timeout(ws, timeout_s=1.5)
 
     assert event["stream"] == f"batch:{batch_id}"
     assert event["kind"] == "log_appended"
@@ -265,45 +246,42 @@ def test_task_websocket_keeps_ping_pong_and_cancel_as_control_messages():
             assert pong == {"type": "pong"}
 
             ws.send_json({"type": "cancel"})
-            event = _receive_json_with_timeout(ws, timeout_s=1.5)
+            event = receive_json_with_timeout(ws, timeout_s=1.5)
             assert event["stream"] == f"task:{task_uuid}"
             assert event["kind"] == "task_status_changed"
             assert event["payload"]["status"] == "cancelling"
 
 
-def test_task_websocket_does_not_lose_events_emitted_during_replay_handshake():
+def test_task_websocket_does_not_lose_events_emitted_during_replay_handshake(monkeypatch):
     app = create_app()
     task_uuid = "task-ws-race"
     task_manager.update_status(task_uuid, "running")
     task_manager.add_log(task_uuid, "line-1")
 
-    original = task_manager.get_stream_events_after
+    original_get_stream_events_after = task_manager.get_stream_events_after
     call_count = {"n": 0}
 
     def _patched(stream_id: str, after_seq: int):
         call_count["n"] += 1
-        result = original(stream_id, after_seq=after_seq)
+        result = original_get_stream_events_after(stream_id, after_seq=after_seq)
         # 模拟：replay 已经读取完（replay 列表已确定），恰好有新事件产生
         if call_count["n"] == 1 and stream_id == f"task:{task_uuid}":
             task_manager.add_log(task_uuid, "late-line")
         return result
 
-    task_manager.get_stream_events_after = _patched  # monkeypatch（避免引入 pytest monkeypatch 依赖）
-    try:
-        with TestClient(app) as client:
-            with client.websocket_connect(f"/api/ws/task/{task_uuid}?after_seq=0") as ws:
-                first = ws.receive_json()
-                second = ws.receive_json()
-                third = _receive_json_with_timeout(ws, timeout_s=1.5)
+    monkeypatch.setattr(task_manager, "get_stream_events_after", _patched)
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/ws/task/{task_uuid}?after_seq=0") as ws:
+            first = ws.receive_json()
+            second = ws.receive_json()
+            third = receive_json_with_timeout(ws, timeout_s=1.5)
 
-        seqs = [first["seq"], second["seq"], third["seq"]]
-        assert seqs == sorted(seqs)
-        assert len(set(seqs)) == len(seqs)
-        assert third["kind"] == "log_appended"
-        assert third["payload"] == {"entry": third["payload"]["entry"]}
-        assert third["payload"]["entry"]["message"] == "late-line"
-    finally:
-        task_manager.get_stream_events_after = original
+    seqs = [first["seq"], second["seq"], third["seq"]]
+    assert seqs == sorted(seqs)
+    assert len(set(seqs)) == len(seqs)
+    assert third["kind"] == "log_appended"
+    assert third["payload"] == {"entry": third["payload"]["entry"]}
+    assert third["payload"]["entry"]["message"] == "late-line"
 
 
 def test_batch_websocket_cancel_emits_stream_event_confirmation():
@@ -314,14 +292,14 @@ def test_batch_websocket_cancel_emits_stream_event_confirmation():
     with TestClient(app) as client:
         with client.websocket_connect(f"/api/ws/batch/{batch_id}?after_seq=9999") as ws:
             ws.send_json({"type": "cancel"})
-            event = _receive_json_with_timeout(ws, timeout_s=1.5)
+            event = receive_json_with_timeout(ws, timeout_s=1.5)
 
     assert event["stream"] == f"batch:{batch_id}"
     assert event["kind"] == "batch_progress_updated"
     assert event["payload"]["status"] == "cancelling"
 
 
-def test_task_events_route_returns_live_log_before_database_flush(monkeypatch):
+def test_task_events_route_returns_live_log_before_database_flush():
     task_manager.update_status("task-live-fallback", "running")
     task_manager.add_log("task-live-fallback", "live-line")
 
