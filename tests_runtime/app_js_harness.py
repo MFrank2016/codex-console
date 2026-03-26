@@ -175,6 +175,7 @@ const logs = {{
   apiGetPaths: [],
 }};
 const wsInstances = [];
+const intervalHandles = [];
 
 class MockWebSocket {{
   static OPEN = 1;
@@ -220,8 +221,28 @@ const context = {{
   }},
   setTimeout,
   clearTimeout,
-  setInterval,
-  clearInterval,
+  setInterval(fn, ms) {{
+    const handle = {{
+      id: intervalHandles.length + 1,
+      fn,
+      ms,
+      cleared: false,
+      lastLogIndex: 0,
+    }};
+    intervalHandles.push(handle);
+    return handle;
+  }},
+  clearInterval(handle) {{
+    if (!handle) return;
+    if (typeof handle === 'object') {{
+      handle.cleared = true;
+      return;
+    }}
+    const index = Number(handle) - 1;
+    if (index >= 0 && index < intervalHandles.length) {{
+      intervalHandles[index].cleared = true;
+    }}
+  }},
   WebSocket: MockWebSocket,
   theme: {{ applyTheme() {{}}, toggle() {{}} }},
   toast: {{ success() {{}}, error() {{}}, warning() {{}}, info() {{}} }},
@@ -264,6 +285,34 @@ const context = {{
           steps: [
             {{ step_key: 'create_email', status: 'running', duration_ms: 88 }},
           ],
+        }};
+      }}
+      if (path === '/registration/batch/batch-001') {{
+        return {{
+          batch_id: 'batch-001',
+          status: 'running',
+          total: 2,
+          completed: 1,
+          success: 1,
+          failed: 0,
+          finished: false,
+          is_unlimited: false,
+          consecutive_failures: 0,
+          max_consecutive_failures: 10,
+          domain_stats: [],
+        }};
+      }}
+      if (path === '/registration/outlook-batch/batch-001') {{
+        return {{
+          batch_id: 'batch-001',
+          status: 'running',
+          total: 2,
+          completed: 1,
+          success: 1,
+          failed: 0,
+          finished: false,
+          skipped: 0,
+          logs: [],
         }};
       }}
       if (path === '/registration/streams/task/task-single-01/snapshot') {{
@@ -435,6 +484,37 @@ async function runScenario() {{
         cancel_disabled: !!getElement('cancel-btn').disabled,
         connection_status: String(getElement('registration-stream-status').textContent || ''),
         ws_ready_state: ws.readyState,
+      }};
+    }}
+    case 'batch_ws_error_fallback_non_outlook_uses_registration_batch_endpoint': {{
+      // 模拟：按钮已进入运行态
+      getElement('start-btn').disabled = true;
+      getElement('cancel-btn').disabled = false;
+
+      // 普通批量注册（非 Outlook）
+      const requestPayload = {{ email_service_type: 'tempmail' }};
+      await exported.handleBatchRegistration(requestPayload);
+
+      const ws = wsInstances[0];
+      if (!ws) {{
+        throw new Error('MockWebSocket instance missing');
+      }}
+
+      // 触发 ws error，进入 polling fallback
+      if (typeof ws.onerror !== 'function') {{
+        throw new Error('ws.onerror missing');
+      }}
+      ws.onerror(new Error('boom'));
+
+      // 执行一次 polling tick，触发 api.get
+      const lastInterval = intervalHandles.length ? intervalHandles[intervalHandles.length - 1] : null;
+      if (!lastInterval) {{
+        throw new Error('interval handle missing');
+      }}
+      await lastInterval.fn();
+
+      return {{
+        api_get_paths: logs.apiGetPaths.slice(),
       }};
     }}
     case 'unlimited_progress_running': {{

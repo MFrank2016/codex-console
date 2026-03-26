@@ -784,6 +784,18 @@ function finalizeBatchIfTerminal(batchId, payload) {
     return true;
 }
 
+function startBatchFallbackPolling(batchId) {
+    const isOutlook = !!(
+        isOutlookBatchMode ||
+        (currentBatch && Array.isArray(currentBatch.service_ids))
+    );
+    if (isOutlook) {
+        startOutlookBatchPolling(batchId);
+        return;
+    }
+    startBatchPolling(batchId);
+}
+
 // 连接 WebSocket
 function connectWebSocket(taskUuid) {
     emitConnectionStateChanged('reconnecting');
@@ -1781,7 +1793,7 @@ function connectBatchWebSocket(batchId) {
             if (shouldPoll && currentBatch) {
                 console.log('切换到轮询模式');
                 emitConnectionStateChanged('polling');
-                startOutlookBatchPolling(currentBatch.batch_id);
+                startBatchFallbackPolling(currentBatch.batch_id);
             } else if (!shouldPoll) {
                 emitConnectionStateChanged('disconnected');
             }
@@ -1792,13 +1804,13 @@ function connectBatchWebSocket(batchId) {
             stopBatchWebSocketHeartbeat();
             // 切换到轮询
             emitConnectionStateChanged('polling');
-            startOutlookBatchPolling(batchId);
+            startBatchFallbackPolling(batchId);
         };
 
     } catch (error) {
         console.error('批量任务 WebSocket 连接失败:', error);
         emitConnectionStateChanged('polling');
-        startOutlookBatchPolling(batchId);
+        startBatchFallbackPolling(batchId);
     }
 }
 

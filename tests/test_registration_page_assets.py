@@ -187,6 +187,12 @@ def test_app_js_snapshot_required_terminal_batch_snapshot_finalizes_batch_flow()
     assert result["connection_status"] == "已断开"
 
 
+def test_app_js_batch_websocket_error_fallback_uses_registration_batch_endpoint_for_non_outlook_batch():
+    result = run_app_js_scenario("batch_ws_error_fallback_non_outlook_uses_registration_batch_endpoint")
+    assert "/registration/batch/batch-001" in result["api_get_paths"]
+    assert "/registration/outlook-batch/batch-001" not in result["api_get_paths"]
+
+
 def test_execution_and_configuration_templates_extend_workspace_shell():
     for path in [
         "templates/accounts.html",
