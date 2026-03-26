@@ -5,13 +5,15 @@ WebSocket 路由
 
 import asyncio
 import logging
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from ..realtime_streams import batch_stream_id, run_stream_id, task_stream_id
 from ..task_manager import task_manager
-from ..realtime_streams import task_stream_id, batch_stream_id, run_stream_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
 
 def _parse_after_seq(websocket: WebSocket) -> int:
     try:
@@ -193,11 +195,10 @@ async def run_websocket(websocket: WebSocket, run_id: int):
     stream_id = run_stream_id(run_id)
     after_seq = _parse_after_seq(websocket)
 
-    # run stream 复用 task websocket 状态机，ws_key 直接使用 stream_id，保持 replay/active 语义一致
-    task_manager.register_websocket(stream_id, websocket, mode="replaying", after_seq=after_seq)
+    task_manager.register_run_websocket(run_id, websocket, mode="replaying", after_seq=after_seq)
 
     if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
-        await task_manager.send_task_control_message(stream_id, websocket, {
+        await task_manager.send_run_control_message(run_id, websocket, {
             "stream": stream_id,
             "kind": "snapshot_required",
             "payload": {"reason": "after_seq_expired"},
@@ -205,9 +206,9 @@ async def run_websocket(websocket: WebSocket, run_id: int):
     else:
         replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
         for event in replay:
-            await task_manager.send_task_stream_event(stream_id, websocket, event)
+            await task_manager.send_run_stream_event(run_id, websocket, event)
 
-    await task_manager.finish_task_websocket_replay(stream_id, websocket)
+    await task_manager.finish_run_websocket_replay(run_id, websocket)
     logger.info(f"WebSocket 连接已建立(run): {run_id}")
 
     try:
@@ -219,11 +220,11 @@ async def run_websocket(websocket: WebSocket, run_id: int):
                 )
 
                 if data.get("type") == "ping":
-                    await task_manager.send_task_control_message(stream_id, websocket, {"type": "pong"})
+                    await task_manager.send_run_control_message(run_id, websocket, {"type": "pong"})
 
             except asyncio.TimeoutError:
                 try:
-                    await task_manager.send_task_control_message(stream_id, websocket, {"type": "ping"})
+                    await task_manager.send_run_control_message(run_id, websocket, {"type": "ping"})
                 except Exception:
                     logger.info(f"Run WebSocket 心跳检测失败: {run_id}")
                     break
@@ -235,4 +236,4 @@ async def run_websocket(websocket: WebSocket, run_id: int):
         logger.error(f"Run WebSocket 错误: {e}")
 
     finally:
-        task_manager.unregister_websocket(stream_id, websocket)
+        task_manager.unregister_run_websocket(run_id, websocket)

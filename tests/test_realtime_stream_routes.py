@@ -5,15 +5,14 @@ import threading
 
 from src.web.app import create_app
 from src.web.realtime_streams import STREAM_BUFFER_SIZE
-from src.web.task_manager import task_manager
-import src.web.task_manager as task_manager_module
+from src.web.task_manager import reset_state_for_tests, task_manager
 
 
 @pytest.fixture(autouse=True)
 def clean_realtime_stream_state():
-    _clear_state_for_tests()
+    reset_state_for_tests()
     yield
-    _clear_state_for_tests()
+    reset_state_for_tests()
 
 
 
@@ -36,31 +35,6 @@ def _receive_json_with_timeout(ws, *, timeout_s: float = 1.0):
     if isinstance(result, Exception):
         raise result
     return result
-
-
-def _clear_state_for_tests():
-    for container in (
-        task_manager_module._task_status,
-        task_manager_module._task_steps,
-        task_manager_module._task_progress,
-        task_manager_module._experiment_status,
-        task_manager_module._log_queues,
-        task_manager_module._log_locks,
-        task_manager_module._batch_status,
-        task_manager_module._batch_logs,
-        task_manager_module._batch_locks,
-        task_manager_module._run_status,
-        task_manager_module._run_progress,
-        task_manager_module._run_logs,
-        task_manager_module._run_locks,
-        task_manager_module._stream_seq,
-        task_manager_module._stream_events,
-        task_manager_module._stream_locks,
-        task_manager_module._ws_connections,
-        task_manager_module._ws_sent_index,
-        task_manager_module._task_cancelled,
-    ):
-        container.clear()
 
 
 @pytest.fixture

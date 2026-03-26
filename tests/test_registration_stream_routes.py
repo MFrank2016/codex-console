@@ -4,42 +4,15 @@ import queue
 import threading
 from src.web.app import create_app
 from src.web.realtime_streams import STREAM_BUFFER_SIZE
-from src.web.task_manager import task_manager
-import src.web.task_manager as task_manager_module
+from src.web.task_manager import reset_state_for_tests, task_manager
 from uuid import uuid4
 
 
 @pytest.fixture(autouse=True)
 def clean_registration_stream_state():
-    _clear_state_for_tests()
+    reset_state_for_tests()
     yield
-    _clear_state_for_tests()
-
-
-def _clear_state_for_tests():
-    """测试专用：清理 task_manager 全局状态"""
-    for container in (
-        task_manager_module._task_status,
-        task_manager_module._task_steps,
-        task_manager_module._task_progress,
-        task_manager_module._experiment_status,
-        task_manager_module._log_queues,
-        task_manager_module._log_locks,
-        task_manager_module._batch_status,
-        task_manager_module._batch_logs,
-        task_manager_module._batch_locks,
-        task_manager_module._run_status,
-        task_manager_module._run_progress,
-        task_manager_module._run_logs,
-        task_manager_module._run_locks,
-        task_manager_module._stream_seq,
-        task_manager_module._stream_events,
-        task_manager_module._stream_locks,
-        task_manager_module._ws_connections,
-        task_manager_module._ws_sent_index,
-        task_manager_module._task_cancelled,
-    ):
-        container.clear()
+    reset_state_for_tests()
 
 
 def _receive_json_with_timeout(ws, *, timeout_s: float = 1.0):
@@ -370,3 +343,25 @@ def test_registration_stream_alias_routes_delegate_to_realtime_streams():
 
     assert response.status_code == 200
     assert response.json()["stream"] == "task:task-alias-1"
+
+
+def test_registration_alias_routes_do_not_call_realtime_route_handlers_directly():
+    from src.web.routes import realtime_streams as realtime_stream_routes
+
+    app = create_app()
+    task_manager.update_status("task-alias-no-route-call", "running")
+
+    original = realtime_stream_routes.get_task_stream_snapshot
+
+    async def _broken_route_handler(task_uuid: str):
+        raise AssertionError("registration alias 不应直接调用 realtime route handler")
+
+    realtime_stream_routes.get_task_stream_snapshot = _broken_route_handler
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/registration/streams/task/task-alias-no-route-call/snapshot")
+    finally:
+        realtime_stream_routes.get_task_stream_snapshot = original
+
+    assert response.status_code == 200
+    assert response.json()["stream"] == "task:task-alias-no-route-call"
