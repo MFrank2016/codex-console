@@ -20,6 +20,15 @@ const scenarioName = {json.dumps(name)};
 const appSource = {json.dumps(app_source)};
 const registrationStreamSource = {json.dumps(registration_stream_source)};
 
+const harnessConsole = {{
+  log() {{}},
+  info() {{}},
+  warn() {{}},
+  error(...args) {{
+    console.error(...args);
+  }},
+}};
+
 function createClassList() {{
   const classes = new Set();
   return {{
@@ -165,6 +174,7 @@ const logs = {{
   lastPostPayload: null,
   apiGetPaths: [],
 }};
+const wsInstances = [];
 
 class MockWebSocket {{
   static OPEN = 1;
@@ -177,6 +187,7 @@ class MockWebSocket {{
     this.onclose = null;
     this.onerror = null;
     this.onmessage = null;
+    wsInstances.push(this);
   }}
 
   send() {{}}
@@ -190,7 +201,7 @@ class MockWebSocket {{
 }}
 
 const context = {{
-  console,
+  console: harnessConsole,
   URLSearchParams,
   document,
   window: {{ location: {{ protocol: 'http:', host: 'localhost' }} }},
@@ -253,6 +264,19 @@ const context = {{
           steps: [
             {{ step_key: 'create_email', status: 'running', duration_ms: 88 }},
           ],
+        }};
+      }}
+      if (path === '/registration/streams/task/task-single-01/snapshot') {{
+        return {{
+          seq: 10,
+          stream: 'task:task-single-01',
+          kind: 'snapshot',
+          payload: {{
+            task: {{ task_uuid: 'task-single-01', status: 'completed' }},
+            current_step: {{}},
+            steps: [],
+            logs_tail: ['done'],
+          }},
         }};
       }}
 
@@ -329,6 +353,35 @@ async function runScenario() {{
       return {{
         api_get_paths: logs.apiGetPaths.slice(),
         waterfall_html: getElement('task-step-waterfall').innerHTML,
+      }};
+    }}
+    case 'single_task_snapshot_required_terminal_snapshot_should_finalize': {{
+      // 模拟：按钮已进入运行态
+      getElement('start-btn').disabled = true;
+      getElement('cancel-btn').disabled = false;
+
+      // 创建任务并建立 websocket（不会触发 onopen，避免心跳 setInterval 持续占用）
+      await exported.handleSingleRegistration({{ email_service_type: 'tempmail', pipeline_key: 'current_pipeline' }});
+
+      const ws = wsInstances[0];
+      if (!ws) {{
+        throw new Error('MockWebSocket instance missing');
+      }}
+
+      // 触发 snapshot_required → 拉取 snapshot（completed）→ 应当执行收尾逻辑
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          stream: 'task:task-single-01',
+          kind: 'snapshot_required',
+          payload: {{ reason: 'after_seq_expired' }},
+        }}),
+      }});
+
+      return {{
+        start_disabled: !!getElement('start-btn').disabled,
+        cancel_disabled: !!getElement('cancel-btn').disabled,
+        connection_status: String(getElement('registration-stream-status').textContent || ''),
+        ws_ready_state: ws.readyState,
       }};
     }}
     case 'unlimited_progress_running': {{

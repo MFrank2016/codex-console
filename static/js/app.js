@@ -8,6 +8,7 @@ let currentTask = null;
 let currentBatch = null;
 let logPollingInterval = null;
 let streamPollingInterval = null;
+let streamPollingInFlight = false;
 let batchPollingInterval = null;
 let accountsPollingInterval = null;
 let isBatchMode = false;
@@ -672,6 +673,51 @@ async function handleSingleRegistration(requestData) {
 
 // ============== WebSocket 功能 ==============
 
+function isTerminalTaskStatus(status) {
+    return ['completed', 'failed', 'cancelled', 'cancelling'].includes(status);
+}
+
+function finalizeSingleTaskIfTerminal(taskUuid, status) {
+    if (!status || !isTerminalTaskStatus(status)) {
+        return false;
+    }
+
+    // 避免重复收尾（例如：snapshot_required 拉到终态 snapshot 后，又收到 status_changed）
+    if (taskCompleted && taskFinalStatus === status) {
+        return true;
+    }
+
+    taskFinalStatus = status;
+    taskCompleted = true;
+
+    // 先停掉所有 fallback，避免收尾后继续刷屏
+    stopTaskStreamPolling();
+    stopLogPolling();
+
+    // 先断开 WebSocket，让 onclose 能基于 taskFinalStatus/taskCompleted 做出正确分支判断
+    disconnectWebSocket();
+
+    // 让 realtime store 的连接状态收口（meta.local=true，不污染服务端 cursor）
+    emitConnectionStateChanged('disconnected');
+
+    resetButtons();
+
+    if (!toastShown) {
+        toastShown = true;
+        if (status === 'completed') {
+            addLog('success', '[成功] 注册成功！');
+            toast.success('注册成功！');
+            loadRecentAccounts();
+        } else if (status === 'failed') {
+            addLog('error', '[错误] 注册失败');
+            toast.error('注册失败');
+        } else if (status === 'cancelled' || status === 'cancelling') {
+            addLog('warning', '[警告] 任务已取消');
+        }
+    }
+    return true;
+}
+
 // 连接 WebSocket
 function connectWebSocket(taskUuid) {
     emitConnectionStateChanged('reconnecting');
@@ -716,6 +762,7 @@ function connectWebSocket(taskUuid) {
                     try {
                         const snapshot = await api.get(`/registration/streams/task/${taskUuid}/snapshot`);
                         reduceRegistrationStream(snapshot);
+                        finalizeSingleTaskIfTerminal(taskUuid, snapshot?.payload?.task?.status);
                     } catch (error) {
                         console.error('获取 task snapshot 失败:', error);
                     }
@@ -732,26 +779,7 @@ function connectWebSocket(taskUuid) {
                         }
 
                         // 检查是否完成
-                        if (['completed', 'failed', 'cancelled', 'cancelling'].includes(status)) {
-                            taskFinalStatus = status;
-                            taskCompleted = true;
-                            disconnectWebSocket();
-                            resetButtons();
-
-                            if (!toastShown) {
-                                toastShown = true;
-                                if (status === 'completed') {
-                                    addLog('success', '[成功] 注册成功！');
-                                    toast.success('注册成功！');
-                                    loadRecentAccounts();
-                                } else if (status === 'failed') {
-                                    addLog('error', '[错误] 注册失败');
-                                    toast.error('注册失败');
-                                } else if (status === 'cancelled' || status === 'cancelling') {
-                                    addLog('warning', '[警告] 任务已取消');
-                                }
-                            }
-                        }
+                        finalizeSingleTaskIfTerminal(taskUuid, status);
                     }
                     return;
                 }
@@ -765,26 +793,7 @@ function connectWebSocket(taskUuid) {
                 updateTaskStatus(data.status);
                 refreshTaskDetail(taskUuid);
 
-                if (['completed', 'failed', 'cancelled', 'cancelling'].includes(data.status)) {
-                    taskFinalStatus = data.status;
-                    taskCompleted = true;
-                    disconnectWebSocket();
-                    resetButtons();
-
-                    if (!toastShown) {
-                        toastShown = true;
-                        if (data.status === 'completed') {
-                            addLog('success', '[成功] 注册成功！');
-                            toast.success('注册成功！');
-                            loadRecentAccounts();
-                        } else if (data.status === 'failed') {
-                            addLog('error', '[错误] 注册失败');
-                            toast.error('注册失败');
-                        } else if (data.status === 'cancelled' || data.status === 'cancelling') {
-                            addLog('warning', '[警告] 任务已取消');
-                        }
-                    }
-                }
+                finalizeSingleTaskIfTerminal(taskUuid, data.status);
             }
         };
 
@@ -869,12 +878,17 @@ function startTaskStreamPolling(taskUuid) {
         try {
             const snapshot = await api.get(`/registration/streams/task/${taskUuid}/snapshot`);
             reduceRegistrationStream(snapshot);
+            finalizeSingleTaskIfTerminal(taskUuid, snapshot?.payload?.task?.status);
         } catch (error) {
             console.error('轮询模式获取 task snapshot 失败:', error);
         }
     })();
 
     streamPollingInterval = setInterval(async () => {
+        if (streamPollingInFlight) {
+            return;
+        }
+        streamPollingInFlight = true;
         try {
             const streamId = `task:${taskUuid}`;
             const afterSeq = registrationStreamState?.cursors?.[streamId] || 0;
@@ -885,28 +899,11 @@ function startTaskStreamPolling(taskUuid) {
             }
 
             const status = registrationStreamState?.task?.status;
-            if (status && ['completed', 'failed', 'cancelled', 'cancelling'].includes(status)) {
-                taskFinalStatus = status;
-                taskCompleted = true;
-                stopTaskStreamPolling();
-                resetButtons();
-
-                if (!toastShown) {
-                    toastShown = true;
-                    if (status === 'completed') {
-                        addLog('success', '[成功] 注册成功！');
-                        toast.success('注册成功！');
-                        loadRecentAccounts();
-                    } else if (status === 'failed') {
-                        addLog('error', '[错误] 注册失败');
-                        toast.error('注册失败');
-                    } else if (status === 'cancelled' || status === 'cancelling') {
-                        addLog('warning', '[警告] 任务已取消');
-                    }
-                }
-            }
+            finalizeSingleTaskIfTerminal(taskUuid, status);
         } catch (error) {
             console.error('轮询 task stream 失败:', error);
+        } finally {
+            streamPollingInFlight = false;
         }
     }, 1000);
 }
@@ -916,6 +913,7 @@ function stopTaskStreamPolling() {
         clearInterval(streamPollingInterval);
         streamPollingInterval = null;
     }
+    streamPollingInFlight = false;
 }
 
 // 批量注册

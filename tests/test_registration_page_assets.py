@@ -171,6 +171,14 @@ def test_app_js_task_realtime_fallback_prefers_stream_events_over_legacy_logs_en
     assert "startLogPolling(currentTask.task_uuid)" not in script
 
 
+def test_app_js_snapshot_required_terminal_task_snapshot_finalizes_single_task_flow():
+    result = run_app_js_scenario("single_task_snapshot_required_terminal_snapshot_should_finalize")
+    assert result["start_disabled"] is False
+    assert result["cancel_disabled"] is True
+    assert result["ws_ready_state"] == 3  # MockWebSocket.CLOSED
+    assert result["connection_status"] == "已断开"
+
+
 def test_execution_and_configuration_templates_extend_workspace_shell():
     for path in [
         "templates/accounts.html",
