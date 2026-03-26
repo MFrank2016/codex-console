@@ -13,6 +13,7 @@ from ...database.session import get_db
 from ...database.models import Account
 from ...database import crud
 from ...config.settings import get_settings
+from ...core.time import utc_now_naive
 from .accounts import resolve_account_ids
 from ...core.openai.payment import (
     generate_plus_link,
@@ -146,7 +147,7 @@ def batch_check_subscription(request: BatchCheckSubscriptionRequest):
             try:
                 status = check_subscription_status(account, proxy)
                 account.subscription_type = None if status == "free" else status
-                account.subscription_at = datetime.utcnow() if status != "free" else account.subscription_at
+                account.subscription_at = utc_now_naive() if status != "free" else account.subscription_at
                 db.commit()
                 results["success_count"] += 1
                 results["details"].append(
@@ -174,9 +175,8 @@ def mark_subscription(account_id: int, request: MarkSubscriptionRequest):
             raise HTTPException(status_code=404, detail="账号不存在")
 
         account.subscription_type = None if request.subscription_type == "free" else request.subscription_type
-        account.subscription_at = datetime.utcnow() if request.subscription_type != "free" else None
+        account.subscription_at = utc_now_naive() if request.subscription_type != "free" else None
         db.commit()
 
     return {"success": True, "subscription_type": request.subscription_type}
-
 

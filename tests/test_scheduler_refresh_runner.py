@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.core.time import utc_now_naive
 from src.database import crud
 from src.database.models import Base, ScheduledRun
 from src.database.session import DatabaseSessionManager
@@ -74,7 +75,7 @@ def make_account(
 
     account.status = status
     account.primary_cpa_service_id = primary_cpa_service_id
-    account.registered_at = datetime.utcnow() - timedelta(days=registered_days_ago)
+    account.registered_at = utc_now_naive() - timedelta(days=registered_days_ago)
     account.last_refresh = last_refresh
     account.cpa_uploaded = cpa_uploaded
     account.cpa_uploaded_at = cpa_uploaded_at
@@ -111,7 +112,7 @@ def test_refresh_runner_selects_due_accounts_from_registered_at_when_last_refres
 
 def test_refresh_runner_marks_account_expired_on_refresh_failure(temp_db, monkeypatch):
     service, plan, run = _create_refresh_plan_and_run(temp_db)
-    stale_uploaded_at = datetime.utcnow() - timedelta(days=1)
+    stale_uploaded_at = utc_now_naive() - timedelta(days=1)
     account = make_account(
         temp_db,
         status="active",
@@ -144,7 +145,7 @@ def test_refresh_runner_marks_account_expired_on_refresh_failure(temp_db, monkey
 
 def test_refresh_runner_keeps_account_active_when_cpa_upload_fails(temp_db, monkeypatch):
     service, plan, run = _create_refresh_plan_and_run(temp_db)
-    stale_uploaded_at = datetime.utcnow() - timedelta(days=1)
+    stale_uploaded_at = utc_now_naive() - timedelta(days=1)
     account = make_account(
         temp_db,
         status="active",
@@ -162,7 +163,7 @@ def test_refresh_runner_keeps_account_active_when_cpa_upload_fails(temp_db, monk
             success=True,
             access_token="ak",
             refresh_token="rk",
-            expires_at=datetime.utcnow(),
+            expires_at=utc_now_naive(),
         ),
     )
     monkeypatch.setattr(refresh_runner, "check_subscription_status", lambda *a, **k: "plus")
@@ -180,7 +181,7 @@ def test_refresh_runner_keeps_account_active_when_cpa_upload_fails(temp_db, monk
 
 def test_refresh_runner_marks_account_expired_on_subscription_check_failure(temp_db, monkeypatch):
     service, plan, run = _create_refresh_plan_and_run(temp_db)
-    stale_uploaded_at = datetime.utcnow() - timedelta(days=1)
+    stale_uploaded_at = utc_now_naive() - timedelta(days=1)
     account = make_account(
         temp_db,
         status="active",
@@ -198,7 +199,7 @@ def test_refresh_runner_marks_account_expired_on_subscription_check_failure(temp
             success=True,
             access_token="ak",
             refresh_token="rk",
-            expires_at=datetime.utcnow(),
+            expires_at=utc_now_naive(),
         ),
     )
     monkeypatch.setattr(refresh_runner, "check_subscription_status", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("probe failed")))
@@ -236,7 +237,7 @@ def test_refresh_runner_updates_tokens_subscription_and_cpa_state_on_success(tem
             success=True,
             access_token="new-ak",
             refresh_token="new-rk",
-            expires_at=datetime.utcnow() + timedelta(days=10),
+            expires_at=utc_now_naive() + timedelta(days=10),
         ),
     )
     monkeypatch.setattr(refresh_runner, "check_subscription_status", lambda *a, **k: "plus")
@@ -282,7 +283,7 @@ def test_refresh_runner_marks_run_cancelled_and_logs_user_stop_when_stop_request
             success=True,
             access_token="new-ak",
             refresh_token="new-rk",
-            expires_at=datetime.utcnow() + timedelta(days=10),
+            expires_at=utc_now_naive() + timedelta(days=10),
         ),
     )
     monkeypatch.setattr(refresh_runner, "check_subscription_status", lambda *a, **k: "plus")
@@ -336,7 +337,7 @@ def test_refresh_runner_cancels_cleanly_when_stop_is_requested_during_subscripti
             success=True,
             access_token="new-ak",
             refresh_token="new-rk",
-            expires_at=datetime.utcnow() + timedelta(days=10),
+            expires_at=utc_now_naive() + timedelta(days=10),
         ),
     )
 

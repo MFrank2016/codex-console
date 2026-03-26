@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from ..core.time import utc_now_naive
 from ..database import crud
 from ..database.session import get_db
 
@@ -33,7 +34,7 @@ def append_run_log(
     logged_at: datetime | None = None,
 ) -> bool:
     """Append a log line for a scheduled run."""
-    actual_logged_at = logged_at or datetime.utcnow()
+    actual_logged_at = logged_at or utc_now_naive()
     normalized_level = _normalize_run_log_level(level)
     line = _format_run_log_line(message, level=normalized_level, logged_at=actual_logged_at)
     with get_db() as db:

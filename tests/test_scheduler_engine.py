@@ -6,6 +6,7 @@ from threading import Event
 import pytest
 from fastapi.testclient import TestClient
 
+from src.core.time import utc_now_naive
 from src.database import crud
 from src.database import session as session_module
 from src.database.models import Base, ScheduledRun
@@ -59,7 +60,7 @@ def _create_plan(temp_db, *, task_type: str = "cpa_cleanup", due: bool = True):
         api_url="https://cpa.example.com/api",
         api_token="token",
     )
-    next_run_at = datetime.utcnow() - timedelta(minutes=5) if due else datetime.utcnow() + timedelta(hours=1)
+    next_run_at = utc_now_naive() - timedelta(minutes=5) if due else utc_now_naive() + timedelta(hours=1)
     return crud.create_scheduled_plan(
         temp_db,
         name=f"plan-{task_type}",
@@ -132,7 +133,7 @@ def test_scheduler_engine_dispatches_due_plan_to_matching_runner_and_records_run
     assert persisted_plan.last_run_started_at is not None
     assert persisted_plan.last_run_finished_at is not None
     assert persisted_plan.next_run_at is not None
-    assert persisted_plan.next_run_at > datetime.utcnow() - timedelta(minutes=1)
+    assert persisted_plan.next_run_at > utc_now_naive() - timedelta(minutes=1)
 
 
 def test_scheduler_engine_manual_trigger_creates_run_and_dispatches_runner(temp_db):
@@ -305,10 +306,10 @@ def test_scheduler_engine_runner_cancellation_marks_run_cancelled_and_updates_pl
     assert engine.request_run_stop(run_id) is True
     allow_raise.set()
 
-    deadline = datetime.utcnow() + timedelta(seconds=2)
+    deadline = utc_now_naive() + timedelta(seconds=2)
     run = None
     persisted_plan = None
-    while datetime.utcnow() < deadline:
+    while utc_now_naive() < deadline:
         temp_db.expire_all()
         run = temp_db.query(ScheduledRun).filter(ScheduledRun.id == run_id).first()
         persisted_plan = crud.get_scheduled_plan_by_id(temp_db, plan.id)

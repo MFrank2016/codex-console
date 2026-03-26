@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterable, Protocol
 
 from sqlalchemy import asc
 
+from ..core.time import utc_now_naive
 from ..database import crud
 from ..database.models import ScheduledPlan, ScheduledRun
 from ..database.session import get_db
@@ -78,7 +79,7 @@ class SchedulerRepository:
                 run_id=run.id,
                 status="skipped",
                 error_message=reason,
-                finished_at=datetime.utcnow(),
+                finished_at=utc_now_naive(),
             )
             if finished is not None:
                 crud.update_scheduled_plan(
@@ -369,7 +370,7 @@ class SchedulerEngine:
             run.status = "cancelled"
             run.error_message = error_message
             if run.finished_at is None:
-                run.finished_at = datetime.utcnow()
+                run.finished_at = utc_now_naive()
             db.commit()
             db.refresh(run)
 
@@ -383,7 +384,7 @@ class SchedulerEngine:
                 run_id=run_id,
                 status=status,
                 error_message=error_message,
-                finished_at=datetime.utcnow(),
+                finished_at=utc_now_naive(),
             )
 
     def _sync_plan_state_from_run(self, plan_id: int, run_id: int) -> None:
@@ -397,12 +398,12 @@ class SchedulerEngine:
                     run_id=run_id,
                     status="failed",
                     error_message="runner did not finalize status",
-                    finished_at=datetime.utcnow(),
+                    finished_at=utc_now_naive(),
                 )
                 if run is None:
                     return
 
-            finished_at = run.finished_at or datetime.utcnow()
+            finished_at = run.finished_at or utc_now_naive()
             updates: dict[str, Any] = {
                 "last_run_finished_at": finished_at,
                 "last_run_status": run.status,

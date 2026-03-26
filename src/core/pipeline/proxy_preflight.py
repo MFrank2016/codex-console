@@ -3,12 +3,12 @@ from __future__ import annotations
 import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from datetime import datetime
 from typing import Any, Callable, Iterable
 
 from sqlalchemy.orm import Session
 
 from src.core.http_client import HTTPClient
+from src.core.time import utc_now_naive
 from src.database import crud
 from src.database.models import Proxy, ProxyCheckRun
 
@@ -197,7 +197,7 @@ def _mark_run_failed(
         except Exception:
             pass
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     db.query(ProxyCheckRun).filter(ProxyCheckRun.id == run_id).update(
         {
             ProxyCheckRun.status: "failed",

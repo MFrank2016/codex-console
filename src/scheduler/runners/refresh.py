@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from ...core.openai.payment import check_subscription_status
 from ...core.openai.token_refresh import refresh_account_token
+from ...core.time import utc_now_naive
 from ...database import crud
 from ...database.session import get_db
 from ..engine import ScheduledRunCancelledError, is_run_stop_requested
@@ -112,7 +112,7 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     account.refresh_token = refresh_result.refresh_token
                 if getattr(refresh_result, "expires_at", None):
                     account.expires_at = refresh_result.expires_at
-                account.last_refresh = datetime.utcnow()
+                account.last_refresh = utc_now_naive()
                 account.status = "active"
                 account.invalidated_at = None
                 account.invalid_reason = None
@@ -135,7 +135,7 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     continue
 
                 account.subscription_type = subscription
-                account.subscription_at = datetime.utcnow()
+                account.subscription_at = utc_now_naive()
                 db.commit()
 
                 raise_if_stop_requested(run_id, stage="refresh upload")

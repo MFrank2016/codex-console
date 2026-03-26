@@ -9,6 +9,7 @@ from sqlalchemy import desc
 from ...database import crud
 from ...database.models import ScheduledRun
 from ...database.session import get_db
+from ...core.time import utc_now_naive
 from ...scheduler.engine import SchedulerDispatchError, SchedulerPlanConflictError
 from ...scheduler.schemas import (
     ScheduledPlanCreate,
@@ -50,7 +51,7 @@ def _can_stop_run(run: ScheduledRun) -> bool:
 def _compute_duration_seconds(run: ScheduledRun) -> float | None:
     if run.started_at is None:
         return None
-    end_time = run.finished_at or datetime.utcnow()
+    end_time = run.finished_at or utc_now_naive()
     return float((end_time - run.started_at).total_seconds())
 
 

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc, func
 
+from ..core.time import utc_now_naive
 from .models import (
     Account,
     AccountSurvivalCheck,
@@ -69,7 +70,7 @@ def create_account(
         extra_data=extra_data or {},
         status=status or 'active',
         source=source or 'register',
-        registered_at=datetime.utcnow()
+        registered_at=utc_now_naive()
     )
     db.add(db_account)
     db.commit()
@@ -146,7 +147,7 @@ def mark_account_expired_by_email_and_cpa(
     if not email:
         return 0
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     updated = (
         db.query(Account)
         .filter(Account.email == email)
@@ -177,7 +178,7 @@ def mark_accounts_expired_by_emails_and_cpa(
     if not cleaned_emails:
         return 0
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     updated = (
         db.query(Account)
         .filter(Account.email.in_(cleaned_emails))
@@ -206,7 +207,7 @@ def get_due_refresh_accounts(
     """获取需要执行刷新任务的账号列表。"""
     safe_days = max(0, int(refresh_after_days))
     safe_limit = max(0, int(limit))
-    cutoff = datetime.utcnow() - timedelta(days=safe_days)
+    cutoff = utc_now_naive() - timedelta(days=safe_days)
 
     query = (
         db.query(Account)
@@ -236,7 +237,7 @@ def mark_account_expired(db: Session, account_id: int, reason: str) -> Optional[
     if not account:
         return None
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     account.status = "expired"
     account.cpa_uploaded = False
     account.cpa_uploaded_at = None
@@ -258,7 +259,7 @@ def mark_account_active_for_cpa(
     if not account:
         return None
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     account.status = "active"
     account.primary_cpa_service_id = cpa_service_id
     account.cpa_uploaded = True
@@ -770,7 +771,7 @@ def finalize_proxy_check_run(
         row.total_count = total_count
     if available_count is not None:
         row.available_count = available_count
-    row.completed_at = completed_at or datetime.utcnow()
+    row.completed_at = completed_at or utc_now_naive()
 
     db.commit()
     db.refresh(row)
@@ -841,7 +842,7 @@ def set_setting(
         db_setting.value = value
         db_setting.description = description or db_setting.description
         db_setting.category = category
-        db_setting.updated_at = datetime.utcnow()
+        db_setting.updated_at = utc_now_naive()
     else:
         db_setting = Setting(
             key=key,
@@ -1007,7 +1008,7 @@ def update_proxy_last_used(db: Session, proxy_id: int) -> bool:
     if not db_proxy:
         return False
 
-    db_proxy.last_used = datetime.utcnow()
+    db_proxy.last_used = utc_now_naive()
     db.commit()
     return True
 
@@ -1235,7 +1236,7 @@ def create_scheduled_run(
         task_type=task_type or plan.task_type,
         trigger_source=trigger_source,
         status=status,
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         log_version=0,
     )
     db.add(run)
@@ -1367,7 +1368,7 @@ def mark_scheduled_run_stop_requested(
     if run.stop_requested_at is not None:
         return run
 
-    run.stop_requested_at = requested_at or datetime.utcnow()
+    run.stop_requested_at = requested_at or utc_now_naive()
     run.stop_requested_by = requested_by
     run.stop_reason = reason
     db.commit()
@@ -1431,7 +1432,7 @@ def append_scheduled_run_log(
         run.logs = log_message
 
     run.log_version = int(run.log_version or 0) + 1
-    run.last_log_at = logged_at or datetime.utcnow()
+    run.last_log_at = logged_at or utc_now_naive()
     db.commit()
     return True
 
@@ -1452,7 +1453,7 @@ def finish_scheduled_run(
     run.status = status
     run.summary = summary
     run.error_message = error_message
-    run.finished_at = finished_at or datetime.utcnow()
+    run.finished_at = finished_at or utc_now_naive()
 
     db.commit()
     db.refresh(run)

@@ -5,12 +5,12 @@ CPA (Codex Protocol API) 上传功能
 import json
 import logging
 from typing import List, Dict, Any, Tuple, Optional
-from datetime import datetime
 from urllib.parse import quote
 
 from curl_cffi import requests as cffi_requests
 from curl_cffi import CurlMime
 
+from ..time import utc_now_naive
 from ...database.session import get_db
 from ...database.models import Account
 from ...config.settings import get_settings
@@ -239,7 +239,7 @@ def batch_upload_to_cpa(
             if success:
                 # 更新数据库状态
                 account.cpa_uploaded = True
-                account.cpa_uploaded_at = datetime.utcnow()
+                account.cpa_uploaded_at = utc_now_naive()
                 db.commit()
 
                 results["success_count"] += 1

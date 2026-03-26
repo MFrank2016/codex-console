@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..config.constants import EmailServiceType
 from ..config.settings import get_settings
+from .time import utc_now_naive
 from .pipeline import PipelineContext, PipelineRunner
 from .pipeline.registry import get_pipeline
 from .pipeline.steps.codexgen import build_codexgen_runtime
@@ -418,7 +418,7 @@ def _update_registration_task_success(
 
     update_fields: dict[str, Any] = {
         "status": "completed",
-        "completed_at": datetime.utcnow(),
+        "completed_at": utc_now_naive(),
         "result": result_payload,
         "error_message": None,
     }
@@ -444,7 +444,7 @@ def _update_registration_task_failure(
 
     update_fields: dict[str, Any] = {
         "status": "failed",
-        "completed_at": datetime.utcnow(),
+        "completed_at": utc_now_naive(),
         "error_message": error_message,
     }
     if result_payload is not None:

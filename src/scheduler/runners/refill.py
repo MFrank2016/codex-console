@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from ...core.registration_job import run_registration_job
+from ...core.time import utc_now_naive
 from ...core.upload.cpa_upload import generate_token_json, upload_to_cpa
 from ...database import crud
 from ...database.session import get_db
@@ -48,7 +48,7 @@ def upload_account_to_bound_cpa(*, db, account_id: int, cpa_service_id: int) -> 
         return False, message
 
     account.cpa_uploaded = True
-    account.cpa_uploaded_at = datetime.utcnow()
+    account.cpa_uploaded_at = utc_now_naive()
     account.primary_cpa_service_id = cpa_service_id
     db.commit()
     return True, message
