@@ -323,23 +323,18 @@ def test_registration_stream_alias_routes_delegate_to_realtime_streams():
     assert response.json()["stream"] == "task:task-alias-1"
 
 
-def test_registration_alias_routes_do_not_call_realtime_route_handlers_directly():
-    from src.web.routes import realtime_streams as realtime_stream_routes
+def test_registration_alias_routes_do_not_call_realtime_route_handlers_directly(monkeypatch):
+    from src.web.routes import realtime_stream_routes
 
     app = create_app()
     task_manager.update_status("task-alias-no-route-call", "running")
 
-    original = realtime_stream_routes.get_task_stream_snapshot
-
     async def _broken_route_handler(task_uuid: str):
         raise AssertionError("registration alias 不应直接调用 realtime route handler")
 
-    realtime_stream_routes.get_task_stream_snapshot = _broken_route_handler
-    try:
-        with TestClient(app) as client:
-            response = client.get("/api/registration/streams/task/task-alias-no-route-call/snapshot")
-    finally:
-        realtime_stream_routes.get_task_stream_snapshot = original
+    monkeypatch.setattr(realtime_stream_routes, "get_task_stream_snapshot", _broken_route_handler)
+    with TestClient(app) as client:
+        response = client.get("/api/registration/streams/task/task-alias-no-route-call/snapshot")
 
     assert response.status_code == 200
     assert response.json()["stream"] == "task:task-alias-no-route-call"

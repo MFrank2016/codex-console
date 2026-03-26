@@ -288,8 +288,6 @@ class TaskManager:
         after_seq: int,
     ) -> None:
         ws_id = id(websocket)
-        # 必须在运行中的事件循环里创建 asyncio.Lock，避免隐式依赖。
-        asyncio.get_running_loop()
         with _ws_lock:
             states = _ws_connections[ws_key]
             if ws_id in states:
@@ -302,7 +300,8 @@ class TaskManager:
                 "mode": mode,
                 "pending": [],
                 "last_sent_seq": after_seq,
-                "send_lock": asyncio.Lock(),
+                # 惰性创建：避免在非 async 上下文注册时强依赖 running loop。
+                "send_lock": None,
             }
 
     def _get_ws_state(self, ws_key: str, websocket: Any) -> Optional[dict]:
@@ -314,7 +313,9 @@ class TaskManager:
         state = self._get_ws_state(ws_key, websocket)
         if state is None:
             return
-        send_lock = state["send_lock"]
+        send_lock = self._ensure_ws_send_lock(ws_key, state["ws_id"])
+        if send_lock is None:
+            return
         async with send_lock:
             await websocket.send_json(event)
         with _ws_lock:
@@ -328,9 +329,22 @@ class TaskManager:
         if state is None:
             await websocket.send_json(payload)
             return
-        send_lock = state["send_lock"]
+        send_lock = self._ensure_ws_send_lock(ws_key, state["ws_id"])
+        if send_lock is None:
+            return
         async with send_lock:
             await websocket.send_json(payload)
+
+    def _ensure_ws_send_lock(self, ws_key: str, ws_id: int) -> Optional[asyncio.Lock]:
+        with _ws_lock:
+            current = _ws_connections.get(ws_key, {}).get(ws_id)
+            if current is None:
+                return None
+            send_lock = current.get("send_lock")
+            if send_lock is None:
+                send_lock = asyncio.Lock()
+                current["send_lock"] = send_lock
+            return send_lock
 
     async def _broadcast_stream_event(self, ws_key: str, event: dict, *, label: str) -> None:
         # 关键点：不能使用 targets 快照里的 mode（replaying/active）来做决策，

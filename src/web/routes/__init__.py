@@ -19,7 +19,7 @@ from .upload.cpa_services import router as cpa_services_router
 from .upload.sub2api_services import router as sub2api_services_router
 from .upload.tm_services import router as tm_services_router
 from .registration_streams import router as registration_streams_router
-from .realtime_streams import router as realtime_streams_router
+from .realtime_stream_routes import router as realtime_streams_router
 
 api_router = APIRouter()
 

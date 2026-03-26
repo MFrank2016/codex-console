@@ -1,10 +1,11 @@
 """
 WebSocket 路由
-提供任务/批量 stream 事件回放与实时推送
+提供任务/批量/run stream 事件回放与实时推送
 """
 
 import asyncio
 import logging
+from typing import Awaitable, Callable
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -28,217 +29,154 @@ def _parse_after_seq(websocket: WebSocket) -> int:
     return parsed
 
 
-
-@router.websocket("/ws/task/{task_uuid}")
-async def task_websocket(websocket: WebSocket, task_uuid: str):
-    """
-    任务 stream WebSocket
-
-    消息格式：
-    - 服务端发送: {"seq": 1, "stream": "task:xxx", "kind": "...", "timestamp": "...", "payload": {...}}
-    - 服务端发送: {"stream": "task:xxx", "kind": "snapshot_required", "payload": {"reason": "after_seq_expired"}}
-    - 客户端发送: {"type": "ping"} - 心跳
-    - 客户端发送: {"type": "cancel"} - 取消任务
-
-    注意：
-    - UI 主链路以 stream envelope 为准（/registration/streams/* + reducer/store）
-    - 当返回 snapshot_required 时，客户端应拉取 snapshot，但连接保持，后续 live event 继续推送
-    """
+async def _serve_stream_websocket(
+    websocket: WebSocket,
+    *,
+    stream_id: str,
+    register: Callable[[int], None],
+    send_control: Callable[[WebSocket, dict], Awaitable[None]],
+    send_event: Callable[[WebSocket, dict], Awaitable[None]],
+    finish_replay: Callable[[WebSocket], Awaitable[None]],
+    unregister: Callable[[WebSocket], None],
+    connected_log_label: str,
+    disconnect_log_label: str,
+    error_log_label: str,
+    heartbeat_failed_log_label: str,
+    on_cancel: Callable[[], None] | None = None,
+) -> None:
     await websocket.accept()
-
-    stream_id = task_stream_id(task_uuid)
     after_seq = _parse_after_seq(websocket)
 
-    # 业务事件：走 stream envelope；控制消息：走 {"type": "..."}（ping/pong/cancel）
-    # 关键点：先注册为 replaying，replay 期间产生的新事件会进入 pending，避免回放/实时切换丢事件竞态。
-    task_manager.register_websocket(task_uuid, websocket, mode="replaying", after_seq=after_seq)
+    register(after_seq)
 
     if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
-        await task_manager.send_task_control_message(task_uuid, websocket, {
-            "stream": stream_id,
-            "kind": "snapshot_required",
-            "payload": {"reason": "after_seq_expired"},
-        })
+        await send_control(
+            websocket,
+            {
+                "stream": stream_id,
+                "kind": "snapshot_required",
+                "payload": {"reason": "after_seq_expired"},
+            },
+        )
     else:
         replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
         for event in replay:
-            await task_manager.send_task_stream_event(task_uuid, websocket, event)
+            await send_event(websocket, event)
 
-    await task_manager.finish_task_websocket_replay(task_uuid, websocket)
-    logger.info(f"WebSocket 连接已建立(task): {task_uuid}")
+    await finish_replay(websocket)
+    logger.info("%s", connected_log_label)
 
     try:
-        # 保持连接，等待客户端消息
         while True:
             try:
-                # 使用 wait_for 实现超时，但不是断开连接
-                # 而是发送心跳检测
-                data = await asyncio.wait_for(
-                    websocket.receive_json(),
-                    timeout=30.0  # 30秒超时
-                )
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
 
-                # 处理心跳
                 if data.get("type") == "ping":
-                    await task_manager.send_task_control_message(task_uuid, websocket, {"type": "pong"})
-
-                # 处理取消请求
-                elif data.get("type") == "cancel":
-                    task_manager.cancel_task(task_uuid)
-                    task_manager.update_status(
-                        task_uuid,
-                        "cancelling",
-                        message="取消请求已提交，正在踩刹车，别慌",
-                    )
+                    await send_control(websocket, {"type": "pong"})
+                elif data.get("type") == "cancel" and on_cancel is not None:
+                    on_cancel()
 
             except asyncio.TimeoutError:
-                # 超时，发送心跳检测
                 try:
-                    await task_manager.send_task_control_message(task_uuid, websocket, {"type": "ping"})
+                    await send_control(websocket, {"type": "ping"})
                 except Exception:
-                    # 发送失败，可能是连接断开
-                    logger.info(f"WebSocket 心跳检测失败: {task_uuid}")
+                    logger.info("%s", heartbeat_failed_log_label)
                     break
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocket 断开: {task_uuid}")
+        logger.info("%s", disconnect_log_label)
 
-    except Exception as e:
-        logger.error(f"WebSocket 错误: {e}")
+    except Exception as exc:
+        logger.error("%s: %s", error_log_label, exc)
 
     finally:
-        task_manager.unregister_websocket(task_uuid, websocket)
+        unregister(websocket)
+
+
+@router.websocket("/ws/task/{task_uuid}")
+async def task_websocket(websocket: WebSocket, task_uuid: str):
+    stream_id = task_stream_id(task_uuid)
+
+    await _serve_stream_websocket(
+        websocket,
+        stream_id=stream_id,
+        register=lambda after_seq: task_manager.register_websocket(
+            task_uuid,
+            websocket,
+            mode="replaying",
+            after_seq=after_seq,
+        ),
+        send_control=lambda ws, payload: task_manager.send_task_control_message(task_uuid, ws, payload),
+        send_event=lambda ws, event: task_manager.send_task_stream_event(task_uuid, ws, event),
+        finish_replay=lambda ws: task_manager.finish_task_websocket_replay(task_uuid, ws),
+        unregister=lambda ws: task_manager.unregister_websocket(task_uuid, ws),
+        connected_log_label=f"WebSocket 连接已建立(task): {task_uuid}",
+        disconnect_log_label=f"WebSocket 断开: {task_uuid}",
+        error_log_label="WebSocket 错误",
+        heartbeat_failed_log_label=f"WebSocket 心跳检测失败: {task_uuid}",
+        on_cancel=lambda: (
+            task_manager.cancel_task(task_uuid),
+            task_manager.update_status(
+                task_uuid,
+                "cancelling",
+                message="取消请求已提交，正在踩刹车，别慌",
+            ),
+        ),
+    )
 
 
 @router.websocket("/ws/batch/{batch_id}")
 async def batch_websocket(websocket: WebSocket, batch_id: str):
-    """
-    批量 stream WebSocket
-
-    用于批量注册任务的实时状态更新
-
-    消息格式：
-    - 服务端发送: {"seq": 1, "stream": "batch:xxx", "kind": "...", "timestamp": "...", "payload": {...}}
-    - 服务端发送: {"stream": "batch:xxx", "kind": "snapshot_required", "payload": {"reason": "after_seq_expired"}}
-    - 客户端发送: {"type": "ping"} - 心跳
-    - 客户端发送: {"type": "cancel"} - 取消批量任务
-    """
-    await websocket.accept()
-
     stream_id = batch_stream_id(batch_id)
-    after_seq = _parse_after_seq(websocket)
 
-    task_manager.register_batch_websocket(batch_id, websocket, mode="replaying", after_seq=after_seq)
-
-    if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
-        await task_manager.send_batch_control_message(batch_id, websocket, {
-            "stream": stream_id,
-            "kind": "snapshot_required",
-            "payload": {"reason": "after_seq_expired"},
-        })
-    else:
-        replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
-        for event in replay:
-            await task_manager.send_batch_stream_event(batch_id, websocket, event)
-
-    await task_manager.finish_batch_websocket_replay(batch_id, websocket)
-    logger.info(f"批量任务 WebSocket 连接已建立(batch): {batch_id}")
-
-    try:
-        # 保持连接，等待客户端消息
-        while True:
-            try:
-                data = await asyncio.wait_for(
-                    websocket.receive_json(),
-                    timeout=30.0
-                )
-
-                # 处理心跳
-                if data.get("type") == "ping":
-                    await task_manager.send_batch_control_message(batch_id, websocket, {"type": "pong"})
-
-                # 处理取消请求
-                elif data.get("type") == "cancel":
-                    task_manager.cancel_batch(batch_id)
-                    task_manager.update_batch_status(
-                        batch_id,
-                        cancelled=True,
-                        status="cancelling",
-                        message="取消请求已提交，正在让整队缓缓靠边停车",
-                    )
-
-            except asyncio.TimeoutError:
-                # 超时，发送心跳检测
-                try:
-                    await task_manager.send_batch_control_message(batch_id, websocket, {"type": "ping"})
-                except Exception:
-                    logger.info(f"批量任务 WebSocket 心跳检测失败: {batch_id}")
-                    break
-
-    except WebSocketDisconnect:
-        logger.info(f"批量任务 WebSocket 断开: {batch_id}")
-
-    except Exception as e:
-        logger.error(f"批量任务 WebSocket 错误: {e}")
-
-    finally:
-        task_manager.unregister_batch_websocket(batch_id, websocket)
+    await _serve_stream_websocket(
+        websocket,
+        stream_id=stream_id,
+        register=lambda after_seq: task_manager.register_batch_websocket(
+            batch_id,
+            websocket,
+            mode="replaying",
+            after_seq=after_seq,
+        ),
+        send_control=lambda ws, payload: task_manager.send_batch_control_message(batch_id, ws, payload),
+        send_event=lambda ws, event: task_manager.send_batch_stream_event(batch_id, ws, event),
+        finish_replay=lambda ws: task_manager.finish_batch_websocket_replay(batch_id, ws),
+        unregister=lambda ws: task_manager.unregister_batch_websocket(batch_id, ws),
+        connected_log_label=f"批量任务 WebSocket 连接已建立(batch): {batch_id}",
+        disconnect_log_label=f"批量任务 WebSocket 断开: {batch_id}",
+        error_log_label="批量任务 WebSocket 错误",
+        heartbeat_failed_log_label=f"批量任务 WebSocket 心跳检测失败: {batch_id}",
+        on_cancel=lambda: (
+            task_manager.cancel_batch(batch_id),
+            task_manager.update_batch_status(
+                batch_id,
+                cancelled=True,
+                status="cancelling",
+                message="取消请求已提交，正在让整队缓缓靠边停车",
+            ),
+        ),
+    )
 
 
 @router.websocket("/ws/run/{run_id}")
 async def run_websocket(websocket: WebSocket, run_id: int):
-    """
-    run stream WebSocket
-
-    消息格式：
-    - 服务端发送: {"seq": 1, "stream": "run:xxx", "kind": "...", "timestamp": "...", "payload": {...}}
-    - 服务端发送: {"stream": "run:xxx", "kind": "snapshot_required", "payload": {"reason": "after_seq_expired"}}
-    - 客户端发送: {"type": "ping"} - 心跳
-    """
-    await websocket.accept()
-
     stream_id = run_stream_id(run_id)
-    after_seq = _parse_after_seq(websocket)
 
-    task_manager.register_run_websocket(run_id, websocket, mode="replaying", after_seq=after_seq)
-
-    if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
-        await task_manager.send_run_control_message(run_id, websocket, {
-            "stream": stream_id,
-            "kind": "snapshot_required",
-            "payload": {"reason": "after_seq_expired"},
-        })
-    else:
-        replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
-        for event in replay:
-            await task_manager.send_run_stream_event(run_id, websocket, event)
-
-    await task_manager.finish_run_websocket_replay(run_id, websocket)
-    logger.info(f"WebSocket 连接已建立(run): {run_id}")
-
-    try:
-        while True:
-            try:
-                data = await asyncio.wait_for(
-                    websocket.receive_json(),
-                    timeout=30.0,
-                )
-
-                if data.get("type") == "ping":
-                    await task_manager.send_run_control_message(run_id, websocket, {"type": "pong"})
-
-            except asyncio.TimeoutError:
-                try:
-                    await task_manager.send_run_control_message(run_id, websocket, {"type": "ping"})
-                except Exception:
-                    logger.info(f"Run WebSocket 心跳检测失败: {run_id}")
-                    break
-
-    except WebSocketDisconnect:
-        logger.info(f"Run WebSocket 断开: {run_id}")
-
-    except Exception as e:
-        logger.error(f"Run WebSocket 错误: {e}")
-
-    finally:
-        task_manager.unregister_run_websocket(run_id, websocket)
+    await _serve_stream_websocket(
+        websocket,
+        stream_id=stream_id,
+        register=lambda after_seq: task_manager.register_run_websocket(
+            run_id,
+            websocket,
+            mode="replaying",
+            after_seq=after_seq,
+        ),
+        send_control=lambda ws, payload: task_manager.send_run_control_message(run_id, ws, payload),
+        send_event=lambda ws, event: task_manager.send_run_stream_event(run_id, ws, event),
+        finish_replay=lambda ws: task_manager.finish_run_websocket_replay(run_id, ws),
+        unregister=lambda ws: task_manager.unregister_run_websocket(run_id, ws),
+        connected_log_label=f"WebSocket 连接已建立(run): {run_id}",
+        disconnect_log_label=f"Run WebSocket 断开: {run_id}",
+        error_log_label="Run WebSocket 错误",
+        heartbeat_failed_log_label=f"Run WebSocket 心跳检测失败: {run_id}",
+    )
