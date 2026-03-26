@@ -86,8 +86,8 @@ async def _serve_stream_websocket(
     except WebSocketDisconnect:
         logger.info("%s", disconnect_log_label)
 
-    except Exception as exc:
-        logger.error("%s: %s", error_log_label, exc)
+    except Exception:
+        logger.exception("%s", error_log_label)
 
     finally:
         unregister(websocket)
@@ -96,6 +96,14 @@ async def _serve_stream_websocket(
 @router.websocket("/ws/task/{task_uuid}")
 async def task_websocket(websocket: WebSocket, task_uuid: str):
     stream_id = task_stream_id(task_uuid)
+
+    def _on_task_cancel() -> None:
+        task_manager.cancel_task(task_uuid)
+        task_manager.update_status(
+            task_uuid,
+            "cancelling",
+            message="取消请求已提交，正在踩刹车，别慌",
+        )
 
     await _serve_stream_websocket(
         websocket,
@@ -114,20 +122,22 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
         disconnect_log_label=f"WebSocket 断开: {task_uuid}",
         error_log_label="WebSocket 错误",
         heartbeat_failed_log_label=f"WebSocket 心跳检测失败: {task_uuid}",
-        on_cancel=lambda: (
-            task_manager.cancel_task(task_uuid),
-            task_manager.update_status(
-                task_uuid,
-                "cancelling",
-                message="取消请求已提交，正在踩刹车，别慌",
-            ),
-        ),
+        on_cancel=_on_task_cancel,
     )
 
 
 @router.websocket("/ws/batch/{batch_id}")
 async def batch_websocket(websocket: WebSocket, batch_id: str):
     stream_id = batch_stream_id(batch_id)
+
+    def _on_batch_cancel() -> None:
+        task_manager.cancel_batch(batch_id)
+        task_manager.update_batch_status(
+            batch_id,
+            cancelled=True,
+            status="cancelling",
+            message="取消请求已提交，正在让整队缓缓靠边停车",
+        )
 
     await _serve_stream_websocket(
         websocket,
@@ -146,15 +156,7 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
         disconnect_log_label=f"批量任务 WebSocket 断开: {batch_id}",
         error_log_label="批量任务 WebSocket 错误",
         heartbeat_failed_log_label=f"批量任务 WebSocket 心跳检测失败: {batch_id}",
-        on_cancel=lambda: (
-            task_manager.cancel_batch(batch_id),
-            task_manager.update_batch_status(
-                batch_id,
-                cancelled=True,
-                status="cancelling",
-                message="取消请求已提交，正在让整队缓缓靠边停车",
-            ),
-        ),
+        on_cancel=_on_batch_cancel,
     )
 
 
