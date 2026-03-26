@@ -110,7 +110,7 @@
 - **Track C（页面集成）**：Task 5（scheduled tasks）和 Task 6（registration）可并行，因为它们只共享 Task 4 产出的 shared JS/CSS，写集不同。
 - 推荐执行顺序：一个 agent 负责 Task 1~3，另一个 agent 在 Task 4 完成后并行实现 Task 5 与 Task 6，再由主 agent 完成 Task 7 总验收。
 
-### Task 1: 固化 run stream 与结构化日志条目 contract
+### Task 1: 固化 task / batch / run 三类 stream 的结构化日志条目 contract
 
 **Files:**
 - Modify: `src/web/realtime_streams.py`
@@ -166,6 +166,26 @@ def test_run_stream_snapshot_uses_structured_log_entries():
     assert snapshot["payload"]["logs_tail"][0]["message"] == "cleanup runner start"
 
 
+def test_task_and_batch_stream_snapshots_also_use_structured_logs_tail():
+    manager = TaskManager()
+    manager.update_status("task-structured-1", "running")
+    manager.add_log("task-structured-1", "proxy bootstrap ok")
+    manager.init_batch("batch-structured-1", total=2)
+    manager.add_batch_log("batch-structured-1", "batch proxy warmup")
+
+    task_snapshot = manager.build_task_stream_snapshot("task-structured-1")
+    batch_snapshot = manager.build_batch_stream_snapshot("batch-structured-1")
+    task_events = manager.get_stream_events_after("task:task-structured-1", after_seq=0)
+    batch_events = manager.get_stream_events_after("batch:batch-structured-1", after_seq=0)
+
+    assert task_snapshot["payload"]["logs_tail"][0]["message"] == "proxy bootstrap ok"
+    assert task_snapshot["payload"]["logs_tail"][0]["level"] == "INFO"
+    assert task_events[-1]["payload"]["entry"]["message"] == "proxy bootstrap ok"
+    assert task_events[-1]["payload"]["entry"]["seq"] == task_events[-1]["seq"]
+    assert batch_snapshot["payload"]["logs_tail"][0]["message"] == "batch proxy warmup"
+    assert batch_events[-1]["payload"]["entry"]["stream"] == batch_events[-1]["stream"]
+
+
 def test_run_stream_close_appends_terminal_event():
     manager = TaskManager()
     run_id = 654
@@ -180,8 +200,8 @@ def test_run_stream_close_appends_terminal_event():
 
 - [ ] **Step 2: 运行聚焦测试，确认当前实现缺少 run stream API**
 
-Run: `timeout 60s pytest tests/test_task_manager.py::test_run_stream_snapshot_uses_structured_log_entries tests/test_task_manager.py::test_run_stream_close_appends_terminal_event -q`
-Expected: FAIL，提示 `TaskManager` 不存在 `update_run_status` / `build_run_stream_snapshot` / `close_run_stream`，或 snapshot 缺少 `id/plan_id/is_running/can_stop` 等字段。
+Run: `timeout 60s pytest tests/test_task_manager.py::test_run_stream_snapshot_uses_structured_log_entries tests/test_task_manager.py::test_task_and_batch_stream_snapshots_also_use_structured_logs_tail tests/test_task_manager.py::test_run_stream_close_appends_terminal_event -q`
+Expected: FAIL，提示 `TaskManager` 不存在 `update_run_status` / `build_run_stream_snapshot` / `close_run_stream`，或 task/batch 仍返回字符串 `logs_tail` / `payload.message` 而非结构化 `payload.entry`。
 
 - [ ] **Step 3: 在 `realtime_streams.py` 和 `task_manager.py` 实现最小 run contract**
 
@@ -221,6 +241,16 @@ def add_run_log(self, run_id: int, entry: dict):
     ...
 
 
+def add_log(self, task_uuid: str, log_message: str):
+    # 统一构造成 structured entry，再由 event.payload = {"entry": ...}
+    ...
+
+
+def add_batch_log(self, batch_id: str, log_message: str):
+    # 与 task 保持相同 contract
+    ...
+
+
 def build_run_stream_snapshot(self, run_id: int) -> dict:
     return {
         "stream": run_stream_id(run_id),
@@ -233,7 +263,7 @@ def build_run_stream_snapshot(self, run_id: int) -> dict:
 
 - [ ] **Step 4: 重新运行 TaskManager 聚焦测试，确认 structured snapshot / close event 通过**
 
-Run: `timeout 60s pytest tests/test_task_manager.py::test_run_stream_snapshot_uses_structured_log_entries tests/test_task_manager.py::test_run_stream_close_appends_terminal_event -q`
+Run: `timeout 60s pytest tests/test_task_manager.py::test_run_stream_snapshot_uses_structured_log_entries tests/test_task_manager.py::test_task_and_batch_stream_snapshots_also_use_structured_logs_tail tests/test_task_manager.py::test_run_stream_close_appends_terminal_event -q`
 Expected: PASS。
 
 - [ ] **Step 5: 提交 Task 1**
@@ -297,9 +327,13 @@ def test_task_and_batch_realtime_stream_routes_also_use_new_contract(client):
     assert task_snapshot.json()["kind"] == "snapshot"
     assert task_snapshot.json()["stream"] == "task:task-new-1"
     assert task_events.json()["events"][-1]["kind"] == "log_appended"
+    assert task_events.json()["events"][-1]["payload"]["entry"]["message"] == "task-line-1"
+    assert task_snapshot.json()["payload"]["logs_tail"][0]["level"] == "INFO"
     assert batch_snapshot.status_code == 200
     assert batch_snapshot.json()["stream"] == "batch:batch-new-1"
+    assert batch_snapshot.json()["payload"]["logs_tail"][0]["message"] == "batch-line-1"
     assert batch_events.json()["events"][-1]["stream"] == "batch:batch-new-1"
+    assert batch_events.json()["events"][-1]["payload"]["entry"]["seq"] == batch_events.json()["events"][-1]["seq"]
 
     with client.websocket_connect("/api/ws/task/task-new-1?after_seq=0") as task_ws:
         task_payload = task_ws.receive_json()
@@ -320,7 +354,7 @@ def test_registration_stream_alias_routes_delegate_to_realtime_streams(client):
 - [ ] **Step 2: 运行聚焦路由测试，确认当前缺少 `/api/realtime-streams/*` 和 run WebSocket**
 
 Run: `timeout 60s pytest tests/test_realtime_stream_routes.py::test_run_realtime_stream_routes_and_websocket_contract tests/test_realtime_stream_routes.py::test_task_and_batch_realtime_stream_routes_also_use_new_contract tests/test_registration_stream_routes.py::test_registration_stream_routes_return_404_for_missing_streams -q`
-Expected: FAIL，`/api/realtime-streams/run/777/snapshot` 返回 404，或 `/api/ws/run/777` 不存在，或 `task/batch` 尚未暴露到新 `/api/realtime-streams/*`。
+Expected: FAIL，`/api/realtime-streams/run/777/snapshot` 返回 404，或 `/api/ws/run/777` 不存在，或 `task/batch` 仍返回旧 `payload.message + string logs_tail` 契约。
 
 - [ ] **Step 3: 最小实现通用 router、legacy alias 委托和 run websocket replay**
 
@@ -380,16 +414,35 @@ git commit -m "feat: add generic realtime stream routes and run websocket"
 # tests/test_scheduler_engine.py
 
 def test_append_run_log_emits_structured_realtime_entry(monkeypatch):
-    emitted = []
-    monkeypatch.setattr(task_manager, "add_run_log", lambda run_id, entry: emitted.append((run_id, entry)))
+    emitted = {}
+
+    def _fake_add_run_log(run_id, entry):
+        emitted["run_id"] = run_id
+        emitted["entry"] = entry
+        return {
+            "seq": 7,
+            "stream": "run:9",
+            "payload": {
+                "entry": {
+                    **entry,
+                    "seq": 7,
+                    "stream": "run:9",
+                }
+            },
+        }
+
+    monkeypatch.setattr(task_manager, "add_run_log", _fake_add_run_log)
 
     logged_at = datetime(2026, 3, 26, 10, 0, 0, 123000)
     assert run_logger.append_run_log(9, "hello", level="WARN", logged_at=logged_at) is True
 
-    assert emitted[0][0] == 9
-    assert emitted[0][1]["level"] == "WARN"
-    assert emitted[0][1]["display_time"] == "10:00:00"
-    assert emitted[0][1]["raw"].endswith("[WARN] hello")
+    assert emitted["run_id"] == 9
+    assert emitted["entry"]["level"] == "WARN"
+    assert emitted["entry"]["display_time"] == "10:00:00"
+    assert emitted["entry"]["raw"].endswith("[WARN] hello")
+    returned = _fake_add_run_log(9, emitted["entry"])
+    assert returned["payload"]["entry"]["seq"] == returned["seq"]
+    assert returned["payload"]["entry"]["stream"] == returned["stream"]
 
 
 def test_scheduler_engine_marks_stream_closed_on_failed_run(monkeypatch):
@@ -433,10 +486,10 @@ def append_run_log(...):
     raw = _format_run_log_line(message, level=normalized_level, logged_at=actual_logged_at)
     persisted = crud.append_scheduled_run_log(..., raw, logged_at=actual_logged_at)
     if persisted:
-        task_manager.add_run_log(
+        event = task_manager.add_run_log(
             run_id,
             build_log_entry(
-                seq=0,  # 由 task_manager.add_run_log 注入真实 seq
+                seq=-1,  # 仅占位，真实 seq/stream 必须由 task_manager.add_run_log 覆盖
                 stream=run_stream_id(run_id),
                 timestamp=actual_logged_at.isoformat(),
                 level=normalized_level,
@@ -445,6 +498,8 @@ def append_run_log(...):
                 source="scheduler",
             ),
         )
+        assert event["payload"]["entry"]["seq"] == event["seq"]
+        assert event["payload"]["entry"]["stream"] == event["stream"]
     return persisted
 
 # src/scheduler/engine.py
