@@ -3,8 +3,6 @@ FastAPI 应用主文件
 轻量级 Web UI，支持注册、账号管理、设置
 """
 
-import hashlib
-import hmac
 import logging
 import secrets
 import sys
@@ -18,9 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..boot.lifespan import app_lifespan
-from ..boot.settings import get_boot_settings
 from ..config.settings import get_settings
 from ..scheduler.engine import SchedulerEngine
+from .auth import auth_token, effective_access_password, is_authenticated
 from .page_shell import build_page_shell
 from .routes import api_router
 from .routes.websocket import router as ws_router
@@ -90,21 +88,6 @@ def create_app() -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.globals["static_version"] = _build_static_asset_version(STATIC_DIR)
 
-    def _auth_token(password: str) -> str:
-        secret = get_settings().webui_secret_key.get_secret_value().encode("utf-8")
-        return hmac.new(secret, password.encode("utf-8"), hashlib.sha256).hexdigest()
-
-    def _effective_access_password() -> str:
-        boot_settings = get_boot_settings()
-        if boot_settings.access_password_override:
-            return boot_settings.access_password_override
-        return get_settings().webui_access_password.get_secret_value()
-
-    def _is_authenticated(request: Request) -> bool:
-        cookie = request.cookies.get("webui_auth")
-        expected = _auth_token(_effective_access_password())
-        return bool(cookie) and secrets.compare_digest(cookie, expected)
-
     def _redirect_to_login(request: Request) -> RedirectResponse:
         return RedirectResponse(url=f"/login?next={request.url.path}", status_code=302)
 
@@ -137,7 +120,7 @@ def create_app() -> FastAPI:
 
     @app.post("/login")
     async def login_submit(request: Request, password: str = Form(...), next: Optional[str] = "/"):
-        expected = _effective_access_password()
+        expected = effective_access_password()
         if not secrets.compare_digest(password, expected):
             return templates.TemplateResponse(
                 request,
@@ -147,7 +130,7 @@ def create_app() -> FastAPI:
             )
 
         response = RedirectResponse(url=next or "/", status_code=302)
-        response.set_cookie("webui_auth", _auth_token(expected), httponly=True, samesite="lax")
+        response.set_cookie("webui_auth", auth_token(expected), httponly=True, samesite="lax")
         return response
 
     @app.get("/logout")
@@ -158,7 +141,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse(
             request,
@@ -173,7 +156,7 @@ def create_app() -> FastAPI:
 
     @app.get("/registration-workbench", response_class=HTMLResponse)
     async def registration_workbench_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse(
             request,
@@ -188,7 +171,7 @@ def create_app() -> FastAPI:
 
     @app.get("/accounts", response_class=HTMLResponse)
     async def accounts_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse(
             request,
@@ -203,7 +186,7 @@ def create_app() -> FastAPI:
 
     @app.get("/email-services", response_class=HTMLResponse)
     async def email_services_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse(
             request,
@@ -218,7 +201,7 @@ def create_app() -> FastAPI:
 
     @app.get("/scheduled-tasks", response_class=HTMLResponse)
     async def scheduled_tasks_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse(
             request,
@@ -233,7 +216,7 @@ def create_app() -> FastAPI:
 
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         return templates.TemplateResponse(
             request,
@@ -261,7 +244,7 @@ def create_app() -> FastAPI:
 
     @app.get("/registration-experiments", response_class=HTMLResponse)
     async def registration_experiments_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         # 兼容源码断言：templates.TemplateResponse("registration_experiments.html", ...)
         return templates.TemplateResponse(
@@ -277,7 +260,7 @@ def create_app() -> FastAPI:
 
     @app.get("/registration-batch-stats", response_class=HTMLResponse)
     async def registration_batch_stats_page(request: Request):
-        if not _is_authenticated(request):
+        if not is_authenticated(request):
             return _redirect_to_login(request)
         # 兼容源码断言：templates.TemplateResponse("registration_batch_stats.html", ...)
         return templates.TemplateResponse(
