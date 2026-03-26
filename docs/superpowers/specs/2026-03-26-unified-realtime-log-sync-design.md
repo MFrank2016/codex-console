@@ -278,7 +278,53 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 3. 前端统一 store 负责把这些事件归一到公共状态树中。
 4. 若后续需要继续抽象，可在下一阶段再收口成 `status_changed` / `progress_updated` 这种更通用命名。
 
-## 6.3 snapshot 结构
+## 6.3 统一日志条目结构
+
+无论日志来自注册工作台还是定时任务，进入统一 store 之前都必须被标准化为同一种日志条目结构：
+
+```json
+{
+  "seq": 12,
+  "stream": "run:123",
+  "timestamp": "2026-03-26T10:00:00+08:00",
+  "display_time": "10:00:00",
+  "level": "INFO",
+  "message": "cleanup runner start (plan_id=3)",
+  "raw": "2026-03-26 10:00:00.123 [INFO] cleanup runner start (plan_id=3)",
+  "source": "scheduler"
+}
+```
+
+字段约定：
+
+1. `seq`：继承当前事件的序号，用于日志去重与顺序恢复。
+2. `stream`：当前日志所属 stream。
+3. `timestamp`：标准 ISO 时间，用于排序与恢复。
+4. `display_time`：前端直接显示的时间列，默认格式 `HH:mm:ss`。
+5. `level`：统一使用 `INFO / WARN / ERROR`。
+6. `message`：纯正文，不包含时间戳与级别前缀。
+7. `raw`：原始文本行，用于复制、兼容显示、问题排查。
+8. `source`：可选来源标记，例如 `registration` / `scheduler`。
+
+标准化规则：
+
+1. **定时任务日志**
+   - `append_run_log(...)` 已经掌握 `logged_at` 与 `level`，因此事件 payload 直接输出结构化条目。
+   - 同时继续保留格式化后的 `raw` 文本写入数据库，兼容现有 chunk 历史接口。
+2. **注册工作台日志**
+   - 若当前回调链路只提供字符串，则在追加 stream 事件时立即标准化。
+   - 若字符串本身不含显式时间与级别，则：
+     - `timestamp` 使用事件生成时间；
+     - `level` 按现有 `getLogType(...)` 规则映射到 `INFO / WARN / ERROR`，无法明确识别时默认 `INFO`；
+     - `message` 使用原始字符串；
+     - `raw` 保留原始字符串。
+3. **历史尾部窗口**
+   - `logs_tail` 不再定义为纯字符串数组，而是定义为“结构化日志条目数组”。
+   - 对于历史定时任务日志，如果数据库中只有纯文本行，则在 snapshot / chunk 映射阶段按相同规则解析 / 回填结构化字段。
+
+这意味着统一控制台永远消费结构化日志条目，而不是依赖每个页面自行从纯文本中二次猜测时间与级别。
+
+## 6.4 snapshot 结构
 
 ### task snapshot
 
@@ -288,14 +334,14 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 2. `current_step`：当前步骤摘要。
 3. `steps`：当前步骤列表。
 4. `task_progress`：单任务总步骤进度、当前耗时等。
-5. `logs_tail`：最近日志窗口。
+5. `logs_tail`：最近日志窗口（结构化日志条目数组）。
 
 ### batch snapshot
 
 至少包含：
 
 1. `batch`：批量任务状态。
-2. `logs_tail`：最近日志窗口。
+2. `logs_tail`：最近日志窗口（结构化日志条目数组）。
 
 ### run snapshot
 
@@ -316,9 +362,34 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
    - `log_version`
    - `error_message`
 2. `run_progress`：可选执行进度摘要。
-3. `logs_tail`：最近日志窗口。
+3. `logs_tail`：最近日志窗口（结构化日志条目数组）。
 
-## 6.4 seq 与 replay 语义
+## 6.5 `log_appended` payload 约定
+
+`log_appended` 的 `payload` 至少包含：
+
+```json
+{
+  "entry": {
+    "seq": 12,
+    "stream": "run:123",
+    "timestamp": "2026-03-26T10:00:00+08:00",
+    "display_time": "10:00:00",
+    "level": "INFO",
+    "message": "cleanup runner start (plan_id=3)",
+    "raw": "2026-03-26 10:00:00.123 [INFO] cleanup runner start (plan_id=3)",
+    "source": "scheduler"
+  }
+}
+```
+
+补充约定：
+
+1. `entry.seq` 与外层 `event.seq` 保持一致，方便组件只依赖日志条目本身去重。
+2. 前端控制台渲染只读取 `entry.display_time / entry.level / entry.message / entry.raw`。
+3. `raw` 始终作为复制与兜底展示的唯一原文来源。
+
+## 6.6 seq 与 replay 语义
 
 1. `seq` 只在单 stream 内递增，不追求全局有序。
 2. 客户端只消费 `seq > lastSeq` 的事件。
@@ -379,7 +450,8 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 `append_run_log(...)` 由“仅落库”升级为：
 
 1. 先把格式化后的日志行写入数据库。
-2. 成功后向 `run:{run_id}` stream 追加 `log_appended` 事件。
+2. 基于 `logged_at + level + message + raw` 构造结构化日志条目。
+3. 成功后向 `run:{run_id}` stream 追加 `log_appended` 事件。
 3. 如果事件循环可用，则立即广播给当前连接的 WebSocket 客户端。
 
 这样数据库仍是事实来源，但 UI 的实时性不再依赖轮询数据库。
@@ -426,12 +498,33 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 2. `WS /api/ws/batch/{batch_id}`
 3. `WS /api/ws/run/{run_id}`
 
-三者协议完全一致：
+三者协议完全一致，且首轮实现采用 **URL query 携带 `after_seq`** 的方式，不引入“连接成功后再发订阅命令”的第二套握手：
 
-1. 支持 `after_seq`。
-2. 支持 `snapshot_required`。
-3. 支持心跳 `ping/pong`。
-4. 在终态后广播 `stream_closed`。
+1. 客户端连接形式固定为：
+   - `/api/ws/task/{task_uuid}?after_seq=123`
+   - `/api/ws/batch/{batch_id}?after_seq=456`
+   - `/api/ws/run/{run_id}?after_seq=789`
+2. 服务端 `accept` 后立即读取 URL query 中的 `after_seq`。
+3. 若 `after_seq` 可覆盖，则先 replay `seq > after_seq` 的事件，再切换到 live 模式。
+4. 若 `after_seq` 已过期，则服务端发送：
+
+```json
+{
+  "stream": "run:123",
+  "kind": "snapshot_required",
+  "payload": { "reason": "after_seq_expired" }
+}
+```
+
+5. 发送 `snapshot_required` 时 **连接保持不断开**；客户端必须：
+   - 立刻拉取最新 snapshot；
+   - 用 snapshot 重建当前窗口；
+   - 保留当前 WebSocket 继续接收后续 live event。
+6. 心跳仍使用现有控制消息：
+   - 客户端发 `{"type":"ping"}`
+   - 服务端回 `{"type":"pong"}`
+7. 取消类动作仍复用现有控制消息，不额外引入新的订阅协议。
+8. 终态时广播 `stream_closed`，客户端据此停止重连与等待状态。
 
 ## 7.7 snapshot 边界
 
@@ -460,8 +553,8 @@ snapshot 只包含“当前可展示窗口”，不承载全部历史：
 
 1. 建立 WebSocket 连接。
 2. 维护心跳。
-3. 使用 `after_seq` 进行断线重连。
-4. 收到 `snapshot_required` 后自动拉 snapshot。
+3. 使用当前 store 中的 cursor 通过 URL query `?after_seq=...` 进行断线重连。
+4. 收到 `snapshot_required` 后自动拉 snapshot，并在不关闭现有连接的前提下重建当前视图窗口。
 5. WebSocket 失败时降级到 events HTTP 补偿轮询。
 6. 对外只抛出标准化事件，不直接操作 DOM。
 
