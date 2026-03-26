@@ -433,7 +433,7 @@ class TaskManager:
             event = self.append_stream_event(
                 stream_id,
                 "log_appended",
-                {"task_uuid": task_uuid, "entry": entry},
+                {"entry": entry},
             )
             event_entry = event["payload"]["entry"]
             event_entry["seq"] = event["seq"]
@@ -621,7 +621,7 @@ class TaskManager:
             event = self.append_stream_event(
                 stream_id,
                 "log_appended",
-                {"run_id": run_id, "entry": entry},
+                {"entry": entry},
             )
             event_entry = event["payload"]["entry"]
             event_entry["seq"] = event["seq"]
@@ -732,7 +732,7 @@ class TaskManager:
             event = self.append_stream_event(
                 stream_id,
                 "log_appended",
-                {"batch_id": batch_id, "entry": entry},
+                {"entry": entry},
             )
             event_entry = event["payload"]["entry"]
             event_entry["seq"] = event["seq"]

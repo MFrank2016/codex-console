@@ -201,6 +201,7 @@ def test_run_stream_snapshot_uses_structured_log_entries():
     )
 
     snapshot = manager.build_run_stream_snapshot(run_id)
+    events = manager.get_stream_events_after("run:321", after_seq=0)
     assert snapshot["stream"] == "run:321"
     assert snapshot["kind"] == "snapshot"
     assert isinstance(snapshot["seq"], int)
@@ -214,6 +215,7 @@ def test_run_stream_snapshot_uses_structured_log_entries():
     assert snapshot["payload"]["run"]["log_version"] == 4
     assert snapshot["payload"]["logs_tail"][0]["level"] == "INFO"
     assert snapshot["payload"]["logs_tail"][0]["message"] == "cleanup runner start"
+    assert events[-1]["payload"] == {"entry": events[-1]["payload"]["entry"]}
 
 
 def test_task_and_batch_stream_snapshots_also_use_structured_logs_tail():
@@ -232,8 +234,10 @@ def test_task_and_batch_stream_snapshots_also_use_structured_logs_tail():
     assert task_snapshot["payload"]["logs_tail"][0]["level"] == "INFO"
     assert task_events[-1]["payload"]["entry"]["message"] == "proxy bootstrap ok"
     assert task_events[-1]["payload"]["entry"]["seq"] == task_events[-1]["seq"]
+    assert task_events[-1]["payload"] == {"entry": task_events[-1]["payload"]["entry"]}
     assert batch_snapshot["payload"]["logs_tail"][0]["message"] == "batch proxy warmup"
     assert batch_events[-1]["payload"]["entry"]["stream"] == batch_events[-1]["stream"]
+    assert batch_events[-1]["payload"] == {"entry": batch_events[-1]["payload"]["entry"]}
 
 
 def test_run_stream_close_appends_terminal_event():
