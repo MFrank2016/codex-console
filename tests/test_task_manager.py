@@ -239,6 +239,16 @@ def test_append_stream_event_clones_entry_and_sets_seq_stream_atomically():
     assert event["payload"] == {"entry": event["payload"]["entry"]}
 
 
+def test_append_stream_event_also_deepcopies_non_dict_payloads():
+    manager = TaskManager()
+    payload = ["line-1", {"nested": []}]
+
+    event = manager.append_stream_event("task:payload-copy", "custom_event", payload)
+    payload[1]["nested"].append("mutated")
+
+    assert event["payload"][1]["nested"] == []
+
+
 def test_build_log_entry_ignores_reserved_extra_and_derives_display_time():
     entry = build_log_entry(
         stream="run:1",
@@ -261,6 +271,16 @@ def test_build_log_entry_ignores_reserved_extra_and_derives_display_time():
     assert entry["message"] == "runner-start"
     assert entry["source"] == "system"
     assert entry["custom"] == "ok"
+
+
+def test_build_log_entry_preserves_empty_raw_string():
+    entry = build_log_entry(
+        stream="task:raw-empty",
+        message="runner-start",
+        raw="",
+    )
+
+    assert entry["raw"] == ""
 
 
 def test_log_event_entry_is_isolated_from_snapshot_logs_tail():
@@ -291,6 +311,28 @@ def test_update_run_status_keeps_run_progress_out_of_run_status_snapshot():
     snapshot = manager.build_run_stream_snapshot(777)
     assert snapshot["payload"]["run_progress"] == {"step_index": 1, "total_steps": 3}
     assert "run_progress" not in snapshot["payload"]["run"]
+
+
+def test_run_log_nested_extra_is_deepcopied_for_events_and_logs_tail():
+    manager = TaskManager()
+    run_id = 778
+
+    manager.update_run_status(run_id, status="running")
+    manager.add_run_log(
+        run_id,
+        {
+            "message": "runner-start",
+            "context": {"attempts": [1]},
+        },
+    )
+
+    event = manager.get_stream_events_after(f"run:{run_id}", after_seq=0)[-1]
+    event["payload"]["entry"]["context"]["attempts"].append(2)
+
+    fresh_event = manager.get_stream_events_after(f"run:{run_id}", after_seq=0)[-1]
+    snapshot = manager.build_run_stream_snapshot(run_id)
+    assert fresh_event["payload"]["entry"]["context"]["attempts"] == [1]
+    assert snapshot["payload"]["logs_tail"][0]["context"]["attempts"] == [1]
 
 
 def test_task_and_batch_stream_snapshots_also_use_structured_logs_tail():

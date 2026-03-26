@@ -52,6 +52,7 @@ def build_log_entry(
     seq: int | None = None,
     extra: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    """构造基础日志条目；最终 seq/stream 以 stream event 创建时注入为准。"""
     now = utc_now()
     resolved_timestamp = timestamp or now.isoformat()
     resolved_display_time = display_time or _derive_display_time(resolved_timestamp) or now.strftime("%H:%M:%S")
@@ -60,7 +61,7 @@ def build_log_entry(
         "display_time": resolved_display_time,
         "level": level,
         "message": message,
-        "raw": raw or message,
+        "raw": raw if raw is not None else message,
         "source": source or "system",
         "stream": stream,
         "seq": seq,
