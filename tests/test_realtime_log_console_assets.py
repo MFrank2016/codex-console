@@ -10,6 +10,7 @@ def test_snapshot_required_resync_contract():
     assert result["theme_error_class"] == "realtime-log-level-error"
     assert result["live_window_size"] == 500
     assert result["history_chunk_merged"] is True
+    assert result["history_overlap_deduped"] is True
     assert result["resync_pending_replayed_in_order"] is True
 
 

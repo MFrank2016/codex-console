@@ -134,7 +134,7 @@ async function main() {{
   }});
 
   if (scenarioName === 'snapshot_required_resync') {{
-    client.applyHistoryChunk('2026-03-26 09:59:57.000 [INFO] history-line');
+    client.applyHistoryChunk('2026-03-26 10:00:00.000 [INFO] line-0');
     const logsTail = Array.from({{ length: 500 }}, (_, index) =>
       makeEntry(
         index + 1,
@@ -167,7 +167,8 @@ async function main() {{
       last_rendered_text: visibleEntries.length ? `${{visibleEntries[visibleEntries.length - 1].display_time}} ${{visibleEntries[visibleEntries.length - 1].level}} ${{visibleEntries[visibleEntries.length - 1].message}}` : '',
       theme_error_class: root.innerHTML.includes('realtime-log-level-error') ? 'realtime-log-level-error' : '',
       live_window_size: Array.isArray(state.liveWindow) ? state.liveWindow.length : -1,
-      history_chunk_merged: Array.isArray(state.historyPrefix) && state.historyPrefix.length === 1 && Array.isArray(state.logs) && state.logs.length === 501,
+      history_chunk_merged: Array.isArray(state.historyPrefix) && state.historyPrefix.length === 1,
+      history_overlap_deduped: Array.isArray(state.logs) && state.logs.length === 500 && state.logs.filter((entry) => entry.message === 'line-0').length === 1,
       resync_pending_replayed_in_order: client.getDiagnostics().replayedInOrder,
     }};
   }}

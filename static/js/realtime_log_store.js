@@ -92,6 +92,20 @@
     };
   }
 
+  function logIdentity(entry) {
+    const payload = entry && typeof entry === 'object' ? entry : {};
+    if (typeof payload.raw === 'string' && payload.raw) {
+      return `raw:${payload.raw}`;
+    }
+    return [
+      'fallback',
+      payload.timestamp || '',
+      payload.display_time || '',
+      payload.level || '',
+      payload.message || '',
+    ].join('|');
+  }
+
   function rebuildLegacyState(state) {
     const nextState = clone(state || {});
     nextState.filters = { ...DEFAULT_FILTERS, ...(nextState.filters || {}) };
@@ -103,7 +117,9 @@
     nextState.cursors = { ...(nextState.cursors || {}) };
     nextState.historyPrefix = Array.isArray(nextState.historyPrefix) ? nextState.historyPrefix.map(clone) : [];
     nextState.liveWindow = Array.isArray(nextState.liveWindow) ? nextState.liveWindow.map(clone) : [];
-    nextState.logs = [...nextState.historyPrefix, ...nextState.liveWindow].map(clone);
+    const liveKeys = new Set(nextState.liveWindow.map(logIdentity));
+    const historyOnly = nextState.historyPrefix.filter((entry) => !liveKeys.has(logIdentity(entry)));
+    nextState.logs = [...historyOnly, ...nextState.liveWindow].map(clone);
     nextState.context = {
       task: nextState.task || null,
       batch: nextState.batch || null,
