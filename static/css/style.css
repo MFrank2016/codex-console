@@ -360,7 +360,7 @@ body {
     font-size: 1.15rem;
 }
 
-.workspace-theme-toggle {
+.theme-toggle.workspace-theme-toggle {
     border-radius: var(--radius-full);
     border-color: var(--warm-border);
     background: var(--warm-surface);

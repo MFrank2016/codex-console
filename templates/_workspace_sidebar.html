@@ -33,6 +33,7 @@
                         href="{{ nav_item["href"] }}"
                         class="workspace-nav-link{% if nav_item["key"] == page_key %} is-active{% endif %}"
                         data-nav-key="{{ nav_item["key"] }}"
+                        aria-label="{{ nav_item["label"] }}"
                     >
                         <span class="workspace-nav-icon" aria-hidden="true">
                             {% if nav_item["key"] == "dashboard" %}🏠

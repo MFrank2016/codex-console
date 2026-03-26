@@ -23,6 +23,7 @@ def test_shared_stylesheet_defines_workspace_shell_selectors():
     assert ".workspace-sidebar-collapsed .workspace-main" in stylesheet
     assert ".workspace-sidebar-collapsed .workspace-nav-label" in stylesheet
     assert ".workspace-sidebar-collapsed .workspace-nav-link" in stylesheet
+    assert ".theme-toggle.workspace-theme-toggle" in stylesheet
 
 
 def test_workspace_script_defines_sidebar_and_theme_helpers():
@@ -67,13 +68,18 @@ def test_workspace_sidebar_template_contains_sidebar_controls_and_nav_icon_label
     assert 'id="workspace-theme-toggle"' in sidebar
     assert "workspace-nav-icon" in sidebar
     assert "workspace-nav-label" in sidebar
+    assert 'aria-label="{{ nav_item["label"] }}"' in sidebar
 
 
 def test_workspace_js_harness_toggles_collapsed_state_and_storage_contract():
     result = run_workspace_js_scenario("sidebar_toggle_flow")
     assert result == {
         "after_restore_collapsed": True,
+        "after_restore_toggle_title": "展开侧边栏",
+        "after_restore_toggle_pressed": "true",
         "after_click_collapsed": False,
+        "after_click_toggle_title": "折叠侧边栏",
+        "after_click_toggle_pressed": "false",
         "stored_sidebar_value": "expanded",
     }
 

@@ -137,11 +137,15 @@ async function main() {{
 
   const result = {{
     after_restore_collapsed: document.body.classList.contains('workspace-sidebar-collapsed'),
+    after_restore_toggle_title: sidebarToggle.title,
+    after_restore_toggle_pressed: sidebarToggle._attrs['aria-pressed'] || '',
   }};
 
   sidebarToggle.click();
 
   result.after_click_collapsed = document.body.classList.contains('workspace-sidebar-collapsed');
+  result.after_click_toggle_title = sidebarToggle.title;
+  result.after_click_toggle_pressed = sidebarToggle._attrs['aria-pressed'] || '';
   result.stored_sidebar_value = localStorageMap.get('codex-console.workspace.sidebar');
 
   process.stdout.write(JSON.stringify(result));
