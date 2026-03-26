@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from datetime import timedelta
 
 from src.core.openai import token_refresh as token_refresh_module
@@ -9,6 +10,13 @@ from src.database import crud
 from src.database.models import Base
 from src.database.session import DatabaseSessionManager
 from src.database import session as session_module
+
+
+def _build_temp_session_manager(tmp_path) -> DatabaseSessionManager:
+    db_path = tmp_path / "token-refresh-extra.db"
+    manager = DatabaseSessionManager(f"sqlite:///{db_path}")
+    Base.metadata.create_all(bind=manager.engine)
+    return manager
 
 
 class _FakeResponse:
@@ -24,9 +32,35 @@ class _FakeResponse:
 class _FakeSession:
     def __init__(self, response: _FakeResponse):
         self._response = response
+        self.cookies = type(
+            "_CookieJar",
+            (),
+            {"set": lambda self, *args, **kwargs: None},
+        )()
+
+    def get(self, *args, **kwargs):
+        return self._response
 
     def post(self, *args, **kwargs):
         return self._response
+
+
+def test_refresh_by_session_token_normalizes_expiry_to_naive_utc(monkeypatch):
+    manager = TokenRefreshManager(proxy_url="http://proxy.local:8000")
+    fake_response = _FakeResponse(
+        200,
+        {
+            "accessToken": "new-session-access-token",
+            "expires": "2026-03-26T12:34:56Z",
+        },
+    )
+    monkeypatch.setattr(manager, "_create_session", lambda: _FakeSession(fake_response))
+
+    result = manager.refresh_by_session_token("session-token")
+
+    assert result.success is True
+    assert result.expires_at == datetime(2026, 3, 26, 12, 34, 56)
+    assert result.expires_at.tzinfo is None
 
 
 def test_refresh_by_oauth_token_returns_naive_expiry(monkeypatch):
@@ -95,3 +129,27 @@ def test_refresh_account_token_persists_naive_last_refresh(tmp_path, monkeypatch
         assert persisted.last_refresh.tzinfo is None
     finally:
         verify_session.close()
+
+
+def test_refresh_by_oauth_token_returns_http_failure(monkeypatch):
+    manager = TokenRefreshManager(proxy_url="http://proxy.local:8000")
+    fake_response = _FakeResponse(500, {"error": "upstream failed"})
+    monkeypatch.setattr(manager, "_create_session", lambda: _FakeSession(fake_response))
+
+    result = manager.refresh_by_oauth_token(
+        refresh_token="old-refresh-token",
+        client_id="client-id",
+    )
+
+    assert result.success is False
+    assert "HTTP 500" in result.error_message
+
+
+def test_refresh_account_token_returns_not_found_for_missing_account(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+
+    result = token_refresh_module.refresh_account_token(999999, proxy_url="http://proxy.local:8000")
+
+    assert result.success is False
+    assert result.error_message == "账号不存在"

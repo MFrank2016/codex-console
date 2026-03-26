@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from src.database import crud
 from src.database.models import Base
 from src.database.session import DatabaseSessionManager
@@ -85,3 +88,48 @@ def test_batch_check_subscription_sets_naive_subscription_time_for_successful_ch
         assert persisted.subscription_at.tzinfo is None
     finally:
         verify_session.close()
+
+
+def test_generate_payment_link_rejects_invalid_plan_type(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+
+    session = manager.SessionLocal()
+    try:
+        account = crud.create_account(
+            session,
+            email="invalid-plan@example.com",
+            email_service="tempmail",
+        )
+    finally:
+        session.close()
+
+    with pytest.raises(HTTPException) as exc_info:
+        payment_routes.generate_payment_link(
+            payment_routes.GenerateLinkRequest(
+                account_id=account.id,
+                plan_type="enterprise",
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "plan_type" in str(exc_info.value.detail)
+
+
+def test_batch_check_subscription_reports_missing_account(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+    monkeypatch.setattr(payment_routes, "resolve_account_ids", lambda *args, **kwargs: [999999])
+
+    response = payment_routes.batch_check_subscription(
+        payment_routes.BatchCheckSubscriptionRequest(
+            ids=[999999],
+            proxy="http://proxy.local:8000",
+        )
+    )
+
+    assert response["success_count"] == 0
+    assert response["failed_count"] == 1
+    assert response["details"] == [
+        {"id": 999999, "email": None, "success": False, "error": "账号不存在"}
+    ]

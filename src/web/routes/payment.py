@@ -83,6 +83,8 @@ def generate_payment_link(request: GenerateLinkRequest):
                 )
             else:
                 raise HTTPException(status_code=400, detail="plan_type 必须为 plus 或 team")
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -179,4 +181,3 @@ def mark_subscription(account_id: int, request: MarkSubscriptionRequest):
         db.commit()
 
     return {"success": True, "subscription_type": request.subscription_type}
-

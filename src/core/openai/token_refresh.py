@@ -8,7 +8,7 @@ import json
 import time
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from curl_cffi import requests as cffi_requests
 
@@ -111,6 +111,8 @@ class TokenRefreshManager:
             if expires_str:
                 try:
                     expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+                    if expires_at.tzinfo is not None:
+                        expires_at = expires_at.astimezone(UTC).replace(tzinfo=None)
                 except:
                     pass
 
