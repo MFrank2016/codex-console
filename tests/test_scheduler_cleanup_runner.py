@@ -147,6 +147,73 @@ def test_cleanup_runner_respects_max_cleanup_count(temp_db, monkeypatch):
     assert summary["local_marked_expired"] == 1
 
 
+def test_cleanup_runner_records_total_invalid_count_without_truncating_probe_results(temp_db, monkeypatch):
+    service, plan, run = _create_cleanup_plan_and_run(temp_db, max_cleanup_count=2, max_probe_count=10)
+
+    first = crud.create_account(temp_db, email="first@example.com", email_service="tempmail")
+    second = crud.create_account(temp_db, email="second@example.com", email_service="tempmail")
+    crud.update_account(temp_db, first.id, primary_cpa_service_id=service.id, status="active")
+    crud.update_account(temp_db, second.id, primary_cpa_service_id=service.id, status="active")
+
+    invalid_items = [
+        {"email": "first@example.com", "name": "first@example.com.json"},
+        {"email": "second@example.com", "name": "second@example.com.json"},
+        {"email": "third@example.com", "name": "third@example.com.json"},
+        {"email": "fourth@example.com", "name": "fourth@example.com.json"},
+        {"email": "fifth@example.com", "name": "fifth@example.com.json"},
+    ]
+
+    captured: dict[str, Any] = {}
+
+    def _fake_probe_invalid_accounts(**kwargs):
+        captured["limit"] = kwargs.get("limit")
+        progress_callback = kwargs["progress_callback"]
+        progress_callback("probe candidates loaded (total=8, selected=8)")
+        progress_callback("probe progress (scanned=8/8, invalid=5)")
+        limit = kwargs.get("limit")
+        if isinstance(limit, int) and limit > 0:
+            return invalid_items[:limit]
+        return invalid_items
+
+    monkeypatch.setattr(cleanup_runner, "probe_invalid_accounts", _fake_probe_invalid_accounts)
+    monkeypatch.setattr(
+        cleanup_runner,
+        "delete_invalid_accounts",
+        lambda **kwargs: {"deleted": len(kwargs["names"]), "failed": 0},
+    )
+
+    summary = run_cleanup_plan(plan_id=plan.id, run_id=run.id)
+
+    assert captured["limit"] is None
+    assert summary["probe_items_selected"] == 8
+    assert summary["probe_items_scanned"] == 8
+    assert summary["invalid_items_found"] == 5
+    assert summary["invalid_items_considered"] == 2
+    assert summary["remote_deleted"] == 2
+
+
+def test_cleanup_runner_records_remaining_valid_count_after_delete(temp_db, monkeypatch):
+    _, plan, run = _create_cleanup_plan_and_run(temp_db, max_cleanup_count=2, max_probe_count=10)
+
+    invalid_items = [
+        {"email": "first@example.com", "name": "first@example.com.json"},
+        {"email": "second@example.com", "name": "second@example.com.json"},
+    ]
+
+    monkeypatch.setattr(cleanup_runner, "probe_invalid_accounts", lambda **_: invalid_items)
+    monkeypatch.setattr(
+        cleanup_runner,
+        "delete_invalid_accounts",
+        lambda **kwargs: {"deleted": len(kwargs["names"]), "failed": 0},
+    )
+    monkeypatch.setattr(cleanup_runner, "count_valid_accounts", lambda *args, **kwargs: 995)
+
+    summary = run_cleanup_plan(plan_id=plan.id, run_id=run.id)
+
+    assert summary["remote_deleted"] == 2
+    assert summary["remaining_valid_count"] == 995
+
+
 def test_cleanup_runner_does_not_expire_account_for_other_primary_cpa(temp_db, monkeypatch):
     _, plan, run = _create_cleanup_plan_and_run(temp_db)
 
@@ -384,11 +451,13 @@ def test_cleanup_runner_persists_failure_status_when_probe_raises(temp_db, monke
     assert persisted_run.error_message == "probe failed"
     assert persisted_run.summary == {
         "probe_items_selected": 0,
+        "probe_items_scanned": 0,
         "invalid_items_found": 0,
         "invalid_items_considered": 0,
         "local_marked_expired": 0,
         "remote_deleted": 0,
         "remote_delete_failed": 0,
+        "remaining_valid_count": None,
     }
     assert "[ERROR] cleanup runner failed: probe failed" in (persisted_run.logs or "")
 

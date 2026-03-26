@@ -6,7 +6,7 @@ from typing import Any
 from ...database import crud
 from ...database.models import ScheduledPlan
 from ...database.session import get_db
-from ..cpa_client import delete_invalid_accounts, probe_invalid_accounts
+from ..cpa_client import count_valid_accounts, delete_invalid_accounts, probe_invalid_accounts
 from ..engine import ScheduledRunCancelledError, is_run_stop_requested
 from ..run_logger import append_run_log, finalize_cancelled_run, finalize_run, raise_if_stop_requested
 
@@ -48,11 +48,13 @@ def _resolve_worker_count(config: dict[str, Any], key: str, *, default: int) -> 
 def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "probe_items_selected": 0,
+        "probe_items_scanned": 0,
         "invalid_items_found": 0,
         "invalid_items_considered": 0,
         "local_marked_expired": 0,
         "remote_deleted": 0,
         "remote_delete_failed": 0,
+        "remaining_valid_count": None,
     }
 
     try:
@@ -103,6 +105,8 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             if match:
                 scanned = int(match.group(1))
                 invalid = int(match.group(2))
+                summary["probe_items_scanned"] = max(int(summary["probe_items_scanned"]), scanned)
+                summary["invalid_items_found"] = max(int(summary["invalid_items_found"]), invalid)
                 while scanned >= next_probe_progress:
                     append_run_log(
                         run_id,
@@ -114,12 +118,13 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
 
         invalid_items = probe_invalid_accounts(
             service=service_payload,
-            limit=max_cleanup_count if max_cleanup_count > 0 else None,
+            # 这里不能再用 cleanup 上限截断 probe 结果，否则“失效数”会被误记成“本次清理数”。
+            limit=None,
             max_probe_count=max_probe_count if max_probe_count > 0 else None,
             progress_callback=_on_probe_progress,
             workers=probe_workers,
         )
-        summary["invalid_items_found"] = len(invalid_items)
+        summary["invalid_items_found"] = max(int(summary["invalid_items_found"]), len(invalid_items))
 
         selected_items = invalid_items[:max_cleanup_count] if max_cleanup_count > 0 else invalid_items
         summary["invalid_items_considered"] = len(selected_items)
@@ -190,6 +195,19 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     )
 
         raise_if_stop_requested(run_id, stage="cleanup delete")
+
+        try:
+            summary["remaining_valid_count"] = max(0, int(count_valid_accounts(service_payload)))
+            append_run_log(
+                run_id,
+                f"cleanup remaining valid count (remaining={summary['remaining_valid_count']})",
+            )
+        except Exception as exc:
+            append_run_log(
+                run_id,
+                f"cleanup remaining valid count unavailable: {exc}",
+                level="WARN",
+            )
 
         append_run_log(
             run_id,

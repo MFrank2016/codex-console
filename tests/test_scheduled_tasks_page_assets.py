@@ -691,7 +691,7 @@ window.renderScheduledRuns([
     status: 'success',
     started_at: null,
     finished_at: null,
-    summary: { probe_items_selected: 5000, invalid_items_found: 20, remote_deleted: 18 },
+    summary: { probe_items_selected: 5000, invalid_items_found: 20, remote_deleted: 18, remaining_valid_count: 982 },
   },
   {
     id: 2,
@@ -718,7 +718,7 @@ window.renderScheduledRuns([
 ]);
 
 const html = runsBody.innerHTML;
-if (!html.includes('检测 5000 · 失效 20 · 成功清理 18')) throw new Error('missing cleanup concise summary: ' + html);
+if (!html.includes('扫描 5000 · 清理 18 · 剩余 982')) throw new Error('missing cleanup concise summary: ' + html);
 if (!html.includes('补号 6')) throw new Error('missing refill concise summary: ' + html);
 if (!html.includes('处理 30 · 刷新 28 · 上传 27')) throw new Error('missing refresh concise summary: ' + html);
 """
@@ -797,7 +797,7 @@ window.renderScheduledRuns([
     started_at: null,
     finished_at: null,
     error_message: '接口超时',
-    summary: { probe_items_selected: 5000, invalid_items_found: 12, remote_deleted: 4 },
+    summary: { probe_items_selected: 5000, invalid_items_found: 12, remote_deleted: 4, remaining_valid_count: 996 },
   },
   {
     id: 2,
@@ -814,7 +814,7 @@ window.renderScheduledRuns([
 ]);
 
 const html = runsBody.innerHTML;
-if (!html.includes('检测 5000 · 失效 12 · 成功清理 4 · 原因：接口超时')) {
+if (!html.includes('扫描 5000 · 清理 4 · 剩余 996 · 原因：接口超时')) {
   throw new Error('missing failed cleanup reason summary: ' + html);
 }
 if (!html.includes('补号 3 · 原因：用户停止')) {
@@ -906,13 +906,13 @@ global.api = {
         task_type: 'cpa_cleanup',
         trigger_source: 'manual',
         started_at: '2026-03-23T10:00:00',
-        finished_at: '2026-03-23T10:05:00',
-        duration_seconds: 300.5,
-        error_message: null,
-        summary: { probe_items_selected: 5000, invalid_items_found: 18, remote_deleted: 16 },
-        status: 'cancelled',
-        last_log_at: '2026-03-23T10:05:00',
-        is_running: false,
+            finished_at: '2026-03-23T10:05:00',
+            duration_seconds: 300.5,
+            error_message: null,
+            summary: { probe_items_selected: 5000, invalid_items_found: 18, remote_deleted: 16, remaining_valid_count: 984 },
+            status: 'cancelled',
+            last_log_at: '2026-03-23T10:05:00',
+            is_running: false,
         stop_requested_at: '2026-03-23T10:04:00',
         stop_requested_by: 'reviewer',
         stop_reason: 'manual_stop',
@@ -945,7 +945,7 @@ async function main() {
   if (!detailBodyHtml.includes('scheduled-run-detail-head')) throw new Error('missing detail head hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('scheduled-run-detail-grid')) throw new Error('missing detail grid hook: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('scheduled-run-summary')) throw new Error('missing summary hook: ' + detailBodyHtml);
-  if (!detailBodyHtml.includes('检测 5000 · 失效 18 · 成功清理 16')) throw new Error('missing concise summary: ' + detailBodyHtml);
+  if (!detailBodyHtml.includes('扫描 5000 · 清理 16 · 剩余 984')) throw new Error('missing concise summary: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('持续时长')) throw new Error('missing duration label: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('300.5 秒')) throw new Error('missing duration value: ' + detailBodyHtml);
   if (!detailBodyHtml.includes('停止请求时间')) throw new Error('missing stop requested at label: ' + detailBodyHtml);
@@ -962,6 +962,182 @@ main().catch((err) => {
   console.error(err && err.stack ? err.stack : String(err));
   process.exit(1);
 });
+"""
+    completed = subprocess.run(
+        ["node", "-e", node_script],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_scheduled_tasks_cleanup_summary_shows_considered_count_when_cleanup_is_capped():
+    node_script = r"""
+const fs = require('fs');
+const vm = require('vm');
+
+function makeElement() {
+  let html = '';
+  const classes = new Set();
+  return {
+    dataset: {},
+    style: {},
+    disabled: false,
+    setAttribute: () => {},
+    removeAttribute: () => {},
+    addEventListener: () => {},
+    scrollIntoView: () => {},
+    get innerHTML() { return html; },
+    set innerHTML(next) { html = String(next ?? ''); },
+    classList: {
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      contains: (name) => classes.has(name),
+    },
+  };
+}
+
+const runsBody = makeElement();
+
+global.window = {};
+global.document = {
+  getElementById: (id) => (id === 'scheduled-runs-table-body' ? runsBody : null),
+  querySelectorAll: () => [],
+  addEventListener: () => {},
+  createElement: () => {
+    let value = '';
+    return {
+      set textContent(next) { value = String(next ?? ''); },
+      get textContent() { return value; },
+      get innerHTML() { return value; },
+      set innerHTML(next) { value = String(next ?? ''); },
+    };
+  },
+};
+
+global.api = { get: async () => ({}), post: async () => ({}), put: async () => ({}) };
+global.toast = { error: () => {}, warning: () => {}, success: () => {} };
+global.format = { date: (value) => String(value ?? '-') };
+global.theme = { toggle: () => {} };
+
+vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
+  filename: 'static/js/scheduled_tasks.js',
+});
+
+window.renderScheduledRuns([
+  {
+    id: 1,
+    plan_id: 101,
+    plan_name: 'cleanup',
+    task_type: 'cpa_cleanup',
+    trigger_source: 'manual',
+    status: 'success',
+    started_at: null,
+    finished_at: null,
+    summary: {
+      probe_items_scanned: 1585,
+      probe_items_selected: 1587,
+      invalid_items_found: 1395,
+      invalid_items_considered: 1000,
+      remote_deleted: 1000,
+      remaining_valid_count: 995,
+    },
+  },
+]);
+
+const html = runsBody.innerHTML;
+if (!html.includes('扫描 1585 · 清理 1000 · 剩余 995')) {
+  throw new Error('missing capped cleanup summary: ' + html);
+}
+"""
+    completed = subprocess.run(
+        ["node", "-e", node_script],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_scheduled_tasks_cleanup_summary_uses_dash_when_remaining_count_missing():
+    node_script = r"""
+const fs = require('fs');
+const vm = require('vm');
+
+function makeElement() {
+  let html = '';
+  const classes = new Set();
+  return {
+    dataset: {},
+    style: {},
+    disabled: false,
+    setAttribute: () => {},
+    removeAttribute: () => {},
+    addEventListener: () => {},
+    scrollIntoView: () => {},
+    get innerHTML() { return html; },
+    set innerHTML(next) { html = String(next ?? ''); },
+    classList: {
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      contains: (name) => classes.has(name),
+    },
+  };
+}
+
+const runsBody = makeElement();
+
+global.window = {};
+global.document = {
+  getElementById: (id) => (id === 'scheduled-runs-table-body' ? runsBody : null),
+  querySelectorAll: () => [],
+  addEventListener: () => {},
+  createElement: () => {
+    let value = '';
+    return {
+      set textContent(next) { value = String(next ?? ''); },
+      get textContent() { return value; },
+      get innerHTML() { return value; },
+      set innerHTML(next) { value = String(next ?? ''); },
+    };
+  },
+};
+
+global.api = { get: async () => ({}), post: async () => ({}), put: async () => ({}) };
+global.toast = { error: () => {}, warning: () => {}, success: () => {} };
+global.format = { date: (value) => String(value ?? '-') };
+global.theme = { toggle: () => {} };
+
+vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
+  filename: 'static/js/scheduled_tasks.js',
+});
+
+window.renderScheduledRuns([
+  {
+    id: 1,
+    plan_id: 101,
+    plan_name: 'cleanup',
+    task_type: 'cpa_cleanup',
+    trigger_source: 'manual',
+    status: 'success',
+    started_at: null,
+    finished_at: null,
+    summary: {
+      probe_items_selected: 1587,
+      remote_deleted: 1000,
+    },
+  },
+]);
+
+const html = runsBody.innerHTML;
+if (!html.includes('扫描 1587 · 清理 1000 · 剩余 -')) {
+  throw new Error('missing cleanup fallback summary: ' + html);
+}
 """
     completed = subprocess.run(
         ["node", "-e", node_script],

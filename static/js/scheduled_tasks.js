@@ -1295,6 +1295,13 @@ function toSummaryCount(value) {
     return Math.max(0, Math.floor(parsed));
 }
 
+function formatSummaryCountOrDash(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return '-';
+    return String(Math.max(0, Math.floor(parsed)));
+}
+
 function formatScheduledRunReason(run) {
     const rawReason = String(run?.error_message || '').trim();
     if (rawReason) {
@@ -1317,13 +1324,14 @@ function buildScheduledRunSummaryBase(run) {
     }
 
     if (taskType === 'cpa_cleanup') {
+        const probeItemsScanned = summary.probe_items_scanned;
         const probeItemsSelected = summary.probe_items_selected;
         const detectedCount =
-            probeItemsSelected ?? summary.invalid_items_considered ?? summary.invalid_items_found;
+            probeItemsScanned ?? probeItemsSelected ?? summary.invalid_items_considered ?? summary.invalid_items_found;
         return (
-            `检测 ${toSummaryCount(detectedCount)} · ` +
-            `失效 ${toSummaryCount(summary.invalid_items_found)} · ` +
-            `成功清理 ${toSummaryCount(summary.remote_deleted)}`
+            `扫描 ${formatSummaryCountOrDash(detectedCount)} · ` +
+            `清理 ${formatSummaryCountOrDash(summary.remote_deleted)} · ` +
+            `剩余 ${formatSummaryCountOrDash(summary.remaining_valid_count)}`
         );
     }
 
