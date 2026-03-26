@@ -96,6 +96,8 @@
   - 旧 alias 路由的兼容 contract 覆盖。
 - Modify: `tests/test_scheduler_engine.py`
   - run logger 结构化 entry、status/stream_closed 生命周期覆盖。
+- Create: `tests/test_realtime_log_console_assets.py`
+  - 通过 shared harness 固定共享 console 的搜索、过滤、wrap、auto-scroll、copy、clear、connection/empty/error state 行为。
 - Modify: `tests/test_static_asset_versioning.py`
   - 共享 realtime console CSS / JS 在 registration 与 scheduled tasks 页面都必须带版本号。
 - Create: `tests_runtime/realtime_log_harness.py`
@@ -481,13 +483,16 @@ git commit -m "feat: emit realtime run events from scheduler"
 - Create: `static/js/realtime_log_console.js`
 - Modify: `static/js/registration_stream.js`
 - Create: `static/css/realtime_log_console.css`
+- Create: `tests/test_realtime_log_console_assets.py`
 - Create: `tests_runtime/realtime_log_harness.py`
 - Modify: `tests/test_static_asset_versioning.py`
 
 - [ ] **Step 1: 先写失败 harness 测试，锁定 shared store / client / console contract**
 
 ```python
-# tests_runtime/realtime_log_harness.py
+# tests/test_realtime_log_console_assets.py
+from tests_runtime.realtime_log_harness import run_realtime_log_scenario
+
 result = run_realtime_log_scenario("snapshot_required_resync")
 assert result["cursor_after_snapshot"] == 9
 assert result["visible_levels"] == ["INFO", "ERROR"]
@@ -495,6 +500,22 @@ assert result["last_rendered_text"].startswith("10:00:00")
 assert result["theme_error_class"] == "realtime-log-level-error"
 assert result["live_window_size"] == 500
 assert result["resync_pending_replayed_in_order"] is True
+
+search_result = run_realtime_log_scenario("search_and_level_filter")
+assert search_result["visible_messages"] == ["proxy fallback failed"]
+
+wrap_result = run_realtime_log_scenario("wrap_and_auto_scroll_toggle")
+assert wrap_result["has_nowrap_class"] is True
+assert wrap_result["auto_scroll_preserved_manual_position"] is True
+
+copy_result = run_realtime_log_scenario("copy_and_clear_view")
+assert copy_result["copied_text"].endswith("proxy fallback failed")
+assert copy_result["clear_keeps_store_entries"] is True
+
+state_result = run_realtime_log_scenario("connection_empty_error_states")
+assert state_result["connection_text"] == "重连中"
+assert state_result["empty_state_visible"] is True
+assert state_result["error_state_visible"] is True
 
 # tests/test_static_asset_versioning.py
 _assert_versioned_asset(response.text, "/static/css/realtime_log_console.css")
@@ -506,7 +527,7 @@ _assert_versioned_asset(response.text, "/static/js/realtime_log_console.js")
 - [ ] **Step 2: 运行聚焦 harness / versioning 测试，确认 shared assets 尚不存在**
 
 Run: `timeout 60s pytest tests/test_static_asset_versioning.py -q`
-Expected: FAIL，缺少 versioned asset 引用；若 harness 已接入，再额外报 shared JS 不存在。
+Expected: FAIL，缺少 versioned asset 引用；`tests/test_realtime_log_console_assets.py` 也会因 shared JS/CSS/harness 尚不存在而失败。
 
 - [ ] **Step 3: 实现共享 JS/CSS 模块与 registration shim**
 
@@ -524,11 +545,15 @@ Expected: FAIL，缺少 versioned asset 引用；若 harness 已接入，再额�
     };
   }
 
+  function reduceHistoryChunk(state, chunkText) {
+    // 解析 chunk -> history_entries -> 与 live_window 去重拼接
+  }
+
   function reduceEvent(state, event) {
     // 处理 snapshot / log_appended / *_status_changed / *_progress_updated / stream_closed
   }
 
-  window.realtimeLogStore = { createState, reduceEvent };
+  window.realtimeLogStore = { createState, reduceEvent, reduceHistoryChunk };
 })();
 
 // static/js/realtime_log_client.js
@@ -565,13 +590,13 @@ window.registrationStream = {
 
 - [ ] **Step 4: 重新运行 shared asset / harness 测试，确认 shared runtime contract 成立**
 
-Run: `timeout 60s pytest tests/test_static_asset_versioning.py -q`
-Expected: PASS（若 harness 已单列测试，也一并 PASS，并验证 `liveWindow` 只保留最近 500 条以及 `resync_pending_queue` 有序合并）。
+Run: `timeout 60s pytest tests/test_realtime_log_console_assets.py tests/test_static_asset_versioning.py -q`
+Expected: PASS（若 harness 已单列测试，也一并 PASS，并验证搜索 / 级别过滤 / wrap / auto-scroll / copy / clear-view / connection/empty/error state / 500 条 ring buffer / `resync_pending_queue` 有序合并）。
 
 - [ ] **Step 5: 提交 Task 4**
 
 ```bash
-git add tests/test_static_asset_versioning.py tests_runtime/realtime_log_harness.py static/js/realtime_log_store.js static/js/realtime_log_client.js static/js/realtime_log_console.js static/js/registration_stream.js static/css/realtime_log_console.css
+git add tests/test_realtime_log_console_assets.py tests/test_static_asset_versioning.py tests_runtime/realtime_log_harness.py static/js/realtime_log_store.js static/js/realtime_log_client.js static/js/realtime_log_console.js static/js/registration_stream.js static/css/realtime_log_console.css
 git commit -m "feat: add shared realtime log runtime and console styles"
 ```
 
@@ -622,7 +647,7 @@ Expected: FAIL（或需要更新断言），因为页面仍以 polling 为主、
 
 ```javascript
 // static/js/scheduled_tasks.js
-const runLogStore = window.realtimeLogStore.createState();
+let runLogStore = window.realtimeLogStore.createState();
 const runLogConsole = window.realtimeLogConsole.mountRealtimeLogConsole({...});
 const runLogClient = window.realtimeLogClient.createStreamClient({
   streamType: 'run',
@@ -634,7 +659,9 @@ const runLogClient = window.realtimeLogClient.createStreamClient({
 
 async function openScheduledRunLog(runId) {
   const historyChunk = await api.get(`/scheduled-runs/${runId}/logs?offset=${Math.max(0, latestOffset - 65536)}`);
-  runLogConsole.loadHistoryChunk(historyChunk.chunk);
+  const nextStateFromHistory = window.realtimeLogStore.reduceHistoryChunk(runLogStore, historyChunk.chunk);
+  runLogStore = nextStateFromHistory;
+  runLogConsole.render(runLogStore);
   await runLogClient.bootstrap();
 }
 ```
