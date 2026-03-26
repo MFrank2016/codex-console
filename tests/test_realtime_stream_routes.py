@@ -1,7 +1,10 @@
 from fastapi.testclient import TestClient
 import pytest
+import queue
+import threading
 
 from src.web.app import create_app
+from src.web.realtime_streams import STREAM_BUFFER_SIZE
 from src.web.task_manager import task_manager
 import src.web.task_manager as task_manager_module
 
@@ -11,6 +14,28 @@ def clean_realtime_stream_state():
     _clear_state_for_tests()
     yield
     _clear_state_for_tests()
+
+
+
+
+def _receive_json_with_timeout(ws, *, timeout_s: float = 1.0):
+    result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+    def _target():
+        try:
+            result_queue.put(ws.receive_json())
+        except Exception as exc:  # pragma: no cover - 测试辅助兜底
+            result_queue.put(exc)
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    try:
+        result = result_queue.get(timeout=timeout_s)
+    except queue.Empty as exc:
+        raise AssertionError(f"WebSocket receive_json 超时({timeout_s}s)，可能存在丢消息/卡死") from exc
+    if isinstance(result, Exception):
+        raise result
+    return result
 
 
 def _clear_state_for_tests():
@@ -106,3 +131,52 @@ def test_task_and_batch_realtime_stream_routes_also_use_new_contract(client):
 
     assert task_payload["stream"] == "task:task-new-1"
     assert batch_payload["stream"] == "batch:batch-new-1"
+
+
+def test_run_websocket_replay_missing_events_after_after_seq(client):
+    task_manager.update_run_status(888, status="running", plan_name="sync")
+    task_manager.add_run_log(888, {"message": "run-line-1", "source": "scheduler"})
+    task_manager.add_run_log(888, {"message": "run-line-2", "source": "scheduler"})
+
+    with client.websocket_connect("/api/ws/run/888?after_seq=1") as ws:
+        first = ws.receive_json()
+        second = ws.receive_json()
+
+    assert first["stream"] == "run:888"
+    assert first["seq"] == 2
+    assert first["kind"] == "log_appended"
+    assert first["payload"]["entry"]["message"] == "run-line-1"
+    assert second["stream"] == "run:888"
+    assert second["seq"] == 3
+    assert second["kind"] == "log_appended"
+    assert second["payload"]["entry"]["message"] == "run-line-2"
+
+
+def test_run_websocket_replies_snapshot_required_when_after_seq_expired(client):
+    task_manager.update_run_status(889, status="running")
+    for i in range(STREAM_BUFFER_SIZE + 5):
+        task_manager.add_run_log(889, {"message": f"line-{i}", "source": "scheduler"})
+
+    with client.websocket_connect("/api/ws/run/889?after_seq=1") as ws:
+        payload = ws.receive_json()
+
+    assert payload["stream"] == "run:889"
+    assert payload["kind"] == "snapshot_required"
+    assert payload["payload"]["reason"] == "after_seq_expired"
+
+
+def test_run_websocket_snapshot_required_connection_keeps_receiving_live_events(client):
+    task_manager.update_run_status(890, status="running")
+    for i in range(STREAM_BUFFER_SIZE + 5):
+        task_manager.add_run_log(890, {"message": f"line-{i}", "source": "scheduler"})
+
+    with client.websocket_connect("/api/ws/run/890?after_seq=1") as ws:
+        payload = ws.receive_json()
+        assert payload["kind"] == "snapshot_required"
+
+        task_manager.add_run_log(890, {"message": "after-snapshot-required", "source": "scheduler"})
+        event = _receive_json_with_timeout(ws, timeout_s=1.5)
+
+    assert event["stream"] == "run:890"
+    assert event["kind"] == "log_appended"
+    assert event["payload"]["entry"]["message"] == "after-snapshot-required"

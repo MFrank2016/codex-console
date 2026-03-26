@@ -340,6 +340,26 @@ class TaskManager:
             except Exception as e:
                 logger.warning(f"WebSocket 发送 batch stream 事件失败: {e}")
 
+    async def broadcast_run_stream_event(self, run_id: int, event: dict) -> None:
+        """向 run WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
+        ws_key = run_stream_id(run_id)
+        with _ws_lock:
+            ws_ids = list(_ws_connections.get(ws_key, {}).keys())
+
+        for ws_id in ws_ids:
+            with _ws_lock:
+                current = _ws_connections.get(ws_key, {}).get(ws_id)
+                if current is None:
+                    continue
+                if current["mode"] == "replaying":
+                    current["pending"].append(event)
+                    continue
+                websocket = current["websocket"]
+            try:
+                await self._send_stream_event(ws_key, websocket, event)
+            except Exception as e:
+                logger.warning(f"WebSocket 发送 run stream 事件失败: {e}")
+
     async def send_task_stream_event(self, task_uuid: str, websocket: Any, event: dict) -> None:
         """replay 阶段：向指定 task websocket 发送事件并推进 last_sent_seq。"""
         await self._send_stream_event(task_uuid, websocket, event)
@@ -614,11 +634,19 @@ class TaskManager:
                 _run_progress[run_id] = copy.deepcopy(run_progress)
                 event_payload["run_progress"] = copy.deepcopy(run_progress)
 
-        self.append_stream_event(
+        event = self.append_stream_event(
             run_stream_id(run_id),
             "run_status_changed",
             event_payload,
         )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_run_stream_event(run_id, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"广播 run stream 状态事件失败: {e}")
 
     def add_run_log(self, run_id: int, log_entry: dict):
         """追加 run 结构化日志，并写入 stream 事件。"""
@@ -642,6 +670,14 @@ class TaskManager:
                 {"entry": entry},
             )
             _run_logs[run_id].append(copy.deepcopy(event["payload"]["entry"]))
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_run_stream_event(run_id, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"推送 run stream 事件到 WebSocket 失败: {e}")
 
     def run_stream_exists(self, run_id: int) -> bool:
         stream_id = run_stream_id(run_id)
