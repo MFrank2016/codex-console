@@ -1,8 +1,20 @@
 const WORKSPACE_SIDEBAR_STORAGE_KEY = 'codex-console.workspace.sidebar';
 const WORKSPACE_THEME_STORAGE_KEY = 'theme';
 
+function updateWorkspaceSidebarToggleButton(isCollapsed) {
+  const toggleButton = document.getElementById('workspace-sidebar-toggle');
+  if (!toggleButton) {
+    return;
+  }
+
+  toggleButton.setAttribute('aria-pressed', isCollapsed ? 'true' : 'false');
+  toggleButton.title = isCollapsed ? '展开侧边栏' : '折叠侧边栏';
+}
+
 function applyWorkspaceSidebarState(isCollapsed) {
-  document.body.classList.toggle('workspace-sidebar-collapsed', Boolean(isCollapsed));
+  const collapsed = Boolean(isCollapsed);
+  document.body.classList.toggle('workspace-sidebar-collapsed', collapsed);
+  updateWorkspaceSidebarToggleButton(collapsed);
 }
 
 function updateWorkspaceThemeButtons(themeName) {

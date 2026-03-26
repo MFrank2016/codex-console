@@ -3,6 +3,25 @@
         <a href="/" class="workspace-brand-link">Codex Console</a>
     </div>
 
+    <div class="workspace-sidebar-controls">
+        <button
+            type="button"
+            id="workspace-sidebar-toggle"
+            class="workspace-sidebar-toggle"
+            aria-label="切换侧边栏"
+        >
+            ☰
+        </button>
+        <button
+            type="button"
+            id="workspace-theme-toggle"
+            class="theme-toggle workspace-theme-toggle"
+            aria-label="切换主题"
+        >
+            🌙
+        </button>
+    </div>
+
     <nav class="workspace-nav" aria-label="工作区导航">
         {% for nav_group in workspace_nav %}
         <section class="workspace-nav-group">
@@ -15,7 +34,20 @@
                         class="workspace-nav-link{% if nav_item["key"] == page_key %} is-active{% endif %}"
                         data-nav-key="{{ nav_item["key"] }}"
                     >
-                        {{ nav_item["label"] }}
+                        <span class="workspace-nav-icon" aria-hidden="true">
+                            {% if nav_item["key"] == "dashboard" %}🏠
+                            {% elif nav_item["key"] == "registration_workbench" %}🧪
+                            {% elif nav_item["key"] == "accounts" %}👤
+                            {% elif nav_item["key"] == "scheduled_tasks" %}🗓️
+                            {% elif nav_item["key"] == "payment" %}💳
+                            {% elif nav_item["key"] == "registration_experiments" %}📊
+                            {% elif nav_item["key"] == "registration_batch_stats" %}📈
+                            {% elif nav_item["key"] == "email_services" %}✉️
+                            {% elif nav_item["key"] == "settings" %}⚙️
+                            {% else %}•
+                            {% endif %}
+                        </span>
+                        <span class="workspace-nav-label">{{ nav_item["label"] }}</span>
                     </a>
                 </li>
                 {% endfor %}
