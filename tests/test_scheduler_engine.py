@@ -256,22 +256,9 @@ def test_scheduler_engine_request_run_stop_emits_stopping_only_once_under_race(t
         worker_spawner=lambda _fn, _name: None,
     )
     run_id = engine.trigger_plan_now(plan.id)
-
-    barrier = Barrier(2)
-    original_get_run = crud.get_scheduled_run_by_id
-
-    def _gated_get_run(db, lookup_run_id):
-        run = original_get_run(db, lookup_run_id)
-        if (
-            lookup_run_id == run_id
-            and run is not None
-            and run.stop_requested_at is None
-            and current_thread().name.startswith("stop-race-")
-        ):
-            barrier.wait(timeout=1.0)
-        return run
-
-    monkeypatch.setattr(crud, "get_scheduled_run_by_id", _gated_get_run)
+    fixed_now = datetime(2026, 3, 26, 12, 0, 0)
+    monkeypatch.setattr(engine_module, "utc_now_naive", lambda: fixed_now)
+    monkeypatch.setattr(crud, "utc_now_naive", lambda: fixed_now)
 
     results: list[bool] = []
     errors: list[Exception] = []

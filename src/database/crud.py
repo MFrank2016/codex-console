@@ -1354,14 +1354,14 @@ def count_scheduled_runs(
     return int(query.scalar() or 0)
 
 
-def mark_scheduled_run_stop_requested(
+def mark_scheduled_run_stop_requested_result(
     db: Session,
     run_id: int,
     *,
     requested_by: Optional[str] = None,
     reason: Optional[str] = None,
     requested_at: Optional[datetime] = None,
-) -> Optional[ScheduledRun]:
+) -> tuple[Optional[ScheduledRun], bool]:
     """标记定时执行记录已请求停止。"""
     actual_requested_at = requested_at or utc_now_naive()
     updated_rows = (
@@ -1383,14 +1383,32 @@ def mark_scheduled_run_stop_requested(
 
     run = get_scheduled_run_by_id(db, run_id)
     if not run:
-        return None
+        return None, False
     if updated_rows == 1:
-        return run
+        return run, True
     if run.status != "running" or run.finished_at is not None:
-        return None
+        return None, False
     if run.stop_requested_at is not None:
-        return run
-    return None
+        return run, False
+    return None, False
+
+
+def mark_scheduled_run_stop_requested(
+    db: Session,
+    run_id: int,
+    *,
+    requested_by: Optional[str] = None,
+    reason: Optional[str] = None,
+    requested_at: Optional[datetime] = None,
+) -> Optional[ScheduledRun]:
+    run, _did_mark = mark_scheduled_run_stop_requested_result(
+        db,
+        run_id,
+        requested_by=requested_by,
+        reason=reason,
+        requested_at=requested_at,
+    )
+    return run
 
 
 def get_scheduled_run_log_chunk(

@@ -703,7 +703,7 @@ def test_stop_scheduled_run_route_rejects_finished_run(client, seeded_scheduled_
 def test_stop_scheduled_run_route_rejects_concurrent_stop_race(client, route_db, seeded_scheduled_data, monkeypatch):
     run_id = seeded_scheduled_data["latest_run"].id
 
-    def _simulate_concurrent_stop(db, run_id, **kwargs):
+    def _simulate_concurrent_stop_result(db, run_id, **kwargs):
         run = crud.get_scheduled_run_by_id(db, run_id)
         assert run is not None
         run.stop_requested_at = utc_now_naive()
@@ -711,9 +711,13 @@ def test_stop_scheduled_run_route_rejects_concurrent_stop_race(client, route_db,
         run.stop_reason = "user_requested"
         db.commit()
         db.refresh(run)
-        return run
+        return run, False
 
-    monkeypatch.setattr(scheduled_routes.crud, "mark_scheduled_run_stop_requested", _simulate_concurrent_stop)
+    monkeypatch.setattr(
+        scheduled_routes.crud,
+        "mark_scheduled_run_stop_requested_result",
+        _simulate_concurrent_stop_result,
+    )
 
     response = client.post(f"/api/scheduled-runs/{run_id}/stop")
 

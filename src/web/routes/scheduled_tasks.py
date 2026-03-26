@@ -231,7 +231,7 @@ async def stop_scheduled_run(run_id: int):
             raise HTTPException(status_code=409, detail="运行已结束，不能停止")
 
         requested_at = utc_now_naive()
-        updated = crud.mark_scheduled_run_stop_requested(
+        updated, did_mark = crud.mark_scheduled_run_stop_requested_result(
             db,
             run_id,
             requested_by="manual",
@@ -240,7 +240,7 @@ async def stop_scheduled_run(run_id: int):
         )
         if updated is None:
             raise HTTPException(status_code=409, detail="运行已结束，不能停止")
-        if updated.stop_requested_at != requested_at:
+        if not did_mark:
             raise HTTPException(status_code=409, detail="运行已请求停止")
         plan = crud.get_scheduled_plan_by_id(db, updated.plan_id)
         realtime_payload = build_run_realtime_status_payload(
