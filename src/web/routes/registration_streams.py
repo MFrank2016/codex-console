@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query
 
-from .realtime_streams import (
+from ..stream_queries import (
     get_batch_events_or_404,
     get_batch_snapshot_or_404,
     get_task_events_or_404,

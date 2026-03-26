@@ -270,8 +270,11 @@ class TaskManager:
             oldest_seq = buffer[0]["seq"]
         return after_seq < (oldest_seq - 1)
 
+    def _stream_ws_key_for_task(self, task_uuid: str) -> str:
+        return task_stream_id(task_uuid)
+
     def _stream_ws_key_for_batch(self, batch_id: str) -> str:
-        return f"batch_{batch_id}"
+        return batch_stream_id(batch_id)
 
     def _stream_ws_key_for_run(self, run_id: int) -> str:
         return run_stream_id(run_id)
@@ -285,6 +288,8 @@ class TaskManager:
         after_seq: int,
     ) -> None:
         ws_id = id(websocket)
+        # 必须在运行中的事件循环里创建 asyncio.Lock，避免隐式依赖。
+        asyncio.get_running_loop()
         with _ws_lock:
             states = _ws_connections[ws_key]
             if ws_id in states:
@@ -349,7 +354,7 @@ class TaskManager:
 
     async def broadcast_task_stream_event(self, task_uuid: str, event: dict) -> None:
         """向 task WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
-        await self._broadcast_stream_event(task_uuid, event, label="task")
+        await self._broadcast_stream_event(self._stream_ws_key_for_task(task_uuid), event, label="task")
 
     async def broadcast_batch_stream_event(self, batch_id: str, event: dict) -> None:
         """向 batch WebSocket 连接广播 stream 事件（replay 期间先入队，结束后按 seq flush）。"""
@@ -361,7 +366,7 @@ class TaskManager:
 
     async def send_task_stream_event(self, task_uuid: str, websocket: Any, event: dict) -> None:
         """replay 阶段：向指定 task websocket 发送事件并推进 last_sent_seq。"""
-        await self._send_stream_event(task_uuid, websocket, event)
+        await self._send_stream_event(self._stream_ws_key_for_task(task_uuid), websocket, event)
 
     async def send_batch_stream_event(self, batch_id: str, websocket: Any, event: dict) -> None:
         """replay 阶段：向指定 batch websocket 发送事件并推进 last_sent_seq。"""
@@ -372,7 +377,7 @@ class TaskManager:
         await self._send_stream_event(self._stream_ws_key_for_run(run_id), websocket, event)
 
     async def send_task_control_message(self, task_uuid: str, websocket: Any, payload: dict) -> None:
-        await self._send_control_message(task_uuid, websocket, payload)
+        await self._send_control_message(self._stream_ws_key_for_task(task_uuid), websocket, payload)
 
     async def send_batch_control_message(self, batch_id: str, websocket: Any, payload: dict) -> None:
         await self._send_control_message(self._stream_ws_key_for_batch(batch_id), websocket, payload)
@@ -413,7 +418,7 @@ class TaskManager:
                 return
 
     async def finish_task_websocket_replay(self, task_uuid: str, websocket: Any) -> None:
-        await self._finish_websocket_replay(task_uuid, websocket)
+        await self._finish_websocket_replay(self._stream_ws_key_for_task(task_uuid), websocket)
 
     async def finish_batch_websocket_replay(self, batch_id: str, websocket: Any) -> None:
         await self._finish_websocket_replay(self._stream_ws_key_for_batch(batch_id), websocket)
@@ -472,17 +477,23 @@ class TaskManager:
         - 业务事件：走 stream envelope（seq/stream/kind/payload）
         - 控制消息：依然走 {"type": "ping"/"pong"/"cancel"}
         """
-        self._ensure_ws_state(task_uuid, websocket, mode=mode, after_seq=after_seq)
+        self._ensure_ws_state(
+            self._stream_ws_key_for_task(task_uuid),
+            websocket,
+            mode=mode,
+            after_seq=after_seq,
+        )
         logger.info(f"WebSocket 连接已注册(task): {task_uuid} mode={mode}")
 
     def unregister_websocket(self, task_uuid: str, websocket):
         """注销 WebSocket 连接"""
+        ws_key = self._stream_ws_key_for_task(task_uuid)
         ws_id = id(websocket)
         with _ws_lock:
-            if task_uuid in _ws_connections:
-                _ws_connections[task_uuid].pop(ws_id, None)
-            if task_uuid in _ws_sent_index:
-                _ws_sent_index[task_uuid].pop(ws_id, None)
+            if ws_key in _ws_connections:
+                _ws_connections[ws_key].pop(ws_id, None)
+            if ws_key in _ws_sent_index:
+                _ws_sent_index[ws_key].pop(ws_id, None)
         logger.info(f"WebSocket 连接已注销: {task_uuid}")
 
     def register_run_websocket(
@@ -494,13 +505,24 @@ class TaskManager:
         after_seq: int = 0,
     ):
         """注册 run WebSocket 连接（支持 replaying/active）。"""
-        key = self._stream_ws_key_for_run(run_id)
-        self._ensure_ws_state(key, websocket, mode=mode, after_seq=after_seq)
+        self._ensure_ws_state(
+            self._stream_ws_key_for_run(run_id),
+            websocket,
+            mode=mode,
+            after_seq=after_seq,
+        )
         logger.info(f"WebSocket 连接已注册(run): {run_id} mode={mode}")
 
     def unregister_run_websocket(self, run_id: int, websocket):
         """注销 run WebSocket 连接。"""
-        self.unregister_websocket(self._stream_ws_key_for_run(run_id), websocket)
+        ws_key = self._stream_ws_key_for_run(run_id)
+        ws_id = id(websocket)
+        with _ws_lock:
+            if ws_key in _ws_connections:
+                _ws_connections[ws_key].pop(ws_id, None)
+            if ws_key in _ws_sent_index:
+                _ws_sent_index[ws_key].pop(ws_id, None)
+        logger.info(f"WebSocket 连接已注销(run): {run_id}")
 
     def get_logs(self, task_uuid: str) -> List[str]:
         """获取任务的所有日志"""
@@ -892,13 +914,13 @@ class TaskManager:
 
     def unregister_batch_websocket(self, batch_id: str, websocket):
         """注销批量任务 WebSocket 连接"""
-        key = self._stream_ws_key_for_batch(batch_id)
+        ws_key = self._stream_ws_key_for_batch(batch_id)
         ws_id = id(websocket)
         with _ws_lock:
-            if key in _ws_connections:
-                _ws_connections[key].pop(ws_id, None)
-            if key in _ws_sent_index:
-                _ws_sent_index[key].pop(ws_id, None)
+            if ws_key in _ws_connections:
+                _ws_connections[ws_key].pop(ws_id, None)
+            if ws_key in _ws_sent_index:
+                _ws_sent_index[ws_key].pop(ws_id, None)
         logger.info(f"批量任务 WebSocket 连接已注销: {batch_id}")
 
     def create_log_callback(self, task_uuid: str, prefix: str = "", batch_id: str = "") -> Callable[[str], None]:

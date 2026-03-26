@@ -470,9 +470,10 @@ async def test_broadcast_task_stream_event_does_not_drop_event_when_mode_flips_t
     manager.register_websocket(task_uuid, websocket, mode="replaying", after_seq=0)
 
     # 将 ws state 替换为“读取 mode 时自动切 active”的 dict，稳定模拟竞态
+    ws_key = manager._stream_ws_key_for_task(task_uuid)
     ws_id = id(websocket)
-    original = task_manager_module._ws_connections[task_uuid][ws_id]
-    task_manager_module._ws_connections[task_uuid][ws_id] = _ModeFlipDict(original)
+    original = task_manager_module._ws_connections[ws_key][ws_id]
+    task_manager_module._ws_connections[ws_key][ws_id] = _ModeFlipDict(original)
 
     event = manager.append_stream_event(
         task_stream_id(task_uuid),
@@ -481,7 +482,7 @@ async def test_broadcast_task_stream_event_does_not_drop_event_when_mode_flips_t
     )
     await manager.broadcast_task_stream_event(task_uuid, event)
 
-    state = task_manager_module._ws_connections[task_uuid][ws_id]
+    state = task_manager_module._ws_connections[ws_key][ws_id]
     delivered = any(item.get("payload", {}).get("entry", {}).get("message") == "line-1" for item in websocket.messages)
     queued = any(item.get("payload", {}).get("entry", {}).get("message") == "line-1" for item in state.get("pending", []))
     assert delivered or queued, "事件必须要么被发送，要么进入 pending，不能静默丢失"

@@ -16,11 +16,16 @@ router = APIRouter()
 
 
 def _parse_after_seq(websocket: WebSocket) -> int:
+    raw_value = websocket.query_params.get("after_seq", "0")
     try:
-        after_seq_raw = websocket.query_params.get("after_seq", "0")
-        return int(after_seq_raw) if after_seq_raw is not None else 0
+        parsed = int(raw_value) if raw_value is not None else 0
     except ValueError:
+        logger.warning("WebSocket after_seq 非法，使用默认值 0: value=%s", raw_value)
         return 0
+    if parsed < 0:
+        logger.warning("WebSocket after_seq 小于 0，已自动钳制到 0: value=%s", raw_value)
+        return 0
+    return parsed
 
 
 
