@@ -153,7 +153,7 @@ class TaskManager:
                 buffer = deque(maxlen=STREAM_BUFFER_SIZE)
                 _stream_events[stream_id] = buffer
             buffer.append(event)
-        return event
+        return copy.deepcopy(event)
 
     def build_task_stream_snapshot(self, task_uuid: str) -> dict:
         stream_id = task_stream_id(task_uuid)
@@ -221,7 +221,7 @@ class TaskManager:
         lock = _get_stream_lock(stream_id)
         with lock:
             events = list(_stream_events.get(stream_id, []))
-        return [event for event in events if event["seq"] > after_seq]
+        return [copy.deepcopy(event) for event in events if event["seq"] > after_seq]
 
     def is_stream_after_seq_expired(self, stream_id: str, after_seq: int) -> bool:
         """判断 after_seq 是否已过期（事件缓冲区无法覆盖缺失区间）。"""

@@ -273,7 +273,9 @@ def test_log_event_entry_is_isolated_from_snapshot_logs_tail():
     event = manager.get_stream_events_after(task_stream_id(task_uuid), after_seq=0)[-1]
     event["payload"]["entry"]["message"] = "mutated-line"
 
+    fresh_event = manager.get_stream_events_after(task_stream_id(task_uuid), after_seq=0)[-1]
     snapshot = manager.build_task_stream_snapshot(task_uuid)
+    assert fresh_event["payload"]["entry"]["message"] == "immutable-line"
     assert snapshot["payload"]["logs_tail"][0]["message"] == "immutable-line"
 
 
