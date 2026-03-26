@@ -85,6 +85,12 @@ def test_registration_template_recent_accounts_uses_shared_table_shell():
     assert "recent-accounts-table table-shell" in template or "table-shell recent-accounts-table" in template
 
 
+def test_registration_workbench_stylesheet_stretches_console_log_for_taller_log_panel():
+    stylesheet = Path("static/css/registration_workbench.css").read_text(encoding="utf-8")
+    assert ".feedback-panel-log .console-log" in stylesheet
+    assert "height: 420px" in stylesheet
+
+
 def test_app_js_posts_count_zero_for_unlimited_mode():
     result = run_app_js_scenario("unlimited_mode_request")
     assert result["batch_count_display"] == "none"
