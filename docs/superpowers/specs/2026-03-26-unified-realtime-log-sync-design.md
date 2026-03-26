@@ -452,7 +452,7 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 1. 先把格式化后的日志行写入数据库。
 2. 基于 `logged_at + level + message + raw` 构造结构化日志条目。
 3. 成功后向 `run:{run_id}` stream 追加 `log_appended` 事件。
-3. 如果事件循环可用，则立即广播给当前连接的 WebSocket 客户端。
+4. 如果事件循环可用，则立即广播给当前连接的 WebSocket 客户端。
 
 这样数据库仍是事实来源，但 UI 的实时性不再依赖轮询数据库。
 
