@@ -159,6 +159,9 @@ async function main() {{
     result.metric_html = context.renderDashboardHero(summary);
     result.activity_html = context.renderRecentActivity(summary.recent_activity);
     result.quick_actions_html = context.renderQuickActions(summary.quick_links);
+  }} else if (scenarioName === 'render_metric_card_with_invalid_tone') {{
+    ensureFunction('renderMetricCard');
+    result.html = context.renderMetricCard('注册任务', '12', '运行中 3', 'bad" data-evil="1');
   }} else if (scenarioName === 'render_error') {{
     ensureFunction('renderDashboardError');
     context.renderDashboardError(new Error('boom'));

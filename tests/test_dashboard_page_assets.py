@@ -89,6 +89,16 @@ def test_dashboard_js_harness_renders_metric_tones_and_buttonized_quick_actions(
     assert "dashboard-quick-action--secondary" in result["quick_actions_html"]
 
 
+def test_dashboard_js_harness_rejects_invalid_metric_tone_tokens():
+    result = run_dashboard_js_scenario("render_metric_card_with_invalid_tone")
+    html = result["html"]
+    assert 'data-evil=' not in html
+    assert 'dashboard-metric-card--bad' not in html
+    assert 'dashboard-metric-value-badge--bad' not in html
+    assert 'class="dashboard-metric-card"' in html
+    assert 'class="dashboard-metric-value-badge"' in html
+
+
 def test_dashboard_js_harness_renders_error_state_without_invalid_ul_children():
     result = run_dashboard_js_scenario("render_error")
     assert result["activity_html"].lstrip().startswith('<li class="dashboard-empty">')

@@ -15,9 +15,14 @@ function safeHref(rawHref) {
   return '#';
 }
 
+function normalizeToneToken(value) {
+  const token = String(value ?? '').trim().toLowerCase();
+  return /^[a-z0-9-]+$/.test(token) ? token : '';
+}
+
 function renderMetricCard(label, value, hint = '', tone = '') {
   const hintHtml = hint ? `<p class="dashboard-metric-hint">${escapeHtml(hint)}</p>` : '';
-  const toneKey = String(tone ?? '').trim();
+  const toneKey = normalizeToneToken(tone);
   const toneClass = toneKey ? ` dashboard-metric-card--${toneKey}` : '';
   const badgeToneClass = toneKey ? ` dashboard-metric-value-badge--${toneKey}` : '';
   return `
