@@ -330,6 +330,27 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 
 至少包含：
 
+1. 外层 envelope 固定返回：
+
+```json
+{
+  "stream": "task:<task_uuid>",
+  "seq": 456,
+  "kind": "snapshot",
+  "timestamp": "2026-03-26T10:00:00+08:00",
+  "payload": {}
+}
+```
+
+其中：
+
+1. `stream`：当前 snapshot 所属 stream。
+2. `seq`：当前 snapshot 已覆盖到的最新服务端游标，即“authoritative cursor”。
+3. `kind`：固定为 `snapshot`。
+4. `payload`：具体业务负载。
+
+task snapshot 的 `payload` 至少包含：
+
 1. `task`：任务状态与关键字段。
 2. `current_step`：当前步骤摘要。
 3. `steps`：当前步骤列表。
@@ -338,14 +359,38 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 
 ### batch snapshot
 
-至少包含：
+外层 envelope 与 task snapshot 保持相同结构：
+
+```json
+{
+  "stream": "batch:<batch_id>",
+  "seq": 456,
+  "kind": "snapshot",
+  "timestamp": "2026-03-26T10:00:00+08:00",
+  "payload": {}
+}
+```
+
+batch snapshot 的 `payload` 至少包含：
 
 1. `batch`：批量任务状态。
 2. `logs_tail`：最近日志窗口（结构化日志条目数组）。
 
 ### run snapshot
 
-至少包含：
+外层 envelope 与 task / batch snapshot 保持相同结构：
+
+```json
+{
+  "stream": "run:<run_id>",
+  "seq": 456,
+  "kind": "snapshot",
+  "timestamp": "2026-03-26T10:00:00+08:00",
+  "payload": {}
+}
+```
+
+run snapshot 的 `payload` 至少包含：
 
 1. `run`：运行详情核心字段
    - `id`
@@ -430,6 +475,7 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 5. replay 期间产生的新事件进入 pending 队列，等 replay 完成后按 `seq` 顺序 flush，避免丢消息。
 6. `logs_tail` 默认取最近 `10` 条，沿用当前系统窗口大小。
 7. 前端统一控制台默认保留最近 `500` 条日志条目作为 ring buffer，上限策略为“超出后从头部裁剪最旧条目”。
+8. `snapshot.seq` 的语义固定为“生成该 snapshot 时，服务端该 stream 当前的最新 seq”；客户端收到 snapshot 后必须用它覆盖本地 cursor。
 
 ---
 
@@ -543,6 +589,12 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 ```
 
 且首轮不增加分页参数，默认返回“缓冲区内所有 `seq > after_seq` 的事件”；真正的数量边界由服务端缓冲区大小控制。
+
+服务端缓冲边界在本轮明确写死为：
+
+1. `STREAM_BUFFER_SIZE = 1000`
+2. 也就是说，单个 stream 最多只保证最近 `1000` 条事件可用于 replay / events 补偿。
+3. 若客户端落后范围超过该窗口，则必须走 `snapshot_required + snapshot 重建` 流程。
 
 ## 7.6 WebSocket 路由
 
@@ -683,7 +735,7 @@ console 根据 store 渲染 DOM
 
 定时任务日志查看以“历史 + 实时尾流”组合模式呈现：
 
-1. 打开日志弹窗时，先通过现有 chunk 接口加载历史日志。
+1. 打开日志弹窗时，先通过现有 chunk 接口加载**最近 64KB 历史文本**，不做首次全量拉取。
 2. 再拉取 snapshot 获取当前状态与最近尾部窗口。
 3. 然后建立 WebSocket，接收后续增量。
 4. 断线后按 `after_seq` 做 replay 补偿；若游标过期，则重新拉 snapshot 并继续 live。
@@ -698,6 +750,7 @@ console 根据 store 渲染 DOM
 4. 重叠判定方式以结构化条目的 `raw + timestamp + level + message` 为比较键，优先从历史尾部向后匹配 snapshot 尾部，删除重叠后再拼接。
 5. 后续 `log_appended` 只追加到 `live_window`，并由 `seq` 去重。
 6. 控制台最终渲染顺序为：`history_prefix + live_window`。
+7. 前端 `500` 条 ring buffer 只约束 `live_window`，不主动裁剪 `history_prefix`；历史前缀的首次加载上限由“最近 64KB”控制。
 
 这样即使历史 chunk 与 snapshot 尾部存在重叠，也不会因为两条链路的标识方式不同而造成重复展示。
 
