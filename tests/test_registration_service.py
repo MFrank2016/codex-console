@@ -66,7 +66,13 @@ class FakeTaskManager:
         self._stream_events.setdefault(task_uuid, []).append(
             {
                 "kind": "log_appended",
-                "payload": {"task_uuid": task_uuid, "message": message},
+                "payload": {
+                    "entry": {
+                        "message": message,
+                        "stream": f"task:{task_uuid}",
+                        "seq": None,
+                    }
+                },
             }
         )
 
@@ -452,4 +458,4 @@ def test_registration_service_marks_task_failed_after_creation_when_use_proxy_en
     assert result.task is not None
     assert result.task.status == "failed"
     assert "代理已启用" in (result.task.error_message or "")
-    assert any("代理已启用" in item["payload"]["message"] for item in stream_events)
+    assert any("代理已启用" in item["payload"]["entry"]["message"] for item in stream_events)

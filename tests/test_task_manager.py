@@ -4,7 +4,7 @@ import pytest
 
 from src.web import task_manager as task_manager_module
 from src.web.task_manager import TaskManager
-from src.web.realtime_streams import task_stream_id, batch_stream_id
+from src.web.realtime_streams import task_stream_id, batch_stream_id, build_log_entry
 
 
 class FakeWebSocket:
@@ -218,6 +218,79 @@ def test_run_stream_snapshot_uses_structured_log_entries():
     assert events[-1]["payload"] == {"entry": events[-1]["payload"]["entry"]}
 
 
+def test_append_stream_event_clones_entry_and_sets_seq_stream_atomically():
+    manager = TaskManager()
+    source_entry = build_log_entry(
+        stream="task:will-be-replaced",
+        message="atomic-line",
+        source="task",
+    )
+
+    event = manager.append_stream_event(
+        task_stream_id("task-atomic"),
+        "log_appended",
+        {"entry": source_entry},
+    )
+
+    assert source_entry["seq"] is None
+    assert source_entry["stream"] == "task:will-be-replaced"
+    assert event["payload"]["entry"]["seq"] == event["seq"]
+    assert event["payload"]["entry"]["stream"] == event["stream"]
+    assert event["payload"] == {"entry": event["payload"]["entry"]}
+
+
+def test_build_log_entry_ignores_reserved_extra_and_derives_display_time():
+    entry = build_log_entry(
+        stream="run:1",
+        message="runner-start",
+        timestamp="2026-03-26T10:00:00+08:00",
+        extra={
+            "display_time": "should-not-win",
+            "stream": "run:overridden",
+            "seq": 99,
+            "message": "bad-message",
+            "source": "bad-source",
+            "custom": "ok",
+        },
+    )
+
+    assert entry["timestamp"] == "2026-03-26T10:00:00+08:00"
+    assert entry["display_time"] == "10:00:00"
+    assert entry["stream"] == "run:1"
+    assert entry["seq"] is None
+    assert entry["message"] == "runner-start"
+    assert entry["source"] == "system"
+    assert entry["custom"] == "ok"
+
+
+def test_log_event_entry_is_isolated_from_snapshot_logs_tail():
+    manager = TaskManager()
+    task_uuid = "task-log-isolation"
+
+    manager.update_status(task_uuid, "running")
+    manager.add_log(task_uuid, "immutable-line")
+
+    event = manager.get_stream_events_after(task_stream_id(task_uuid), after_seq=0)[-1]
+    event["payload"]["entry"]["message"] = "mutated-line"
+
+    snapshot = manager.build_task_stream_snapshot(task_uuid)
+    assert snapshot["payload"]["logs_tail"][0]["message"] == "immutable-line"
+
+
+def test_update_run_status_keeps_run_progress_out_of_run_status_snapshot():
+    manager = TaskManager()
+
+    manager.update_run_status(
+        777,
+        status="running",
+        run_progress={"step_index": 1, "total_steps": 3},
+    )
+
+    snapshot = manager.build_run_stream_snapshot(777)
+    assert snapshot["payload"]["run_progress"] == {"step_index": 1, "total_steps": 3}
+    assert "run_progress" not in snapshot["payload"]["run"]
+
+
 def test_task_and_batch_stream_snapshots_also_use_structured_logs_tail():
     manager = TaskManager()
     manager.update_status("task-structured-1", "running")
@@ -270,7 +343,7 @@ async def test_websocket_replay_state_buffers_pending_events_and_flushes_in_seq_
     second = manager.append_stream_event(
         stream_id,
         "log_appended",
-        {"task_uuid": task_uuid, "message": "line-1"},
+        {"entry": build_log_entry(stream=stream_id, message="line-1", source="task")},
     )
 
     # 连接进入 replaying：期间新广播事件必须先进入 pending
@@ -281,14 +354,14 @@ async def test_websocket_replay_state_buffers_pending_events_and_flushes_in_seq_
     third = manager.append_stream_event(
         stream_id,
         "log_appended",
-        {"task_uuid": task_uuid, "message": "late-line"},
+        {"entry": build_log_entry(stream=stream_id, message="late-line", source="task")},
     )
     await manager.broadcast_task_stream_event(task_uuid, third)
 
     await manager.finish_task_websocket_replay(task_uuid, websocket)
 
     assert [item["seq"] for item in websocket.messages] == [1, 2, 3]
-    assert websocket.messages[-1]["payload"]["message"] == "late-line"
+    assert websocket.messages[-1]["payload"]["entry"]["message"] == "late-line"
 
 
 @pytest.mark.anyio
@@ -308,7 +381,7 @@ async def test_batch_websocket_replay_state_buffers_pending_events_and_flushes_i
     second = manager.append_stream_event(
         stream_id,
         "log_appended",
-        {"batch_id": batch_id, "message": "line-1"},
+        {"entry": build_log_entry(stream=stream_id, message="line-1", source="batch")},
     )
 
     manager.register_batch_websocket(batch_id, websocket, mode="replaying", after_seq=0)
@@ -318,14 +391,14 @@ async def test_batch_websocket_replay_state_buffers_pending_events_and_flushes_i
     third = manager.append_stream_event(
         stream_id,
         "log_appended",
-        {"batch_id": batch_id, "message": "late-line"},
+        {"entry": build_log_entry(stream=stream_id, message="late-line", source="batch")},
     )
     await manager.broadcast_batch_stream_event(batch_id, third)
 
     await manager.finish_batch_websocket_replay(batch_id, websocket)
 
     assert [item["seq"] for item in websocket.messages] == [1, 2, 3]
-    assert websocket.messages[-1]["payload"]["message"] == "late-line"
+    assert websocket.messages[-1]["payload"]["entry"]["message"] == "late-line"
 
 
 @pytest.mark.anyio
@@ -346,13 +419,13 @@ async def test_broadcast_task_stream_event_does_not_drop_event_when_mode_flips_t
     event = manager.append_stream_event(
         task_stream_id(task_uuid),
         "log_appended",
-        {"task_uuid": task_uuid, "message": "line-1"},
+        {"entry": build_log_entry(stream=task_stream_id(task_uuid), message="line-1", source="task")},
     )
     await manager.broadcast_task_stream_event(task_uuid, event)
 
     state = task_manager_module._ws_connections[task_uuid][ws_id]
-    delivered = any(item.get("payload", {}).get("message") == "line-1" for item in websocket.messages)
-    queued = any(item.get("payload", {}).get("message") == "line-1" for item in state.get("pending", []))
+    delivered = any(item.get("payload", {}).get("entry", {}).get("message") == "line-1" for item in websocket.messages)
+    queued = any(item.get("payload", {}).get("entry", {}).get("message") == "line-1" for item in state.get("pending", []))
     assert delivered or queued, "事件必须要么被发送，要么进入 pending，不能静默丢失"
 
 
@@ -374,11 +447,11 @@ async def test_broadcast_batch_stream_event_does_not_drop_event_when_mode_flips_
     event = manager.append_stream_event(
         batch_stream_id(batch_id),
         "log_appended",
-        {"batch_id": batch_id, "message": "batch-line-1"},
+        {"entry": build_log_entry(stream=batch_stream_id(batch_id), message="batch-line-1", source="batch")},
     )
     await manager.broadcast_batch_stream_event(batch_id, event)
 
     state = task_manager_module._ws_connections[ws_key][ws_id]
-    delivered = any(item.get("payload", {}).get("message") == "batch-line-1" for item in websocket.messages)
-    queued = any(item.get("payload", {}).get("message") == "batch-line-1" for item in state.get("pending", []))
+    delivered = any(item.get("payload", {}).get("entry", {}).get("message") == "batch-line-1" for item in websocket.messages)
+    queued = any(item.get("payload", {}).get("entry", {}).get("message") == "batch-line-1" for item in state.get("pending", []))
     assert delivered or queued, "事件必须要么被发送，要么进入 pending，不能静默丢失"

@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import copy
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -74,17 +75,15 @@ def _get_stream_lock(stream_id: str) -> threading.Lock:
 def _get_logs_tail(task_uuid: str, tail_size: int) -> List[dict]:
     with _get_log_lock(task_uuid):
         logs = _log_queues.get(task_uuid, [])
-        if tail_size >= len(logs):
-            return list(logs)
-        return list(logs[-tail_size:])
+        selected = logs if tail_size >= len(logs) else logs[-tail_size:]
+        return [dict(item) for item in selected]
 
 
 def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[dict]:
     with _get_batch_lock(batch_id):
         logs = _batch_logs.get(batch_id, [])
-        if tail_size >= len(logs):
-            return list(logs)
-        return list(logs[-tail_size:])
+        selected = logs if tail_size >= len(logs) else logs[-tail_size:]
+        return [dict(item) for item in selected]
 
 
 def _get_run_lock(run_id: int) -> threading.Lock:
@@ -98,9 +97,8 @@ def _get_run_lock(run_id: int) -> threading.Lock:
 def _get_run_logs_tail(run_id: int, tail_size: int) -> List[dict]:
     with _get_run_lock(run_id):
         logs = _run_logs.get(run_id, [])
-        if tail_size >= len(logs):
-            return list(logs)
-        return list(logs[-tail_size:])
+        selected = logs if tail_size >= len(logs) else logs[-tail_size:]
+        return [dict(item) for item in selected]
 
 
 
@@ -139,7 +137,10 @@ class TaskManager:
         with lock:
             seq = _stream_seq.get(stream_id, 0) + 1
             _stream_seq[stream_id] = seq
-            payload_copy = payload.copy() if isinstance(payload, dict) else payload
+            payload_copy = copy.deepcopy(payload) if isinstance(payload, dict) else payload
+            if isinstance(payload_copy, dict) and isinstance(payload_copy.get("entry"), dict):
+                payload_copy["entry"]["seq"] = seq
+                payload_copy["entry"]["stream"] = stream_id
             event = {
                 "seq": seq,
                 "stream": stream_id,
@@ -429,15 +430,12 @@ class TaskManager:
                 message=log_message,
                 source="task",
             )
-            _log_queues[task_uuid].append(entry)
             event = self.append_stream_event(
                 stream_id,
                 "log_appended",
                 {"entry": entry},
             )
-            event_entry = event["payload"]["entry"]
-            event_entry["seq"] = event["seq"]
-            event_entry["stream"] = event["stream"]
+            _log_queues[task_uuid].append(dict(event["payload"]["entry"]))
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
@@ -586,17 +584,28 @@ class TaskManager:
 
     def update_run_status(self, run_id: int, status: str, **kwargs):
         """更新 run 状态快照，并写入 run stream 状态事件。"""
+        run_progress_marker = object()
+        payload = dict(kwargs)
+        run_progress = payload.pop("run_progress", run_progress_marker)
         snapshot = _run_status.setdefault(run_id, {})
         snapshot["status"] = status
-        snapshot.update(kwargs)
+        snapshot.pop("run_progress", None)
+        snapshot.update(payload)
 
-        if "run_progress" in kwargs and kwargs["run_progress"] is not None:
-            _run_progress[run_id] = dict(kwargs["run_progress"])
+        event_payload = {"run_id": run_id, "status": status, **payload}
+        if run_progress is run_progress_marker:
+            pass
+        elif run_progress is None:
+            _run_progress.pop(run_id, None)
+            event_payload["run_progress"] = None
+        else:
+            _run_progress[run_id] = dict(run_progress)
+            event_payload["run_progress"] = dict(run_progress)
 
         self.append_stream_event(
             run_stream_id(run_id),
             "run_status_changed",
-            {"run_id": run_id, "status": status, **kwargs},
+            event_payload,
         )
 
     def add_run_log(self, run_id: int, log_entry: dict):
@@ -617,15 +626,12 @@ class TaskManager:
                 source=log_entry.get("source", "run"),
                 extra=extra,
             )
-            _run_logs[run_id].append(entry)
             event = self.append_stream_event(
                 stream_id,
                 "log_appended",
                 {"entry": entry},
             )
-            event_entry = event["payload"]["entry"]
-            event_entry["seq"] = event["seq"]
-            event_entry["stream"] = event["stream"]
+            _run_logs[run_id].append(dict(event["payload"]["entry"]))
 
     def run_stream_exists(self, run_id: int) -> bool:
         stream_id = run_stream_id(run_id)
@@ -728,15 +734,12 @@ class TaskManager:
                 message=log_message,
                 source="batch",
             )
-            _batch_logs[batch_id].append(entry)
             event = self.append_stream_event(
                 stream_id,
                 "log_appended",
                 {"entry": entry},
             )
-            event_entry = event["payload"]["entry"]
-            event_entry["seq"] = event["seq"]
-            event_entry["stream"] = event["stream"]
+            _batch_logs[batch_id].append(dict(event["payload"]["entry"]))
         if self._loop and self._loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(

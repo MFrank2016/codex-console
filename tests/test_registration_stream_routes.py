@@ -116,7 +116,8 @@ def test_task_and_batch_stream_routes_return_expected_contract():
     }
     last_event = task_events_json["events"][-1]
     assert last_event["kind"] == "log_appended"
-    assert last_event["payload"].get("message") == "line-1"
+    assert last_event["payload"] == {"entry": last_event["payload"]["entry"]}
+    assert last_event["payload"]["entry"]["message"] == "line-1"
     assert task_snapshot_json["seq"] == last_event["seq"]
     assert task_events_after_one.status_code == 200
     assert task_events_after_one.json()["events"]
@@ -190,6 +191,8 @@ def test_task_and_batch_websocket_replay_missing_events_after_after_seq():
     assert task_second["seq"] == 3
     assert task_first["kind"] == "log_appended"
     assert task_second["kind"] == "log_appended"
+    assert task_first["payload"]["entry"]["message"] == "line-1"
+    assert task_second["payload"]["entry"]["message"] == "line-2"
 
     batch_seqs = [batch_first["seq"], batch_second["seq"]]
     assert batch_seqs == sorted(batch_seqs)
@@ -248,7 +251,8 @@ def test_task_websocket_snapshot_required_connection_keeps_receiving_live_events
 
     assert event["stream"] == f"task:{task_uuid}"
     assert event["kind"] == "log_appended"
-    assert event["payload"]["message"] == "after-snapshot-required"
+    assert event["payload"] == {"entry": event["payload"]["entry"]}
+    assert event["payload"]["entry"]["message"] == "after-snapshot-required"
 
 
 def test_batch_websocket_snapshot_required_connection_keeps_receiving_live_events():
@@ -268,7 +272,8 @@ def test_batch_websocket_snapshot_required_connection_keeps_receiving_live_event
 
     assert event["stream"] == f"batch:{batch_id}"
     assert event["kind"] == "log_appended"
-    assert event["payload"]["message"] == "after-snapshot-required"
+    assert event["payload"] == {"entry": event["payload"]["entry"]}
+    assert event["payload"]["entry"]["message"] == "after-snapshot-required"
 
 
 def test_task_websocket_keeps_ping_pong_and_cancel_as_control_messages():
@@ -318,7 +323,8 @@ def test_task_websocket_does_not_lose_events_emitted_during_replay_handshake():
         assert seqs == sorted(seqs)
         assert len(set(seqs)) == len(seqs)
         assert third["kind"] == "log_appended"
-        assert third["payload"]["message"] == "late-line"
+        assert third["payload"] == {"entry": third["payload"]["entry"]}
+        assert third["payload"]["entry"]["message"] == "late-line"
     finally:
         task_manager.get_stream_events_after = original
 
@@ -347,4 +353,4 @@ def test_task_events_route_returns_live_log_before_database_flush(monkeypatch):
         response = client.get("/api/registration/streams/task/task-live-fallback/events?after_seq=0")
 
     assert response.status_code == 200
-    assert response.json()["events"][-1]["payload"]["message"] == "live-line"
+    assert response.json()["events"][-1]["payload"]["entry"]["message"] == "live-line"
