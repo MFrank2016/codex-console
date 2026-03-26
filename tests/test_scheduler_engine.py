@@ -193,6 +193,31 @@ def test_scheduler_engine_request_run_stop_marks_running_run(temp_db):
     assert run is not None
     assert run.stop_requested_at is not None
 
+    events = _get_run_stream_events(run_id)
+    assert [event["kind"] for event in events] == ["run_status_changed", "run_status_changed"]
+    assert [event["payload"]["status"] for event in events] == ["running", "stopping"]
+    assert events[-1]["payload"]["plan_name"] == plan.name
+    assert events[-1]["payload"]["task_type"] == "cpa_cleanup"
+    assert events[-1]["payload"]["is_running"] is True
+    assert events[-1]["payload"]["can_stop"] is False
+    assert events[-1]["payload"]["stop_requested_at"] is not None
+
+    snapshot = task_manager.build_run_stream_snapshot(run_id)
+    run_snapshot = snapshot["payload"]["run"]
+    assert run_snapshot["id"] == run_id
+    assert run_snapshot["plan_id"] == plan.id
+    assert run_snapshot["plan_name"] == plan.name
+    assert run_snapshot["task_type"] == "cpa_cleanup"
+    assert run_snapshot["status"] == "stopping"
+    assert run_snapshot["started_at"] is not None
+    assert run_snapshot["finished_at"] is None
+    assert run_snapshot["stop_requested_at"] is not None
+    assert run_snapshot["is_running"] is True
+    assert run_snapshot["can_stop"] is False
+    assert run_snapshot["last_log_at"] is None
+    assert run_snapshot["log_version"] == 0
+    assert run_snapshot["error_message"] is None
+
 
 def test_scheduler_module_stop_helpers_work_without_engine_instance(temp_db):
     plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
@@ -530,9 +555,17 @@ def test_scheduler_engine_marks_stream_closed_on_failed_run(temp_db):
     assert [event["seq"] for event in events] == sorted(event["seq"] for event in events)
 
     snapshot = task_manager.build_run_stream_snapshot(run_id)
-    assert snapshot["payload"]["run"]["status"] == "failed"
-    assert snapshot["payload"]["run"]["stream_closed"] is True
-    assert snapshot["payload"]["run"]["stream_final_status"] == "failed"
+    run_snapshot = snapshot["payload"]["run"]
+    assert run_snapshot["id"] == run_id
+    assert run_snapshot["plan_id"] == plan.id
+    assert run_snapshot["plan_name"] == plan.name
+    assert run_snapshot["task_type"] == "cpa_cleanup"
+    assert run_snapshot["status"] == "failed"
+    assert run_snapshot["is_running"] is False
+    assert run_snapshot["can_stop"] is False
+    assert run_snapshot["stream_closed"] is True
+    assert run_snapshot["stream_final_status"] == "failed"
+    assert run_snapshot["error_message"] == "boom"
 
 
 def test_scheduler_engine_emits_stopping_and_success_statuses(temp_db):

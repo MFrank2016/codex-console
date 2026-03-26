@@ -293,9 +293,22 @@ def test_manual_run_route_exposes_realtime_run_stream_events(client, seeded_sche
     snapshot_payload = snapshot.json()
     assert snapshot_payload["stream"] == f"run:{run_id}"
     assert snapshot_payload["seq"] == 4
-    assert snapshot_payload["payload"]["run"]["status"] == "success"
-    assert snapshot_payload["payload"]["run"]["stream_closed"] is True
-    assert snapshot_payload["payload"]["run"]["stream_final_status"] == "success"
+    run_snapshot = snapshot_payload["payload"]["run"]
+    assert run_snapshot["id"] == run_id
+    assert run_snapshot["plan_id"] == seeded_scheduled_data["plan"].id
+    assert run_snapshot["plan_name"] == seeded_scheduled_data["plan"].name
+    assert run_snapshot["task_type"] == "cpa_cleanup"
+    assert run_snapshot["status"] == "success"
+    assert run_snapshot["started_at"] is not None
+    assert run_snapshot["finished_at"] is not None
+    assert run_snapshot["stop_requested_at"] is None
+    assert run_snapshot["is_running"] is False
+    assert run_snapshot["can_stop"] is False
+    assert run_snapshot["last_log_at"] == logged_at.isoformat()
+    assert run_snapshot["log_version"] == 1
+    assert run_snapshot["error_message"] is None
+    assert run_snapshot["stream_closed"] is True
+    assert run_snapshot["stream_final_status"] == "success"
     assert snapshot_payload["payload"]["logs_tail"][-1]["message"] == "manual trigger started"
     assert snapshot_payload["payload"]["logs_tail"][-1]["level"] == "INFO"
 
@@ -309,11 +322,21 @@ def test_manual_run_route_exposes_realtime_run_stream_events(client, seeded_sche
         "stream_closed",
     ]
     assert [event["seq"] for event in event_payload["events"]] == [1, 2, 3, 4]
-    assert event_payload["events"][0]["payload"] == {"run_id": run_id, "status": "running"}
+    assert event_payload["events"][0]["payload"]["run_id"] == run_id
+    assert event_payload["events"][0]["payload"]["status"] == "running"
+    assert event_payload["events"][0]["payload"]["plan_id"] == seeded_scheduled_data["plan"].id
+    assert event_payload["events"][0]["payload"]["plan_name"] == seeded_scheduled_data["plan"].name
+    assert event_payload["events"][0]["payload"]["task_type"] == "cpa_cleanup"
+    assert event_payload["events"][0]["payload"]["is_running"] is True
+    assert event_payload["events"][0]["payload"]["can_stop"] is True
     assert event_payload["events"][1]["payload"]["entry"]["message"] == "manual trigger started"
     assert event_payload["events"][1]["payload"]["entry"]["level"] == "INFO"
     assert event_payload["events"][1]["payload"]["entry"]["stream"] == f"run:{run_id}"
     assert event_payload["events"][1]["payload"]["entry"]["seq"] == 2
+    assert event_payload["events"][2]["payload"]["status"] == "success"
+    assert event_payload["events"][2]["payload"]["plan_name"] == seeded_scheduled_data["plan"].name
+    assert event_payload["events"][2]["payload"]["is_running"] is False
+    assert event_payload["events"][2]["payload"]["can_stop"] is False
     assert event_payload["events"][-1]["payload"] == {"run_id": run_id, "final_status": "success"}
 
 
@@ -623,22 +646,38 @@ def test_stop_scheduled_run_route_emits_realtime_stopping_event(client, seeded_s
     snapshot_payload = snapshot.json()
     assert snapshot_payload["stream"] == f"run:{run_id}"
     assert snapshot_payload["seq"] == 1
-    assert snapshot_payload["payload"]["run"]["status"] == "stopping"
-    assert snapshot_payload["payload"]["run"].get("stream_closed") is None
+    run_snapshot = snapshot_payload["payload"]["run"]
+    assert run_snapshot["id"] == run_id
+    assert run_snapshot["plan_id"] == seeded_scheduled_data["plan"].id
+    assert run_snapshot["plan_name"] == seeded_scheduled_data["plan"].name
+    assert run_snapshot["task_type"] == "cpa_cleanup"
+    assert run_snapshot["status"] == "stopping"
+    assert run_snapshot["started_at"] is not None
+    assert run_snapshot["finished_at"] is None
+    assert run_snapshot["stop_requested_at"] is not None
+    assert run_snapshot["is_running"] is True
+    assert run_snapshot["can_stop"] is False
+    assert run_snapshot["last_log_at"] is None
+    assert run_snapshot["log_version"] == 0
+    assert run_snapshot["error_message"] is None
+    assert run_snapshot.get("stream_closed") is None
     assert snapshot_payload["payload"]["logs_tail"] == []
 
     assert events.status_code == 200
     event_payload = events.json()
     assert event_payload["stream"] == f"run:{run_id}"
-    assert event_payload["events"] == [
-        {
-            "seq": 1,
-            "stream": f"run:{run_id}",
-            "kind": "run_status_changed",
-            "timestamp": event_payload["events"][0]["timestamp"],
-            "payload": {"run_id": run_id, "status": "stopping"},
-        }
-    ]
+    assert len(event_payload["events"]) == 1
+    assert event_payload["events"][0]["seq"] == 1
+    assert event_payload["events"][0]["stream"] == f"run:{run_id}"
+    assert event_payload["events"][0]["kind"] == "run_status_changed"
+    assert event_payload["events"][0]["payload"]["run_id"] == run_id
+    assert event_payload["events"][0]["payload"]["status"] == "stopping"
+    assert event_payload["events"][0]["payload"]["plan_id"] == seeded_scheduled_data["plan"].id
+    assert event_payload["events"][0]["payload"]["plan_name"] == seeded_scheduled_data["plan"].name
+    assert event_payload["events"][0]["payload"]["task_type"] == "cpa_cleanup"
+    assert event_payload["events"][0]["payload"]["is_running"] is True
+    assert event_payload["events"][0]["payload"]["can_stop"] is False
+    assert event_payload["events"][0]["payload"]["stop_requested_at"] is not None
 
 
 def test_stop_scheduled_run_route_rejects_when_stop_already_requested(client, seeded_scheduled_data):

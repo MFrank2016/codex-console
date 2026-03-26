@@ -11,7 +11,11 @@ from ...database import crud
 from ...database.models import ScheduledRun
 from ...database.session import get_db
 from ...core.time import utc_now_naive
-from ...scheduler.engine import SchedulerDispatchError, SchedulerPlanConflictError
+from ...scheduler.engine import (
+    SchedulerDispatchError,
+    SchedulerPlanConflictError,
+    build_run_realtime_status_payload,
+)
 from ...scheduler.schemas import (
     ScheduledPlanCreate,
     ScheduledPlanListResponse,
@@ -216,6 +220,7 @@ async def get_scheduled_run_logs_chunk(
 
 @runs_router.post("/scheduled-runs/{run_id}/stop", response_model=ScheduledRunStopResponse)
 async def stop_scheduled_run(run_id: int):
+    realtime_payload: dict | None = None
     with get_db() as db:
         run = crud.get_scheduled_run_by_id(db, run_id)
         if run is None:
@@ -237,9 +242,19 @@ async def stop_scheduled_run(run_id: int):
             raise HTTPException(status_code=409, detail="运行已结束，不能停止")
         if updated.stop_requested_at != requested_at:
             raise HTTPException(status_code=409, detail="运行已请求停止")
+        plan = crud.get_scheduled_plan_by_id(db, updated.plan_id)
+        realtime_payload = build_run_realtime_status_payload(
+            updated,
+            plan_name=plan.name if plan is not None else None,
+            task_type=updated.task_type or (plan.task_type if plan is not None else None),
+            status="stopping",
+        )
 
     try:
-        task_manager.update_run_status(run_id, status="stopping")
+        if realtime_payload is None:
+            task_manager.update_run_status(run_id, status="stopping")
+        else:
+            task_manager.update_run_status(run_id, **realtime_payload)
     except Exception:
         logger.exception("failed to emit realtime stopping status (run_id=%s)", run_id)
 

@@ -24,6 +24,54 @@ def _get_task_manager():
     return task_manager
 
 
+def _isoformat_or_none(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def build_run_realtime_status_payload(
+    run: ScheduledRun,
+    *,
+    plan_name: str | None = None,
+    task_type: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    effective_status = status or str(run.status)
+    effective_task_type = task_type or (str(run.task_type) if run.task_type else None) or "cpa_cleanup"
+    is_running = run.finished_at is None and effective_status in {"running", "stopping"}
+    can_stop = is_running and run.stop_requested_at is None and effective_status == "running"
+    return {
+        "status": effective_status,
+        "id": int(run.id),
+        "plan_id": int(run.plan_id),
+        "plan_name": plan_name,
+        "task_type": effective_task_type,
+        "started_at": _isoformat_or_none(run.started_at),
+        "finished_at": _isoformat_or_none(run.finished_at),
+        "stop_requested_at": _isoformat_or_none(run.stop_requested_at),
+        "is_running": is_running,
+        "can_stop": can_stop,
+        "last_log_at": _isoformat_or_none(run.last_log_at),
+        "log_version": int(run.log_version or 0),
+        "error_message": run.error_message,
+    }
+
+
+def _load_run_realtime_status_payload(run_id: int, *, status: str | None = None) -> dict[str, Any] | None:
+    with get_db() as db:
+        run = db.query(ScheduledRun).filter(ScheduledRun.id == run_id).first()
+        if run is None:
+            return None
+        plan = crud.get_scheduled_plan_by_id(db, run.plan_id)
+        plan_name = plan.name if plan is not None else None
+        task_type = run.task_type or (plan.task_type if plan is not None else None)
+        return build_run_realtime_status_payload(
+            run,
+            plan_name=plan_name,
+            task_type=task_type,
+            status=status,
+        )
+
+
 class SchedulerPlanConflictError(RuntimeError):
     """Raised when a plan trigger is rejected due to lock conflict."""
 
@@ -139,7 +187,11 @@ def request_run_stop(
     if run is None:
         return False
     try:
-        _get_task_manager().update_run_status(run_id, status="stopping")
+        payload = _load_run_realtime_status_payload(run_id, status="stopping")
+        if payload is None:
+            _get_task_manager().update_run_status(run_id, status="stopping")
+        else:
+            _get_task_manager().update_run_status(run_id, **payload)
     except Exception:
         logger.exception("failed to emit run stopping status (run_id=%s)", run_id)
     return True
@@ -431,7 +483,11 @@ class SchedulerEngine:
 
     def _emit_run_status(self, run_id: int, status: str) -> None:
         try:
-            _get_task_manager().update_run_status(run_id, status=status)
+            payload = _load_run_realtime_status_payload(run_id, status=status)
+            if payload is None:
+                _get_task_manager().update_run_status(run_id, status=status)
+            else:
+                _get_task_manager().update_run_status(run_id, **payload)
         except Exception:
             logger.exception("failed to emit run status (run_id=%s, status=%s)", run_id, status)
 
