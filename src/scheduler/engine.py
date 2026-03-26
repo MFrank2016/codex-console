@@ -18,6 +18,12 @@ from .time_utils import SCHEDULER_TZ, compute_next_run_at
 logger = logging.getLogger(__name__)
 
 
+def _get_task_manager():
+    from ..web.task_manager import task_manager
+
+    return task_manager
+
+
 class SchedulerPlanConflictError(RuntimeError):
     """Raised when a plan trigger is rejected due to lock conflict."""
 
@@ -130,7 +136,13 @@ def request_run_stop(
             requested_by=requested_by,
             reason=reason,
         )
-        return run is not None
+    if run is None:
+        return False
+    try:
+        _get_task_manager().update_run_status(run_id, status="stopping")
+    except Exception:
+        logger.exception("failed to emit run stopping status (run_id=%s)", run_id)
+    return True
 
 
 def is_run_stop_requested(run_id: int) -> bool:
@@ -352,7 +364,9 @@ class SchedulerEngine:
                 updates["next_run_at"] = _to_scheduler_naive_time(compute_next_run_at(plan, now=schedule_now))
 
             crud.update_scheduled_plan(db, plan_id, **updates)
-            return int(run.id)
+            run_id = int(run.id)
+        self._emit_run_status(run_id, "running")
+        return run_id
 
     def _ensure_run_failed(self, run_id: int, error_message: str) -> None:
         self._finish_running_run(run_id, status="failed", error_message=error_message)
@@ -411,6 +425,21 @@ class SchedulerEngine:
             if run.status == "success":
                 updates["last_success_at"] = finished_at
             crud.update_scheduled_plan(db, plan_id, **updates)
+            terminal_status = str(run.status)
+        self._emit_run_status(run_id, terminal_status)
+        self._close_run_stream(run_id, terminal_status)
+
+    def _emit_run_status(self, run_id: int, status: str) -> None:
+        try:
+            _get_task_manager().update_run_status(run_id, status=status)
+        except Exception:
+            logger.exception("failed to emit run status (run_id=%s, status=%s)", run_id, status)
+
+    def _close_run_stream(self, run_id: int, final_status: str) -> None:
+        try:
+            _get_task_manager().close_run_stream(run_id, final_status=final_status)
+        except Exception:
+            logger.exception("failed to close run stream (run_id=%s, status=%s)", run_id, final_status)
 
     @staticmethod
     def _spawn_worker(worker: Callable[[], None], worker_name: str) -> None:

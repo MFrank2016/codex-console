@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from typing import Any
 
 from ..core.time import utc_now_naive
@@ -11,6 +12,13 @@ USER_REQUESTED_STOP_ERROR_MESSAGE = "user requested stop"
 USER_STOP_REQUESTED_LOG = "收到停止请求"
 USER_STOP_COMPLETED_LOG = "任务已按请求停止"
 ALLOWED_LOG_LEVELS = {"INFO", "WARN", "ERROR"}
+logger = logging.getLogger(__name__)
+
+
+def _get_task_manager():
+    from ..web.task_manager import task_manager
+
+    return task_manager
 
 
 def _normalize_run_log_level(level: str) -> str:
@@ -40,7 +48,23 @@ def append_run_log(
     normalized_level = _normalize_run_log_level(level)
     line = _format_run_log_line(message, level=normalized_level, logged_at=actual_logged_at)
     with get_db() as db:
-        return crud.append_scheduled_run_log(db, run_id, line, logged_at=actual_logged_at)
+        written = crud.append_scheduled_run_log(db, run_id, line, logged_at=actual_logged_at)
+    if not written:
+        return False
+
+    entry = {
+        "timestamp": actual_logged_at.isoformat(),
+        "display_time": actual_logged_at.strftime("%H:%M:%S"),
+        "level": normalized_level,
+        "message": message,
+        "raw": line,
+        "source": "scheduler",
+    }
+    try:
+        _get_task_manager().add_run_log(run_id, entry)
+    except Exception:
+        logger.exception("failed to append realtime run log (run_id=%s)", run_id)
+    return True
 
 
 def finalize_run(

@@ -14,6 +14,7 @@ from src.database.session import DatabaseSessionManager
 from src.scheduler import engine as engine_module
 from src.scheduler import run_logger
 from src.scheduler.engine import SchedulerDispatchError, SchedulerEngine, SchedulerPlanConflictError
+from src.web.task_manager import task_manager
 from src.web.app import create_app
 
 
@@ -427,6 +428,34 @@ def test_run_logger_append_log_normalizes_level_to_supported_uppercase(temp_db):
     assert persisted.logs == "2025-01-02 03:04:05.123 [WARN] careful"
 
 
+def test_append_run_log_emits_structured_realtime_entry(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    run = crud.create_scheduled_run(temp_db, plan_id=plan.id, task_type="cpa_cleanup", trigger_source="manual")
+    emitted = {}
+
+    def _fake_add_run_log(run_id, entry):
+        emitted["run_id"] = run_id
+        emitted["entry"] = entry
+        return {
+            "seq": 7,
+            "stream": "run:9",
+            "payload": {"entry": {**entry, "seq": 7, "stream": "run:9"}},
+        }
+
+    monkeypatch.setattr(task_manager, "add_run_log", _fake_add_run_log)
+
+    logged_at = datetime(2026, 3, 26, 10, 0, 0, 123000)
+    assert run_logger.append_run_log(run.id, "hello", level="WARN", logged_at=logged_at) is True
+
+    assert emitted["run_id"] == run.id
+    assert emitted["entry"]["level"] == "WARN"
+    assert emitted["entry"]["display_time"] == "10:00:00"
+    assert emitted["entry"]["raw"].endswith("[WARN] hello")
+    returned = _fake_add_run_log(run.id, emitted["entry"])
+    assert returned["payload"]["entry"]["seq"] == returned["seq"]
+    assert returned["payload"]["entry"]["stream"] == returned["stream"]
+
+
 def test_run_logger_append_log_expands_multiline_message_with_prefixed_physical_lines(temp_db):
     plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
     with session_module.get_db() as db:
@@ -468,6 +497,82 @@ def test_run_logger_append_log_rejects_non_string_level(temp_db):
 
     with pytest.raises(ValueError):
         run_logger.append_run_log(run_id, "invalid", level=None)
+
+
+def test_scheduler_engine_marks_stream_closed_on_failed_run(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    statuses = []
+    closed = []
+    monkeypatch.setattr(
+        task_manager,
+        "update_run_status",
+        lambda run_id, **payload: statuses.append((run_id, payload["status"])),
+    )
+    monkeypatch.setattr(
+        task_manager,
+        "close_run_stream",
+        lambda run_id, final_status: closed.append((run_id, final_status)),
+    )
+
+    def _boom_runner(*, plan_id: int, run_id: int):
+        raise RuntimeError("boom")
+
+    engine = SchedulerEngine(runner_map={"cpa_cleanup": _boom_runner}, worker_spawner=lambda fn, _name: fn())
+    run_id = engine.trigger_plan_now(plan.id)
+
+    assert (run_id, "failed") in statuses
+    assert closed == [(run_id, "failed")]
+
+
+def test_scheduler_engine_emits_stopping_and_success_statuses(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    statuses = []
+    closed = []
+    monkeypatch.setattr(
+        task_manager,
+        "update_run_status",
+        lambda run_id, **payload: statuses.append((run_id, payload["status"])),
+    )
+    monkeypatch.setattr(
+        task_manager,
+        "close_run_stream",
+        lambda run_id, final_status: closed.append((run_id, final_status)),
+    )
+
+    def _success_runner(*, plan_id: int, run_id: int):
+        engine_module.request_run_stop(run_id, requested_by="tester", reason="manual")
+        with session_module.get_db() as db:
+            crud.finish_scheduled_run(db, run_id=run_id, status="success", summary={"ok": True})
+
+    engine = SchedulerEngine(runner_map={"cpa_cleanup": _success_runner}, worker_spawner=lambda fn, _name: fn())
+    run_id = engine.trigger_plan_now(plan.id)
+
+    assert (run_id, "stopping") in statuses
+    assert (run_id, "success") in statuses
+    assert closed == [(run_id, "success")]
+
+
+def test_scheduler_engine_marks_cancelled_run_as_terminal_stream(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    statuses = []
+    closed = []
+    monkeypatch.setattr(
+        task_manager,
+        "update_run_status",
+        lambda run_id, **payload: statuses.append((run_id, payload["status"])),
+    )
+    monkeypatch.setattr(task_manager, "close_run_stream", lambda run_id, final_status: closed.append(final_status))
+
+    def _cancel_runner(*, plan_id: int, run_id: int):
+        engine_module.request_run_stop(run_id, requested_by="tester", reason="manual")
+        raise engine_module.ScheduledRunCancelledError("stop requested")
+
+    engine = SchedulerEngine(runner_map={"cpa_cleanup": _cancel_runner}, worker_spawner=lambda fn, _name: fn())
+    run_id = engine.trigger_plan_now(plan.id)
+
+    assert (run_id, "stopping") in statuses
+    assert (run_id, "cancelled") in statuses
+    assert closed[-1] == "cancelled"
 
 
 def test_scheduler_engine_skipped_run_updates_plan_summary_fields(temp_db):
