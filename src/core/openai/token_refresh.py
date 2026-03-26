@@ -179,7 +179,11 @@ class TokenRefreshManager:
             # 提取令牌
             access_token = data.get("access_token")
             new_refresh_token = data.get("refresh_token", refresh_token)
-            expires_in = data.get("expires_in", 3600)
+            raw_expires_in = data.get("expires_in", 3600)
+            try:
+                expires_in = int(raw_expires_in)
+            except (TypeError, ValueError):
+                expires_in = 3600
 
             if not access_token:
                 result.error_message = "OAuth token 刷新失败: 未找到 access_token"

@@ -145,6 +145,28 @@ def test_refresh_by_oauth_token_returns_http_failure(monkeypatch):
     assert "HTTP 500" in result.error_message
 
 
+def test_refresh_by_oauth_token_accepts_string_expires_in(monkeypatch):
+    manager = TokenRefreshManager(proxy_url="http://proxy.local:8000")
+    fake_response = _FakeResponse(
+        200,
+        {
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+            "expires_in": "7200",
+        },
+    )
+    monkeypatch.setattr(manager, "_create_session", lambda: _FakeSession(fake_response))
+
+    result = manager.refresh_by_oauth_token(
+        refresh_token="old-refresh-token",
+        client_id="client-id",
+    )
+
+    assert result.success is True
+    assert result.expires_at is not None
+    assert result.expires_at.tzinfo is None
+
+
 def test_refresh_account_token_returns_not_found_for_missing_account(tmp_path, monkeypatch):
     manager = _build_temp_session_manager(tmp_path)
     monkeypatch.setattr(session_module, "_db_manager", manager)
