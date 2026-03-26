@@ -117,8 +117,21 @@
     nextState.cursors = { ...(nextState.cursors || {}) };
     nextState.historyPrefix = Array.isArray(nextState.historyPrefix) ? nextState.historyPrefix.map(clone) : [];
     nextState.liveWindow = Array.isArray(nextState.liveWindow) ? nextState.liveWindow.map(clone) : [];
-    const liveKeys = new Set(nextState.liveWindow.map(logIdentity));
-    const historyOnly = nextState.historyPrefix.filter((entry) => !liveKeys.has(logIdentity(entry)));
+    const liveOverlapCounts = new Map();
+    nextState.liveWindow.forEach((entry) => {
+      const key = logIdentity(entry);
+      liveOverlapCounts.set(key, (liveOverlapCounts.get(key) || 0) + 1);
+    });
+    const historyOnly = [];
+    nextState.historyPrefix.forEach((entry) => {
+      const key = logIdentity(entry);
+      const remaining = liveOverlapCounts.get(key) || 0;
+      if (remaining > 0) {
+        liveOverlapCounts.set(key, remaining - 1);
+        return;
+      }
+      historyOnly.push(entry);
+    });
     nextState.logs = [...historyOnly, ...nextState.liveWindow].map(clone);
     nextState.context = {
       task: nextState.task || null,

@@ -135,18 +135,18 @@ async function main() {{
 
   if (scenarioName === 'snapshot_required_resync') {{
     client.applyHistoryChunk('2026-03-26 10:00:00.000 [INFO] line-0');
-    const logsTail = Array.from({{ length: 500 }}, (_, index) =>
+    const logsTail = Array.from({{ length: 498 }}, (_, index) =>
       makeEntry(
         index + 1,
-        index === 499 ? 'ERROR' : 'INFO',
-        index === 499 ? 'proxy fallback failed' : `line-${{index}}`,
+        index === 497 ? 'ERROR' : 'INFO',
+        index === 497 ? 'proxy fallback failed' : `line-${{index}}`,
         '10:00:00'
       )
     );
 
     client.dispatchEvent({{ kind: 'snapshot_required', stream: 'run:demo', payload: {{ reason: 'after_seq_expired' }} }});
-    client.dispatchEvent({{ seq: 8, stream: 'run:demo', kind: 'log_appended', payload: {{ entry: makeEntry(8, 'WARN', 'stale-event', '09:59:58') }} }});
-    client.dispatchEvent({{ seq: 9, stream: 'run:demo', kind: 'log_appended', payload: {{ entry: makeEntry(9, 'WARN', 'stale-event-2', '09:59:59') }} }});
+    client.dispatchEvent({{ seq: 11, stream: 'run:demo', kind: 'log_appended', payload: {{ entry: makeEntry(11, 'ERROR', 'late-error', '10:00:02') }} }});
+    client.dispatchEvent({{ seq: 10, stream: 'run:demo', kind: 'log_appended', payload: {{ entry: makeEntry(10, 'INFO', 'late-info', '10:00:01') }} }});
     client.applySnapshot({{
       seq: 9,
       stream: 'run:demo',
@@ -231,9 +231,42 @@ async function main() {{
     }}));
     const copiedText = await controller.copyVisibleText();
     controller.clearView();
+    controller.setState(context.realtimeLogStore.createState({{
+      liveWindow: [
+        makeEntry(1, 'INFO', 'proxy bootstrap ok', '10:00:00'),
+        makeEntry(2, 'ERROR', 'proxy fallback failed', '10:00:01'),
+        makeEntry(3, 'INFO', 'new-live-line', '10:00:02'),
+      ],
+    }}));
     return {{
       copied_text: clipboard.copiedText || copiedText,
-      clear_keeps_store_entries: Array.isArray(controller.state.logs) && controller.state.logs.length === 2 && controller.lastRender.visibleEntries.length === 0,
+      clear_keeps_store_entries: Array.isArray(controller.state.logs) && controller.state.logs.length === 3,
+      new_entries_visible_after_clear: controller.lastRender.visibleEntries.length === 1 && controller.lastRender.visibleEntries[0].message === 'new-live-line',
+    }};
+  }}
+
+  if (scenarioName === 'history_partial_overlap') {{
+    let state = context.realtimeLogStore.createState();
+    state = context.realtimeLogStore.reduceHistoryChunk(
+      state,
+      '2026-03-26 10:00:00.000 [INFO] line-0\\n2026-03-26 10:00:00.000 [INFO] line-0'
+    );
+    state = context.realtimeLogStore.reduceEvent(state, {{
+      seq: 1,
+      stream: 'run:demo',
+      kind: 'snapshot',
+      payload: {{
+        run: {{ id: 1, status: 'running' }},
+        logs_tail: [
+          makeEntry(1, 'INFO', 'line-0', '10:00:00'),
+          makeEntry(2, 'ERROR', 'tail-error', '10:00:01'),
+        ],
+      }},
+    }});
+    controller.setState(state);
+    return {{
+      line_zero_visible_count: state.logs.filter((entry) => entry.message === 'line-0').length,
+      total_entries: state.logs.length,
     }};
   }}
 

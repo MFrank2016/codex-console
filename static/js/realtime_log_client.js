@@ -50,7 +50,7 @@
         resyncPending = true;
         pendingQueue = [];
         replayedInOrder = true;
-        return updateConnection('reconnecting', { reason: event.payload && event.payload.reason ? event.payload.reason : '' });
+        return emit(store.reduceEvent(state, event));
       }
       if (resyncPending && event.kind !== 'snapshot') {
         pendingQueue.push(clone(event));

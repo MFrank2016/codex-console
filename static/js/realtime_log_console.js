@@ -30,12 +30,13 @@
   }
 
   function getVisibleEntries(state, uiState) {
-    if (uiState.viewCleared) {
-      return [];
-    }
     const search = String(uiState.search || '').trim().toLowerCase();
     const level = String(uiState.level || '').trim().toUpperCase();
-    const entries = Array.isArray(state && state.logs) ? state.logs.slice() : [];
+    let entries = Array.isArray(state && state.logs) ? state.logs.slice() : [];
+    if (uiState.viewCleared) {
+      const clearedAfterSeq = Number.isFinite(Number(uiState.clearedAfterSeq)) ? Number(uiState.clearedAfterSeq) : 0;
+      entries = entries.filter((entry) => typeof entry.seq === 'number' && entry.seq > clearedAfterSeq);
+    }
     return entries.filter((entry) => {
       const message = String(entry && (entry.message || entry.raw) ? (entry.message || entry.raw) : '').toLowerCase();
       const entryLevel = String(entry && entry.level ? entry.level : '').toUpperCase();
@@ -125,6 +126,7 @@
         wrap: true,
         autoScroll: true,
         viewCleared: false,
+        clearedAfterSeq: 0,
         manualScrollTop: 0,
         copiedText: '',
       },
@@ -142,11 +144,13 @@
       setSearch(value) {
         this.ui.search = String(value || '');
         this.ui.viewCleared = false;
+        this.ui.clearedAfterSeq = 0;
         return renderRealtimeLogConsole(this);
       },
       setLevelFilter(value) {
         this.ui.level = String(value || '').toUpperCase();
         this.ui.viewCleared = false;
+        this.ui.clearedAfterSeq = 0;
         return renderRealtimeLogConsole(this);
       },
       toggleWrap(value) {
@@ -163,6 +167,9 @@
       },
       clearView() {
         this.ui.viewCleared = true;
+        this.ui.clearedAfterSeq = Array.isArray(this.state.logs)
+          ? this.state.logs.reduce((max, entry) => (typeof entry.seq === 'number' && entry.seq > max ? entry.seq : max), 0)
+          : 0;
         return renderRealtimeLogConsole(this);
       },
       copyVisibleText() {
