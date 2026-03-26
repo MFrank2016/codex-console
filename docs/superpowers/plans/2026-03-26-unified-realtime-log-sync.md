@@ -413,7 +413,9 @@ git commit -m "feat: add generic realtime stream routes and run websocket"
 ```python
 # tests/test_scheduler_engine.py
 
-def test_append_run_log_emits_structured_realtime_entry(monkeypatch):
+def test_append_run_log_emits_structured_realtime_entry(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    run = crud.create_scheduled_run(temp_db, plan_id=plan.id, task_type="cpa_cleanup", trigger_source="manual")
     emitted = {}
 
     def _fake_add_run_log(run_id, entry):
@@ -434,36 +436,63 @@ def test_append_run_log_emits_structured_realtime_entry(monkeypatch):
     monkeypatch.setattr(task_manager, "add_run_log", _fake_add_run_log)
 
     logged_at = datetime(2026, 3, 26, 10, 0, 0, 123000)
-    assert run_logger.append_run_log(9, "hello", level="WARN", logged_at=logged_at) is True
+    assert run_logger.append_run_log(run.id, "hello", level="WARN", logged_at=logged_at) is True
 
-    assert emitted["run_id"] == 9
+    assert emitted["run_id"] == run.id
     assert emitted["entry"]["level"] == "WARN"
     assert emitted["entry"]["display_time"] == "10:00:00"
     assert emitted["entry"]["raw"].endswith("[WARN] hello")
-    returned = _fake_add_run_log(9, emitted["entry"])
+    returned = _fake_add_run_log(run.id, emitted["entry"])
     assert returned["payload"]["entry"]["seq"] == returned["seq"]
     assert returned["payload"]["entry"]["stream"] == returned["stream"]
 
 
-def test_scheduler_engine_marks_stream_closed_on_failed_run(monkeypatch):
+def test_scheduler_engine_marks_stream_closed_on_failed_run(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    statuses = []
     closed = []
+    monkeypatch.setattr(task_manager, "update_run_status", lambda run_id, **payload: statuses.append((run_id, payload["status"])))
     monkeypatch.setattr(task_manager, "close_run_stream", lambda run_id, final_status: closed.append((run_id, final_status)))
-    ...
+
+    def _boom_runner(*, plan_id: int, run_id: int):
+        raise RuntimeError("boom")
+
+    engine = SchedulerEngine(runner_map={"cpa_cleanup": _boom_runner}, worker_spawner=lambda fn, _name: fn())
+    run_id = engine.trigger_plan_now(plan.id)
+
+    assert (run_id, "failed") in statuses
     assert closed == [(run_id, "failed")]
 
 
-def test_scheduler_engine_emits_stopping_and_success_statuses(monkeypatch):
+def test_scheduler_engine_emits_stopping_and_success_statuses(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
     statuses = []
     monkeypatch.setattr(task_manager, "update_run_status", lambda run_id, **payload: statuses.append((run_id, payload["status"])))
-    ...
-    assert ("stopping" in [status for _, status in statuses])
-    assert ("success" in [status for _, status in statuses])
+
+    def _success_runner(*, plan_id: int, run_id: int):
+        engine_module.request_run_stop(run_id, requested_by="tester", reason="manual")
+        with session_module.get_db() as db:
+            crud.finish_scheduled_run(db, run_id=run_id, status="success", summary={"ok": True})
+
+    engine = SchedulerEngine(runner_map={"cpa_cleanup": _success_runner}, worker_spawner=lambda fn, _name: fn())
+    run_id = engine.trigger_plan_now(plan.id)
+
+    assert (run_id, "stopping") in statuses
+    assert (run_id, "success") in statuses
 
 
-def test_scheduler_engine_marks_cancelled_run_as_terminal_stream(monkeypatch):
+def test_scheduler_engine_marks_cancelled_run_as_terminal_stream(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
     closed = []
     monkeypatch.setattr(task_manager, "close_run_stream", lambda run_id, final_status: closed.append(final_status))
-    ...
+
+    def _cancel_runner(*, plan_id: int, run_id: int):
+        engine_module.request_run_stop(run_id, requested_by="tester", reason="manual")
+        raise engine_module.ScheduledRunCancelledError("stop requested")
+
+    engine = SchedulerEngine(runner_map={"cpa_cleanup": _cancel_runner}, worker_spawner=lambda fn, _name: fn())
+    engine.trigger_plan_now(plan.id)
+
     assert closed[-1] == "cancelled"
 ```
 
@@ -486,7 +515,7 @@ def append_run_log(...):
     raw = _format_run_log_line(message, level=normalized_level, logged_at=actual_logged_at)
     persisted = crud.append_scheduled_run_log(..., raw, logged_at=actual_logged_at)
     if persisted:
-        event = task_manager.add_run_log(
+        task_manager.add_run_log(
             run_id,
             build_log_entry(
                 seq=-1,  # 仅占位，真实 seq/stream 必须由 task_manager.add_run_log 覆盖
@@ -498,8 +527,6 @@ def append_run_log(...):
                 source="scheduler",
             ),
         )
-        assert event["payload"]["entry"]["seq"] == event["seq"]
-        assert event["payload"]["entry"]["stream"] == event["stream"]
     return persisted
 
 # src/scheduler/engine.py
@@ -516,6 +543,14 @@ task_manager.close_run_stream(run_id, final_status="failed")
 ...
 task_manager.update_run_status(run_id, status="cancelled", error_message=USER_REQUESTED_STOP_ERROR_MESSAGE)
 task_manager.close_run_stream(run_id, final_status="cancelled")
+
+# src/web/task_manager.py
+def add_run_log(self, run_id: int, entry: dict):
+    event = self.append_stream_event(run_stream_id(run_id), "log_appended", {"entry": dict(entry)})
+    event["payload"]["entry"]["seq"] = event["seq"]
+    event["payload"]["entry"]["stream"] = event["stream"]
+    ...
+    return event
 ```
 
 - [ ] **Step 4: 重新运行 scheduler 聚焦测试，确认 run logger 和终态事件通过**
@@ -835,8 +870,25 @@ git commit -m "feat: migrate registration workbench to shared realtime console"
 # tests/test_realtime_stream_routes.py
 
 def test_snapshot_required_keeps_connection_and_replays_pending_after_snapshot():
-    ...
-    assert payload["kind"] == "snapshot_required"
+    app = create_app()
+    task_uuid = "task-ws-expired-resync"
+    task_manager.update_status(task_uuid, "running")
+    for i in range(STREAM_BUFFER_SIZE + 5):
+        task_manager.add_log(task_uuid, f"line-{i}")
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/ws/task/{task_uuid}?after_seq=1") as ws:
+            payload = ws.receive_json()
+            assert payload["kind"] == "snapshot_required"
+
+            snapshot = client.get(f"/api/realtime-streams/task/{task_uuid}/snapshot").json()
+            snapshot_seq = snapshot["seq"]
+
+            task_manager.add_log(task_uuid, "after-snapshot")
+            follow_up = _receive_json_with_timeout(ws, timeout_s=1.5)
+
+    assert follow_up["kind"] == "log_appended"
+    assert follow_up["payload"]["entry"]["message"] == "after-snapshot"
     assert follow_up["seq"] > snapshot_seq
 
 # tests/test_static_asset_versioning.py
