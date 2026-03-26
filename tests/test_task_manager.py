@@ -15,6 +15,20 @@ class FakeWebSocket:
         self.messages.append(payload)
 
 
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout_s: float = 1.0,
+    interval_s: float = 0.01,
+):
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while asyncio.get_running_loop().time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(interval_s)
+    raise AssertionError("等待异步条件超时")
+
+
 class _ModeFlipDict(dict):
     """测试专用：第一次读取 mode 时返回 replaying，但立刻把自身 mode 切到 active。
 
@@ -84,7 +98,7 @@ async def test_update_status_broadcasts_to_registered_task_websocket():
 
     manager.register_websocket(task_uuid, websocket)
     manager.update_status(task_uuid, "completed", email="tester@example.com")
-    await asyncio.sleep(0.05)
+    await _wait_for_condition(lambda: len(websocket.messages) == 1)
 
     assert manager.get_status(task_uuid)["status"] == "completed"
     assert len(websocket.messages) == 1

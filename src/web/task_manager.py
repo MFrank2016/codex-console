@@ -12,10 +12,9 @@ from typing import Dict, Optional, List, Callable, Any, Literal
 from collections import defaultdict, deque
 
 from ..core.time import utc_now
-from src.web.realtime_streams import (
+from .realtime_streams import (
     STREAM_BUFFER_SIZE,
     LOG_TAIL_SIZE,
-    LOG_ENTRY_RESERVED_FIELDS,
     task_stream_id,
     batch_stream_id,
     run_stream_id,
@@ -64,6 +63,13 @@ _stream_seq: Dict[str, int] = {}
 _stream_events: Dict[str, deque] = {}
 _stream_locks: Dict[str, threading.Lock] = {}
 
+# 锁顺序约定（Task 1 realtime streams）：
+# 1. 资源锁：_log_lock / _batch_lock / _run_lock
+# 2. stream_lock：仅通过 append_stream_event() 获取
+#
+# add_log/add_batch_log/add_run_log 都遵循“资源锁 -> stream_lock”顺序。
+# 后续维护中禁止引入反向顺序（stream_lock -> 任意资源锁），避免死锁风险。
+
 
 def _get_stream_lock(stream_id: str) -> threading.Lock:
     if stream_id not in _stream_locks:
@@ -73,18 +79,21 @@ def _get_stream_lock(stream_id: str) -> threading.Lock:
     return _stream_locks[stream_id]
 
 
+def _copy_logs_tail(logs: List[dict], tail_size: int) -> List[dict]:
+    selected = logs if tail_size >= len(logs) else logs[-tail_size:]
+    return copy.deepcopy(selected)
+
+
 def _get_logs_tail(task_uuid: str, tail_size: int) -> List[dict]:
     with _get_log_lock(task_uuid):
         logs = _log_queues.get(task_uuid, [])
-        selected = logs if tail_size >= len(logs) else logs[-tail_size:]
-        return copy.deepcopy(selected)
+        return _copy_logs_tail(logs, tail_size)
 
 
 def _get_batch_logs_tail(batch_id: str, tail_size: int) -> List[dict]:
     with _get_batch_lock(batch_id):
         logs = _batch_logs.get(batch_id, [])
-        selected = logs if tail_size >= len(logs) else logs[-tail_size:]
-        return copy.deepcopy(selected)
+        return _copy_logs_tail(logs, tail_size)
 
 
 def _get_run_lock(run_id: int) -> threading.Lock:
@@ -95,11 +104,11 @@ def _get_run_lock(run_id: int) -> threading.Lock:
     return _run_locks[run_id]
 
 
-def _get_run_logs_tail(run_id: int, tail_size: int) -> List[dict]:
+def _get_run_logs_tail(run_id: int, tail_size: int, *, lock_held: bool = False) -> List[dict]:
+    if lock_held:
+        return _copy_logs_tail(_run_logs.get(run_id, []), tail_size)
     with _get_run_lock(run_id):
-        logs = _run_logs.get(run_id, [])
-        selected = logs if tail_size >= len(logs) else logs[-tail_size:]
-        return copy.deepcopy(selected)
+        return _copy_logs_tail(_run_logs.get(run_id, []), tail_size)
 
 
 
@@ -203,9 +212,7 @@ class TaskManager:
         with _get_run_lock(run_id):
             run_snapshot = copy.deepcopy(_run_status.get(run_id) or {})
             run_progress = copy.deepcopy(_run_progress.get(run_id))
-            logs = _run_logs.get(run_id, [])
-            selected = logs if LOG_TAIL_SIZE >= len(logs) else logs[-LOG_TAIL_SIZE:]
-            logs_tail = copy.deepcopy(selected)
+            logs_tail = _get_run_logs_tail(run_id, LOG_TAIL_SIZE, lock_held=True)
         lock = _get_stream_lock(stream_id)
         with lock:
             seq = _stream_seq.get(stream_id, 0)
@@ -617,7 +624,6 @@ class TaskManager:
         """追加 run 结构化日志，并写入 stream 事件。"""
         stream_id = run_stream_id(run_id)
         message = str(log_entry.get("message", ""))
-        extra = {k: v for k, v in log_entry.items() if k not in LOG_ENTRY_RESERVED_FIELDS}
 
         with _get_run_lock(run_id):
             entry = build_log_entry(
@@ -628,7 +634,7 @@ class TaskManager:
                 level=log_entry.get("level", "INFO"),
                 raw=log_entry.get("raw"),
                 source=log_entry.get("source", "run"),
-                extra=extra,
+                extra=copy.deepcopy(log_entry),
             )
             event = self.append_stream_event(
                 stream_id,
