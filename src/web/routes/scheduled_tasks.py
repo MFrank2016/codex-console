@@ -222,14 +222,18 @@ async def stop_scheduled_run(run_id: int):
         if not _is_run_running(run):
             raise HTTPException(status_code=409, detail="运行已结束，不能停止")
 
+        requested_at = utc_now_naive()
         updated = crud.mark_scheduled_run_stop_requested(
             db,
             run_id,
             requested_by="manual",
             reason="user_requested",
+            requested_at=requested_at,
         )
         if updated is None:
             raise HTTPException(status_code=409, detail="运行已结束，不能停止")
+        if updated.stop_requested_at != requested_at:
+            raise HTTPException(status_code=409, detail="运行已请求停止")
 
         return ScheduledRunStopResponse(success=True, run_id=run.id, status="stopping")
 
