@@ -460,6 +460,16 @@ def test_run_logger_append_log_rejects_unknown_level(temp_db):
         run_logger.append_run_log(run_id, "unknown", level="DEBUG", logged_at=logged_at)
 
 
+def test_run_logger_append_log_rejects_non_string_level(temp_db):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    with session_module.get_db() as db:
+        run = crud.create_scheduled_run(db, plan_id=plan.id, trigger_source="manual", status="running")
+        run_id = run.id
+
+    with pytest.raises(ValueError):
+        run_logger.append_run_log(run_id, "invalid", level=None)
+
+
 def test_scheduler_engine_skipped_run_updates_plan_summary_fields(temp_db):
     plan = _create_plan(temp_db, task_type="cpa_cleanup", due=True)
     engine = SchedulerEngine()

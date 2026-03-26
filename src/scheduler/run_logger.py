@@ -14,6 +14,8 @@ ALLOWED_LOG_LEVELS = {"INFO", "WARN", "ERROR"}
 
 
 def _normalize_run_log_level(level: str) -> str:
+    if not isinstance(level, str):
+        raise ValueError(f"Unsupported run log level: {level}")
     normalized = level.strip().upper()
     if normalized not in ALLOWED_LOG_LEVELS:
         raise ValueError(f"Unsupported run log level: {level}")
