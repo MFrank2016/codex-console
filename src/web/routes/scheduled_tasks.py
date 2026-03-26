@@ -417,7 +417,11 @@ async def run_scheduled_plan(plan_id: int, request: Request):
     try:
         run_id = scheduler_engine.trigger_plan_now(plan_id)
     except SchedulerPlanConflictError as exc:
-        raise HTTPException(status_code=409, detail="计划正在运行")
+        reason = str(exc).strip().lower()
+        detail = "计划正在运行"
+        if reason == "cpa already busy":
+            detail = "关联 CPA 服务正在执行其他计划"
+        raise HTTPException(status_code=409, detail=detail)
     except SchedulerDispatchError as exc:
         raise HTTPException(status_code=500, detail=str(exc) or "计划触发失败") from exc
 

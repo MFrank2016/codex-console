@@ -9,7 +9,7 @@ from src.database import crud
 from src.database import session as session_module
 from src.database.models import Base
 from src.database.session import DatabaseSessionManager
-from src.scheduler.engine import SchedulerDispatchError, SchedulerEngine
+from src.scheduler.engine import SchedulerDispatchError, SchedulerEngine, SchedulerPlanConflictError
 from src.web.routes import accounts as accounts_routes
 from src.web.routes import scheduled_tasks as scheduled_routes
 from src.web.routes import api_router
@@ -264,6 +264,22 @@ def test_manual_run_route_returns_500_when_dispatch_fails(client, seeded_schedul
     response = client.post(f"/api/scheduled-plans/{seeded_scheduled_data['plan'].id}/run")
 
     assert response.status_code == 500
+
+
+def test_manual_run_route_returns_cpa_busy_message_when_conflict_is_from_shared_cpa(
+    client,
+    seeded_scheduled_data,
+    monkeypatch,
+):
+    def _raise_cpa_busy(_plan_id: int):
+        raise SchedulerPlanConflictError("cpa already busy")
+
+    monkeypatch.setattr(client.app.state.scheduler_engine, "trigger_plan_now", _raise_cpa_busy)
+
+    response = client.post(f"/api/scheduled-plans/{seeded_scheduled_data['plan'].id}/run")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "关联 CPA 服务正在执行其他计划"
 
 
 def test_update_scheduled_plan_route_persists_changes_and_recomputes_next_run_at(
