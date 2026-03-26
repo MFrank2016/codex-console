@@ -580,11 +580,11 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
    - snapshot 拉取完成后，以 `snapshot.seq` 为新的 authoritative cursor；
    - 再将 `resync_pending_queue` 中 `seq > snapshot.seq` 的事件按序重放并清空队列。
    - 这样可以避免“拉 snapshot 的同时又收到了新日志”导致的覆盖或丢失。
-6. 心跳仍使用现有控制消息：
+7. 心跳仍使用现有控制消息：
    - 客户端发 `{"type":"ping"}`
    - 服务端回 `{"type":"pong"}`
-7. 取消类动作仍复用现有控制消息，不额外引入新的订阅协议。
-8. 终态时广播 `stream_closed`，客户端据此停止重连与等待状态。
+8. 取消类动作仍复用现有控制消息，不额外引入新的订阅协议。
+9. 终态时广播 `stream_closed`，客户端据此停止重连与等待状态。
 
 ## 7.7 snapshot 边界
 
