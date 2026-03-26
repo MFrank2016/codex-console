@@ -158,6 +158,19 @@ def test_registration_realtime_store_appends_log_when_window_is_full():
     assert result["last_rendered_contains_after_full"] is True
 
 
+def test_app_js_task_realtime_fallback_prefers_stream_events_over_legacy_logs_endpoint():
+    script = Path("static/js/app.js").read_text(encoding="utf-8")
+
+    # 方案 C：主链路的轮询兜底应基于 streams/events，而不是旧的 /tasks/{uuid}/logs
+    assert "/registration/streams/task/${taskUuid}/events?after_seq=${afterSeq}" in script
+    assert "startTaskStreamPolling(" in script
+
+    # 旧 logs 轮询仅保留为极小兼容兜底（store 未建立且收到 snapshot_required）
+    assert "function startLogPolling(" in script
+    assert script.count("startLogPolling(taskUuid);") == 1
+    assert "startLogPolling(currentTask.task_uuid)" not in script
+
+
 def test_execution_and_configuration_templates_extend_workspace_shell():
     for path in [
         "templates/accounts.html",

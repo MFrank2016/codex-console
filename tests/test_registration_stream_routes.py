@@ -319,3 +319,15 @@ def test_batch_websocket_cancel_emits_stream_event_confirmation():
     assert event["stream"] == f"batch:{batch_id}"
     assert event["kind"] == "batch_progress_updated"
     assert event["payload"]["status"] == "cancelling"
+
+
+def test_task_events_route_returns_live_log_before_database_flush(monkeypatch):
+    task_manager.update_status("task-live-fallback", "running")
+    task_manager.add_log("task-live-fallback", "live-line")
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/registration/streams/task/task-live-fallback/events?after_seq=0")
+
+    assert response.status_code == 200
+    assert response.json()["events"][-1]["payload"]["message"] == "live-line"

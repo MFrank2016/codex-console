@@ -788,7 +788,12 @@ async def get_task(task_uuid: str):
 
 @router.get("/tasks/{task_uuid}/logs")
 async def get_task_logs(task_uuid: str):
-    """获取任务日志"""
+    """获取任务日志（旧接口）
+
+    说明：
+    - 注册工作台（registration-workbench）主实时链路已切换至 /registration/streams/*
+    - 该接口仅为兼容旧页面/脚本保留，不应作为实时主来源
+    """
     with get_db() as db:
         task = crud.get_registration_task(db, task_uuid)
         if not task:

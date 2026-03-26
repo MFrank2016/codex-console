@@ -7,6 +7,7 @@
 let currentTask = null;
 let currentBatch = null;
 let logPollingInterval = null;
+let streamPollingInterval = null;
 let batchPollingInterval = null;
 let accountsPollingInterval = null;
 let isBatchMode = false;
@@ -688,6 +689,7 @@ function connectWebSocket(taskUuid) {
             emitConnectionStateChanged('connected');
             // 停止轮询（如果有）
             stopLogPolling();
+            stopTaskStreamPolling();
             // 开始心跳
             startWebSocketHeartbeat();
         };
@@ -704,6 +706,13 @@ function connectWebSocket(taskUuid) {
             // 新协议：stream envelope
             if (data && typeof data.kind === 'string' && typeof data.stream === 'string') {
                 if (data.kind === 'snapshot_required') {
+                    // 兼容兜底：如果 realtime store 未加载（registration_stream.js 缺失/异常），
+                    // 则退回旧的 logs 轮询，以保证页面仍有基本反馈。
+                    // 注意：这条链路不作为注册工作台的主实时来源。
+                    if (typeof window?.registrationStream?.reduce !== 'function') {
+                        startLogPolling(taskUuid);
+                        return;
+                    }
                     try {
                         const snapshot = await api.get(`/registration/streams/task/${taskUuid}/snapshot`);
                         reduceRegistrationStream(snapshot);
@@ -792,7 +801,7 @@ function connectWebSocket(taskUuid) {
                 console.log('切换到轮询模式');
                 useWebSocket = false;
                 emitConnectionStateChanged('polling');
-                startLogPolling(currentTask.task_uuid);
+                startTaskStreamPolling(currentTask.task_uuid);
             } else if (!shouldPoll) {
                 emitConnectionStateChanged('disconnected');
             }
@@ -804,14 +813,14 @@ function connectWebSocket(taskUuid) {
             useWebSocket = false;
             stopWebSocketHeartbeat();
             emitConnectionStateChanged('polling');
-            startLogPolling(taskUuid);
+            startTaskStreamPolling(taskUuid);
         };
 
     } catch (error) {
         console.error('WebSocket 连接失败:', error);
         useWebSocket = false;
         emitConnectionStateChanged('polling');
-        startLogPolling(taskUuid);
+        startTaskStreamPolling(taskUuid);
     }
 }
 
@@ -846,6 +855,66 @@ function stopWebSocketHeartbeat() {
 function cancelViaWebSocket() {
     if (webSocket && webSocket.readyState === WebSocket.OPEN) {
         webSocket.send(JSON.stringify({ type: 'cancel' }));
+    }
+}
+
+// ============== task stream polling fallback（方案 C） ==============
+
+function startTaskStreamPolling(taskUuid) {
+    stopTaskStreamPolling();
+    emitConnectionStateChanged('polling');
+
+    // 先补一份 snapshot，保证轮询期间 UI 有完整初始态
+    (async () => {
+        try {
+            const snapshot = await api.get(`/registration/streams/task/${taskUuid}/snapshot`);
+            reduceRegistrationStream(snapshot);
+        } catch (error) {
+            console.error('轮询模式获取 task snapshot 失败:', error);
+        }
+    })();
+
+    streamPollingInterval = setInterval(async () => {
+        try {
+            const streamId = `task:${taskUuid}`;
+            const afterSeq = registrationStreamState?.cursors?.[streamId] || 0;
+            const data = await api.get(`/registration/streams/task/${taskUuid}/events?after_seq=${afterSeq}`);
+            const events = Array.isArray(data?.events) ? data.events : [];
+            for (const event of events) {
+                reduceRegistrationStream(event);
+            }
+
+            const status = registrationStreamState?.task?.status;
+            if (status && ['completed', 'failed', 'cancelled', 'cancelling'].includes(status)) {
+                taskFinalStatus = status;
+                taskCompleted = true;
+                stopTaskStreamPolling();
+                resetButtons();
+
+                if (!toastShown) {
+                    toastShown = true;
+                    if (status === 'completed') {
+                        addLog('success', '[成功] 注册成功！');
+                        toast.success('注册成功！');
+                        loadRecentAccounts();
+                    } else if (status === 'failed') {
+                        addLog('error', '[错误] 注册失败');
+                        toast.error('注册失败');
+                    } else if (status === 'cancelled' || status === 'cancelling') {
+                        addLog('warning', '[警告] 任务已取消');
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('轮询 task stream 失败:', error);
+        }
+    }, 1000);
+}
+
+function stopTaskStreamPolling() {
+    if (streamPollingInterval) {
+        clearInterval(streamPollingInterval);
+        streamPollingInterval = null;
     }
 }
 
@@ -945,6 +1014,7 @@ async function handleCancelTask() {
                 addLog('warning', '[警告] 任务已取消');
                 toast.info('任务已取消');
                 stopLogPolling();
+                stopTaskStreamPolling();
                 resetButtons();
             }
         }
@@ -961,6 +1031,8 @@ async function handleCancelTask() {
         elements.cancelBtn.disabled = false;
     }
 }
+
+// ============== Legacy fallback：旧日志轮询（不作为工作台主实时来源） ==============
 
 // 开始轮询日志
 function startLogPolling(taskUuid) {

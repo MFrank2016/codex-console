@@ -24,6 +24,10 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
     - 服务端发送: {"stream": "task:xxx", "kind": "snapshot_required", "payload": {"reason": "after_seq_expired"}}
     - 客户端发送: {"type": "ping"} - 心跳
     - 客户端发送: {"type": "cancel"} - 取消任务
+
+    注意：
+    - UI 主链路以 stream envelope 为准（/registration/streams/* + reducer/store）
+    - 当返回 snapshot_required 时，客户端应拉取 snapshot，但连接保持，后续 live event 继续推送
     """
     await websocket.accept()
 
