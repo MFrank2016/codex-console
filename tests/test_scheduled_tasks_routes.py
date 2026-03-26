@@ -10,7 +10,9 @@ from src.database import crud
 from src.database import session as session_module
 from src.database.models import Base
 from src.database.session import DatabaseSessionManager
+from src.scheduler import run_logger
 from src.scheduler.engine import SchedulerDispatchError, SchedulerEngine, SchedulerPlanConflictError
+from src.web.task_manager import reset_state_for_tests
 from src.web.routes import accounts as accounts_routes
 from src.web.routes import scheduled_tasks as scheduled_routes
 from src.web.routes import api_router
@@ -29,6 +31,13 @@ def temp_db(tmp_path, monkeypatch):
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture(autouse=True)
+def clean_realtime_state():
+    reset_state_for_tests()
+    yield
+    reset_state_for_tests()
 
 
 @pytest.fixture
@@ -254,6 +263,58 @@ def test_manual_run_route_succeeds_when_plan_is_not_running(client, seeded_sched
         assert runs[0].summary == {"triggered": True}
         if "run_id" in body:
             assert runs[0].id == body["run_id"]
+
+
+def test_manual_run_route_exposes_realtime_run_stream_events(client, seeded_scheduled_data):
+    plan_id = seeded_scheduled_data["plan"].id
+    logged_at = datetime(2026, 3, 26, 10, 0, 0, 123000)
+
+    def _runner(*, run_id: int, **kwargs):
+        run_logger.append_run_log(
+            run_id,
+            "manual trigger started",
+            level="INFO",
+            logged_at=logged_at,
+        )
+        with session_module.get_db() as db:
+            crud.finish_scheduled_run(db, run_id=run_id, status="success", summary={"triggered": True})
+
+    client.app.state.scheduler_engine._runner_map["cpa_cleanup"] = _runner
+
+    response = client.post(f"/api/scheduled-plans/{plan_id}/run")
+
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+
+    snapshot = client.get(f"/api/realtime-streams/run/{run_id}/snapshot")
+    events = client.get(f"/api/realtime-streams/run/{run_id}/events", params={"after_seq": 0})
+
+    assert snapshot.status_code == 200
+    snapshot_payload = snapshot.json()
+    assert snapshot_payload["stream"] == f"run:{run_id}"
+    assert snapshot_payload["seq"] == 4
+    assert snapshot_payload["payload"]["run"]["status"] == "success"
+    assert snapshot_payload["payload"]["run"]["stream_closed"] is True
+    assert snapshot_payload["payload"]["run"]["stream_final_status"] == "success"
+    assert snapshot_payload["payload"]["logs_tail"][-1]["message"] == "manual trigger started"
+    assert snapshot_payload["payload"]["logs_tail"][-1]["level"] == "INFO"
+
+    assert events.status_code == 200
+    event_payload = events.json()
+    assert event_payload["stream"] == f"run:{run_id}"
+    assert [event["kind"] for event in event_payload["events"]] == [
+        "run_status_changed",
+        "log_appended",
+        "run_status_changed",
+        "stream_closed",
+    ]
+    assert [event["seq"] for event in event_payload["events"]] == [1, 2, 3, 4]
+    assert event_payload["events"][0]["payload"] == {"run_id": run_id, "status": "running"}
+    assert event_payload["events"][1]["payload"]["entry"]["message"] == "manual trigger started"
+    assert event_payload["events"][1]["payload"]["entry"]["level"] == "INFO"
+    assert event_payload["events"][1]["payload"]["entry"]["stream"] == f"run:{run_id}"
+    assert event_payload["events"][1]["payload"]["entry"]["seq"] == 2
+    assert event_payload["events"][-1]["payload"] == {"run_id": run_id, "final_status": "success"}
 
 
 def test_manual_run_route_returns_500_when_dispatch_fails(client, seeded_scheduled_data, monkeypatch):
@@ -543,6 +604,41 @@ def test_stop_scheduled_run_route_marks_running_run(client, route_db, seeded_sch
     assert persisted.stop_requested_at is not None
     assert persisted.stop_requested_by == "manual"
     assert persisted.stop_reason == "user_requested"
+
+
+def test_stop_scheduled_run_route_emits_realtime_stopping_event(client, seeded_scheduled_data):
+    run_id = seeded_scheduled_data["latest_run"].id
+
+    before_snapshot = client.get(f"/api/realtime-streams/run/{run_id}/snapshot")
+    assert before_snapshot.status_code == 404
+
+    response = client.post(f"/api/scheduled-runs/{run_id}/stop")
+
+    assert response.status_code == 200
+
+    snapshot = client.get(f"/api/realtime-streams/run/{run_id}/snapshot")
+    events = client.get(f"/api/realtime-streams/run/{run_id}/events", params={"after_seq": 0})
+
+    assert snapshot.status_code == 200
+    snapshot_payload = snapshot.json()
+    assert snapshot_payload["stream"] == f"run:{run_id}"
+    assert snapshot_payload["seq"] == 1
+    assert snapshot_payload["payload"]["run"]["status"] == "stopping"
+    assert snapshot_payload["payload"]["run"].get("stream_closed") is None
+    assert snapshot_payload["payload"]["logs_tail"] == []
+
+    assert events.status_code == 200
+    event_payload = events.json()
+    assert event_payload["stream"] == f"run:{run_id}"
+    assert event_payload["events"] == [
+        {
+            "seq": 1,
+            "stream": f"run:{run_id}",
+            "kind": "run_status_changed",
+            "timestamp": event_payload["events"][0]["timestamp"],
+            "payload": {"run_id": run_id, "status": "stopping"},
+        }
+    ]
 
 
 def test_stop_scheduled_run_route_rejects_when_stop_already_requested(client, seeded_scheduled_data):

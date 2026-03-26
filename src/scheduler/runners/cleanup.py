@@ -80,7 +80,7 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             probe_workers = _resolve_worker_count(plan.config or {}, "probe_workers", default=_DEFAULT_PROBE_WORKERS)
             delete_workers = _resolve_worker_count(plan.config or {}, "delete_workers", default=_DEFAULT_DELETE_WORKERS)
 
-        append_run_log(run_id, f"cleanup runner start (plan_id={plan_id})")
+        append_run_log(run_id, f"cleanup runner start (plan_id={plan_id})", level="INFO")
         append_run_log(
             run_id,
             (
@@ -89,13 +89,14 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                 f"max_cleanup_count={max_cleanup_count or 'unlimited'}, "
                 f"probe_workers={probe_workers}, delete_workers={delete_workers})"
             ),
+            level="INFO",
         )
 
         next_probe_progress = _PROGRESS_EVERY
 
         def _on_probe_progress(message: str) -> None:
             nonlocal next_probe_progress
-            append_run_log(run_id, message)
+            append_run_log(run_id, message, level="INFO")
 
             candidates_match = _PROBE_CANDIDATES_PATTERN.search(message)
             if candidates_match:
@@ -111,6 +112,7 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     append_run_log(
                         run_id,
                         f"cleanup probe progress (scanned={next_probe_progress}, invalid={invalid})",
+                        level="INFO",
                     )
                     next_probe_progress += _PROGRESS_EVERY
 
@@ -155,6 +157,7 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                             "cleanup expire progress "
                             f"(processed={local_processed}, local_expired={summary['local_marked_expired']})"
                         ),
+                        level="INFO",
                     )
                     email_batch = []
 
@@ -192,6 +195,7 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                             f"(processed={remote_processed}, remote_deleted={summary['remote_deleted']}, "
                             f"remote_delete_failed={summary['remote_delete_failed']})"
                         ),
+                        level="INFO",
                     )
 
         raise_if_stop_requested(run_id, stage="cleanup delete")
@@ -201,6 +205,7 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             append_run_log(
                 run_id,
                 f"cleanup remaining valid count (remaining={summary['remaining_valid_count']})",
+                level="INFO",
             )
         except Exception as exc:
             append_run_log(
@@ -217,6 +222,7 @@ def run_cleanup_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                 f"local_expired={summary['local_marked_expired']}, "
                 f"remote_deleted={summary['remote_deleted']})"
             ),
+            level="INFO",
         )
         finalize_run(run_id, status="success", summary=summary)
         return summary

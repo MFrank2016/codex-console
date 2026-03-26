@@ -86,6 +86,7 @@ def _emit_refill_progress_if_needed(
             f"uploaded_failed={summary['uploaded_failed']}, "
             f"refill_target={refill_target})"
         ),
+        level="INFO",
     )
 
 
@@ -131,7 +132,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             }
             cpa_service_id = plan.cpa_service_id
 
-        append_run_log(run_id, f"refill runner start (plan_id={plan_id})")
+        append_run_log(run_id, f"refill runner start (plan_id={plan_id})", level="INFO")
 
         current_valid_count = count_valid_accounts(service_payload)
         refill_target = _resolve_refill_target(
@@ -150,6 +151,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                 "refill target resolved "
                 f"(current={summary['current_valid_count']}, target={target_valid_count}, refill_target={refill_target})"
             ),
+            level="INFO",
         )
 
         consecutive_failures = 0
@@ -199,6 +201,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                         append_run_log(
                             run_id,
                             f"uploaded account to bound cpa (account_id={job.account_id})",
+                            level="INFO",
                         )
                     else:
                         summary["uploaded_failed"] += 1
@@ -243,6 +246,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                 f"registered_failed={summary['registered_failed']}, "
                 f"auto_disabled={summary['auto_disabled']})"
             ),
+            level="INFO",
         )
         target_met = summary["uploaded_success"] >= refill_target
         run_status = "success" if target_met else "failed"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -25,10 +26,12 @@ from ...scheduler.schemas import (
 )
 from ...scheduler.service import validate_plan_payload
 from ...scheduler.time_utils import SCHEDULER_TZ, compute_next_run_at
+from ..task_manager import task_manager
 
 
 router = APIRouter()
 runs_router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class ScheduledRunListResponse(BaseModel):
@@ -235,7 +238,12 @@ async def stop_scheduled_run(run_id: int):
         if updated.stop_requested_at != requested_at:
             raise HTTPException(status_code=409, detail="运行已请求停止")
 
-        return ScheduledRunStopResponse(success=True, run_id=run.id, status="stopping")
+    try:
+        task_manager.update_run_status(run_id, status="stopping")
+    except Exception:
+        logger.exception("failed to emit realtime stopping status (run_id=%s)", run_id)
+
+    return ScheduledRunStopResponse(success=True, run_id=run.id, status="stopping")
 
 
 @router.post("", response_model=ScheduledPlanResponse)

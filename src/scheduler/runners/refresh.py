@@ -69,8 +69,9 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             (
                 "refresh runner start "
                 f"(plan_id={plan_id}, eligible={summary['eligible_accounts']}, "
-                f"refresh_after_days={refresh_after_days})"
+                f"refresh_after_days={refresh_after_days}, max_refresh_count={max_refresh_count})"
             ),
+            level="INFO",
         )
 
         for account_id in due_account_ids:
@@ -152,6 +153,7 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     append_run_log(
                         run_id,
                         f"refresh/upload succeeded (account_id={account_id}, subscription={subscription})",
+                        level="INFO",
                     )
                 else:
                     account = crud.get_account_by_id(db, account_id)
@@ -180,6 +182,7 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                 f"uploaded_success={summary['uploaded_success']}, "
                 f"uploaded_failed={summary['uploaded_failed']})"
             ),
+            level="INFO",
         )
         finalize_run(run_id, status="success", summary=summary)
         return summary
