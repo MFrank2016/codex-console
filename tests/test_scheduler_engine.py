@@ -229,6 +229,26 @@ def test_scheduler_module_stop_helpers_work_without_engine_instance(temp_db):
     assert engine_module.is_run_stop_requested(run.id) is True
 
 
+def test_scheduler_engine_request_run_stop_emits_stopping_only_once(temp_db):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    engine = SchedulerEngine(
+        runner_map={"cpa_cleanup": lambda **kwargs: None},
+        worker_spawner=lambda _fn, _name: None,
+    )
+
+    run_id = engine.trigger_plan_now(plan.id)
+
+    assert engine.request_run_stop(run_id, requested_by="tester", reason="first") is True
+    assert engine.request_run_stop(run_id, requested_by="tester", reason="second") is True
+
+    status_events = [
+        event["payload"]["status"]
+        for event in _get_run_stream_events(run_id)
+        if event["kind"] == "run_status_changed"
+    ]
+    assert status_events == ["running", "stopping"]
+
+
 def test_scheduler_engine_request_run_stop_rejects_finished_or_missing_runs(temp_db):
     plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
     with session_module.get_db() as db:

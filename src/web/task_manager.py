@@ -731,11 +731,19 @@ class TaskManager:
                 return
             snapshot["stream_closed"] = True
             snapshot["stream_final_status"] = final_status
-        self.append_stream_event(
+        event = self.append_stream_event(
             run_stream_id(run_id),
             "stream_closed",
             {"run_id": run_id, "final_status": final_status},
         )
+        if self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_run_stream_event(run_id, event),
+                    self._loop,
+                )
+            except Exception as e:
+                logger.warning(f"广播 run stream 关闭事件失败: {e}")
 
     def init_experiment(
         self,

@@ -131,3 +131,15 @@ def test_run_websocket_snapshot_required_connection_keeps_receiving_live_events(
     assert event["stream"] == "run:890"
     assert event["kind"] == "log_appended"
     assert event["payload"]["entry"]["message"] == "after-snapshot-required"
+
+
+def test_run_websocket_receives_live_stream_closed_event(client):
+    task_manager.update_run_status(891, status="running")
+
+    with client.websocket_connect("/api/ws/run/891?after_seq=1") as ws:
+        task_manager.close_run_stream(891, final_status="success")
+        payload = receive_json_with_timeout(ws, timeout_s=1.5)
+
+    assert payload["stream"] == "run:891"
+    assert payload["kind"] == "stream_closed"
+    assert payload["payload"] == {"run_id": 891, "final_status": "success"}

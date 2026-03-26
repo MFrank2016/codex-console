@@ -177,15 +177,19 @@ def request_run_stop(
     requested_by: str | None = None,
     reason: str | None = None,
 ) -> bool:
+    requested_at = utc_now_naive()
     with get_db() as db:
         run = crud.mark_scheduled_run_stop_requested(
             db,
             run_id=run_id,
             requested_by=requested_by,
             reason=reason,
+            requested_at=requested_at,
         )
     if run is None:
         return False
+    if run.stop_requested_at != requested_at:
+        return True
     try:
         payload = _load_run_realtime_status_payload(run_id, status="stopping")
         if payload is None:
