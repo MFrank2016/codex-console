@@ -15,12 +15,17 @@ function safeHref(rawHref) {
   return '#';
 }
 
-function renderMetricCard(label, value, hint = '') {
+function renderMetricCard(label, value, hint = '', tone = '') {
   const hintHtml = hint ? `<p class="dashboard-metric-hint">${escapeHtml(hint)}</p>` : '';
+  const toneKey = String(tone ?? '').trim();
+  const toneClass = toneKey ? ` dashboard-metric-card--${toneKey}` : '';
+  const badgeToneClass = toneKey ? ` dashboard-metric-value-badge--${toneKey}` : '';
   return `
-    <article class="dashboard-metric-card">
+    <article class="dashboard-metric-card${toneClass}">
       <p class="dashboard-metric-label">${escapeHtml(label)}</p>
-      <p class="dashboard-metric-value">${escapeHtml(value)}</p>
+      <p class="dashboard-metric-value">
+        <span class="dashboard-metric-value-badge${badgeToneClass}">${escapeHtml(value)}</span>
+      </p>
       ${hintHtml}
     </article>
   `;
@@ -34,10 +39,10 @@ function renderDashboardHero(summary) {
   const totalTasks = registration.total_tasks ?? registration.total ?? 0;
 
   return [
-    renderMetricCard('注册任务', totalTasks, `运行中 ${registration.running ?? 0}`),
-    renderMetricCard('成功率', successRate, `失败 ${registration.failed ?? 0}`),
-    renderMetricCard('账号', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`),
-    renderMetricCard('定时计划', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`),
+    renderMetricCard('注册任务', totalTasks, `运行中 ${registration.running ?? 0}`, 'registration'),
+    renderMetricCard('成功率', successRate, `失败 ${registration.failed ?? 0}`, 'success-rate'),
+    renderMetricCard('账号', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`, 'accounts'),
+    renderMetricCard('定时计划', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`, 'scheduled'),
   ].join('');
 }
 
@@ -64,12 +69,15 @@ function renderQuickActions(links) {
   }
 
   return normalized
-    .map((link) => `
-      <a class="dashboard-quick-action" href="${escapeHtml(safeHref(link?.href))}">
+    .map((link, index) => {
+      const variant = index === 0 ? 'primary' : 'secondary';
+      return `
+      <a class="dashboard-quick-action dashboard-quick-action--${variant}" href="${escapeHtml(safeHref(link?.href))}">
         <p class="dashboard-quick-action-title">${escapeHtml(link?.label || '未命名动作')}</p>
         <p class="dashboard-quick-action-desc">${escapeHtml(link?.description || '')}</p>
       </a>
-    `)
+    `;
+    })
     .join('');
 }
 

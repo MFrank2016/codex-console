@@ -81,6 +81,14 @@ def test_dashboard_js_harness_renders_modern_hero_metrics_and_activity_feed():
     assert "data:" not in quick_actions_html
 
 
+def test_dashboard_js_harness_renders_metric_tones_and_buttonized_quick_actions():
+    result = run_dashboard_js_scenario("render_dashboard")
+    assert "dashboard-metric-card--registration" in result["metric_html"]
+    assert "dashboard-metric-value-badge--success-rate" in result["metric_html"]
+    assert "dashboard-quick-action--primary" in result["quick_actions_html"]
+    assert "dashboard-quick-action--secondary" in result["quick_actions_html"]
+
+
 def test_dashboard_js_harness_renders_error_state_without_invalid_ul_children():
     result = run_dashboard_js_scenario("render_error")
     assert result["activity_html"].lstrip().startswith('<li class="dashboard-empty">')
@@ -104,7 +112,7 @@ def test_dashboard_js_harness_dom_content_loaded_flow_mounts_all_sections_and_fe
     assert result["fetch_paths"] == ["/api/dashboard/summary"]
     assert "dashboard-metric-card" in result["metric_grid_html"]
     assert 'class="dashboard-activity-item"' in result["activity_html"]
-    assert 'class="dashboard-quick-action"' in result["quick_actions_html"]
+    assert 'class="dashboard-quick-action' in result["quick_actions_html"]
 
 def test_dashboard_summary_api_requires_auth():
     app = create_app()
