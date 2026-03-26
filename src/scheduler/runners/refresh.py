@@ -134,8 +134,8 @@ def run_refresh_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                     )
                     continue
 
-                account.subscription_type = subscription
-                account.subscription_at = utc_now_naive()
+                account.subscription_type = None if subscription == "free" else subscription
+                account.subscription_at = utc_now_naive() if subscription != "free" else None
                 db.commit()
 
                 raise_if_stop_requested(run_id, stage="refresh upload")

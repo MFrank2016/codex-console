@@ -259,6 +259,43 @@ def test_refresh_runner_updates_tokens_subscription_and_cpa_state_on_success(tem
     assert summary["uploaded_success"] == 1
 
 
+def test_refresh_runner_clears_subscription_fields_when_status_is_free(temp_db, monkeypatch):
+    service, plan, run = _create_refresh_plan_and_run(temp_db)
+    account = make_account(
+        temp_db,
+        status="active",
+        primary_cpa_service_id=service.id,
+        registered_days_ago=8,
+        last_refresh=None,
+    )
+    account.subscription_type = "plus"
+    account.subscription_at = utc_now_naive()
+    temp_db.commit()
+
+    monkeypatch.setattr(
+        refresh_runner,
+        "refresh_account_token",
+        lambda *a, **k: SimpleNamespace(
+            success=True,
+            access_token="new-ak",
+            refresh_token="new-rk",
+            expires_at=utc_now_naive() + timedelta(days=10),
+        ),
+    )
+    monkeypatch.setattr(refresh_runner, "check_subscription_status", lambda *a, **k: "free")
+    monkeypatch.setattr(refresh_runner, "upload_account_to_bound_cpa", lambda **_: (True, "ok"))
+
+    summary = run_refresh_plan(plan_id=plan.id, run_id=run.id)
+
+    temp_db.expire_all()
+    refreshed = crud.get_account_by_id(temp_db, account.id)
+    assert refreshed is not None
+    assert refreshed.subscription_type is None
+    assert refreshed.subscription_at is None
+    assert refreshed.cpa_uploaded is True
+    assert summary["uploaded_success"] == 1
+
+
 def test_refresh_runner_marks_run_cancelled_and_logs_user_stop_when_stop_requested_mid_loop(temp_db, monkeypatch):
     service, plan, run = _create_refresh_plan_and_run(temp_db, max_refresh_count=5)
     first = make_account(
