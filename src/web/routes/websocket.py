@@ -8,10 +8,18 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..task_manager import task_manager
-from ..realtime_streams import task_stream_id, batch_stream_id
+from ..realtime_streams import task_stream_id, batch_stream_id, run_stream_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+def _parse_after_seq(websocket: WebSocket) -> int:
+    try:
+        after_seq_raw = websocket.query_params.get("after_seq", "0")
+        return int(after_seq_raw) if after_seq_raw is not None else 0
+    except ValueError:
+        return 0
+
 
 
 @router.websocket("/ws/task/{task_uuid}")
@@ -32,11 +40,7 @@ async def task_websocket(websocket: WebSocket, task_uuid: str):
     await websocket.accept()
 
     stream_id = task_stream_id(task_uuid)
-    try:
-        after_seq_raw = websocket.query_params.get("after_seq", "0")
-        after_seq = int(after_seq_raw) if after_seq_raw is not None else 0
-    except ValueError:
-        after_seq = 0
+    after_seq = _parse_after_seq(websocket)
 
     # 业务事件：走 stream envelope；控制消息：走 {"type": "..."}（ping/pong/cancel）
     # 关键点：先注册为 replaying，replay 期间产生的新事件会进入 pending，避免回放/实时切换丢事件竞态。
@@ -115,11 +119,7 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
     await websocket.accept()
 
     stream_id = batch_stream_id(batch_id)
-    try:
-        after_seq_raw = websocket.query_params.get("after_seq", "0")
-        after_seq = int(after_seq_raw) if after_seq_raw is not None else 0
-    except ValueError:
-        after_seq = 0
+    after_seq = _parse_after_seq(websocket)
 
     task_manager.register_batch_websocket(batch_id, websocket, mode="replaying", after_seq=after_seq)
 
@@ -176,3 +176,63 @@ async def batch_websocket(websocket: WebSocket, batch_id: str):
 
     finally:
         task_manager.unregister_batch_websocket(batch_id, websocket)
+
+
+@router.websocket("/ws/run/{run_id}")
+async def run_websocket(websocket: WebSocket, run_id: int):
+    """
+    run stream WebSocket
+
+    消息格式：
+    - 服务端发送: {"seq": 1, "stream": "run:xxx", "kind": "...", "timestamp": "...", "payload": {...}}
+    - 服务端发送: {"stream": "run:xxx", "kind": "snapshot_required", "payload": {"reason": "after_seq_expired"}}
+    - 客户端发送: {"type": "ping"} - 心跳
+    """
+    await websocket.accept()
+
+    stream_id = run_stream_id(run_id)
+    after_seq = _parse_after_seq(websocket)
+
+    # run stream 复用 task websocket 状态机，ws_key 直接使用 stream_id，保持 replay/active 语义一致
+    task_manager.register_websocket(stream_id, websocket, mode="replaying", after_seq=after_seq)
+
+    if task_manager.is_stream_after_seq_expired(stream_id, after_seq=after_seq):
+        await task_manager.send_task_control_message(stream_id, websocket, {
+            "stream": stream_id,
+            "kind": "snapshot_required",
+            "payload": {"reason": "after_seq_expired"},
+        })
+    else:
+        replay = task_manager.get_stream_events_after(stream_id, after_seq=after_seq)
+        for event in replay:
+            await task_manager.send_task_stream_event(stream_id, websocket, event)
+
+    await task_manager.finish_task_websocket_replay(stream_id, websocket)
+    logger.info(f"WebSocket 连接已建立(run): {run_id}")
+
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_json(),
+                    timeout=30.0,
+                )
+
+                if data.get("type") == "ping":
+                    await task_manager.send_task_control_message(stream_id, websocket, {"type": "pong"})
+
+            except asyncio.TimeoutError:
+                try:
+                    await task_manager.send_task_control_message(stream_id, websocket, {"type": "ping"})
+                except Exception:
+                    logger.info(f"Run WebSocket 心跳检测失败: {run_id}")
+                    break
+
+    except WebSocketDisconnect:
+        logger.info(f"Run WebSocket 断开: {run_id}")
+
+    except Exception as e:
+        logger.error(f"Run WebSocket 错误: {e}")
+
+    finally:
+        task_manager.unregister_websocket(stream_id, websocket)

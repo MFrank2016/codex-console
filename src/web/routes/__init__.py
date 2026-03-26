@@ -19,6 +19,7 @@ from .upload.cpa_services import router as cpa_services_router
 from .upload.sub2api_services import router as sub2api_services_router
 from .upload.tm_services import router as tm_services_router
 from .registration_streams import router as registration_streams_router
+from .realtime_streams import router as realtime_streams_router
 
 api_router = APIRouter()
 
@@ -41,6 +42,11 @@ api_router.include_router(
     registration_streams_router,
     prefix="/registration/streams",
     tags=["registration-streams"],
+)
+api_router.include_router(
+    realtime_streams_router,
+    prefix="/realtime-streams",
+    tags=["realtime-streams"],
 )
 api_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 api_router.include_router(email_services_router, prefix="/email-services", tags=["email-services"])

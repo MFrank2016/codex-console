@@ -28,6 +28,10 @@ def _clear_state_for_tests():
         task_manager_module._batch_status,
         task_manager_module._batch_logs,
         task_manager_module._batch_locks,
+        task_manager_module._run_status,
+        task_manager_module._run_progress,
+        task_manager_module._run_logs,
+        task_manager_module._run_locks,
         task_manager_module._stream_seq,
         task_manager_module._stream_events,
         task_manager_module._stream_locks,
@@ -354,3 +358,15 @@ def test_task_events_route_returns_live_log_before_database_flush(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["events"][-1]["payload"]["entry"]["message"] == "live-line"
+
+
+
+def test_registration_stream_alias_routes_delegate_to_realtime_streams():
+    app = create_app()
+    task_manager.update_status("task-alias-1", "running")
+
+    with TestClient(app) as client:
+        response = client.get("/api/registration/streams/task/task-alias-1/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["stream"] == "task:task-alias-1"
