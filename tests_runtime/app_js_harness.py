@@ -432,6 +432,35 @@ async function runScenario() {{
         waterfall_html: getElement('task-step-waterfall').innerHTML,
       }};
     }}
+    case 'single_task_progress_summary': {{
+      exported.reduceRegistrationStream({{
+        seq: 10,
+        stream: 'task:task-single-01',
+        kind: 'snapshot',
+        payload: {{
+          task: {{ task_uuid: 'task-single-01', status: 'running' }},
+          current_step: {{ step_key: 'submit_login_email', status: 'running' }},
+          steps: [
+            {{ step_key: 'create_email', status: 'completed', duration_ms: 100 }},
+            {{ step_key: 'submit_login_email', status: 'running', duration_ms: 200 }},
+          ],
+          task_progress: {{
+            step_index: 2,
+            total_steps: 5,
+            progress_percent: 40,
+            elapsed_ms: 12000,
+          }},
+          logs_tail: [],
+        }},
+      }});
+
+      return {{
+        progress_step_text: getElement('single-progress-step-text').textContent,
+        progress_current_step: getElement('single-progress-current-step').textContent,
+        progress_elapsed_text: getElement('single-progress-elapsed').textContent,
+        progress_bar_width: getElement('single-progress-bar').style.width || '',
+      }};
+    }}
     case 'single_task_snapshot_required_terminal_snapshot_should_finalize': {{
       // 模拟：按钮已进入运行态
       getElement('start-btn').disabled = true;

@@ -378,7 +378,21 @@
                         </div>
                     </div>
 
-                    <div id="task-step-waterfall" class="task-step-waterfall" style="display: none;"></div>
+                    <section class="single-progress-card" id="single-progress-card" style="display: none;">
+                        <div class="single-progress-head">
+                            <span id="single-progress-current-step">-</span>
+                            <span id="single-progress-step-text">第 0 / 0 步</span>
+                        </div>
+                        <div class="single-progress-meta">
+                            <span>整体耗时</span>
+                            <strong id="single-progress-elapsed">00:00</strong>
+                        </div>
+                        <div class="progress-bar-container single-progress-track">
+                            <div id="single-progress-bar" class="progress-bar" style="width: 0%;"></div>
+                        </div>
+                    </section>
+
+                    <div id="task-step-waterfall" class="task-step-waterfall task-step-waterfall-secondary" style="display: none;"></div>
                 </div>
             </div>
         </article>

@@ -114,6 +114,14 @@ def test_app_js_single_task_flow_fetches_task_detail_and_renders_steps():
     assert "running" in result["waterfall_html"]
 
 
+def test_app_js_renders_single_task_progress_summary_instead_of_waterfall_primary_view():
+    result = run_app_js_scenario("single_task_progress_summary")
+    assert result["progress_step_text"] == "第 2 / 5 步"
+    assert result["progress_current_step"] == "submit_login_email"
+    assert result["progress_elapsed_text"] == "00:12"
+    assert result["progress_bar_width"] == "40%"
+
+
 def test_app_js_renders_unlimited_progress_without_domain_stats_until_finished():
     result = run_app_js_scenario("unlimited_progress_running")
     assert result["progress_text"] == "5/∞"

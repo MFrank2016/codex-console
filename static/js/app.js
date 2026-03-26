@@ -110,6 +110,7 @@ function syncRegistrationStreamDom(previous, next, event) {
 
     // 步骤瀑布流：仅在相关事件时刷新
     if (event?.kind === 'snapshot' || event?.kind === 'task_step_updated') {
+        renderSingleTaskProgressSummary(next?.taskProgress, next?.currentStep);
         renderTaskSteps(Array.isArray(next?.steps) ? next.steps : []);
     }
 
@@ -181,6 +182,11 @@ const elements = {
     startBtn: document.getElementById('start-btn'),
     cancelBtn: document.getElementById('cancel-btn'),
     taskStatusRow: document.getElementById('task-status-row'),
+    singleProgressCard: document.getElementById('single-progress-card'),
+    singleProgressCurrentStep: document.getElementById('single-progress-current-step'),
+    singleProgressStepText: document.getElementById('single-progress-step-text'),
+    singleProgressElapsed: document.getElementById('single-progress-elapsed'),
+    singleProgressBar: document.getElementById('single-progress-bar'),
     taskStepWaterfall: document.getElementById('task-step-waterfall'),
     batchProgressSection: document.getElementById('batch-progress-section'),
     consoleLog: document.getElementById('console-log'),
@@ -1211,6 +1217,7 @@ function showTaskStatus(task) {
     elements.taskId.textContent = task.task_uuid.substring(0, 8) + '...';
     elements.taskEmail.textContent = task.email || task.email_address || '-';
     elements.taskService.textContent = task.email_service ? getServiceTypeText(task.email_service) : '-';
+    renderSingleTaskProgressSummary(task.task_progress || registrationStreamState.taskProgress, registrationStreamState.currentStep);
     renderTaskSteps(task.steps || []);
 }
 
@@ -1281,6 +1288,47 @@ function renderTaskSteps(steps) {
     elements.taskStepWaterfall.style.display = 'grid';
 }
 
+function formatElapsedMsToClock(elapsedMs) {
+    const safe = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
+    const seconds = Math.floor(safe / 1000);
+    const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const ss = String(seconds % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+}
+
+function normalizeProgressPercent(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return 0;
+    }
+    return Math.max(0, Math.min(100, numeric));
+}
+
+function renderSingleTaskProgressSummary(taskProgress, currentStep) {
+    if (!elements.singleProgressCard) return;
+
+    if (!taskProgress || typeof taskProgress !== 'object') {
+        elements.singleProgressCard.style.display = 'none';
+        if (elements.singleProgressCurrentStep) elements.singleProgressCurrentStep.textContent = '-';
+        if (elements.singleProgressStepText) elements.singleProgressStepText.textContent = '第 0 / 0 步';
+        if (elements.singleProgressElapsed) elements.singleProgressElapsed.textContent = '00:00';
+        if (elements.singleProgressBar) elements.singleProgressBar.style.width = '0%';
+        return;
+    }
+
+    const stepIndex = Number.isFinite(taskProgress.step_index) ? taskProgress.step_index : 0;
+    const totalSteps = Number.isFinite(taskProgress.total_steps) ? taskProgress.total_steps : 0;
+    const elapsedText = formatElapsedMsToClock(taskProgress.elapsed_ms);
+    const percent = normalizeProgressPercent(taskProgress.progress_percent);
+    const currentStepKey = currentStep?.step_key || taskProgress.step_key || '-';
+
+    elements.singleProgressCard.style.display = 'block';
+    if (elements.singleProgressCurrentStep) elements.singleProgressCurrentStep.textContent = currentStepKey;
+    if (elements.singleProgressStepText) elements.singleProgressStepText.textContent = `第 ${stepIndex} / ${totalSteps} 步`;
+    if (elements.singleProgressElapsed) elements.singleProgressElapsed.textContent = elapsedText;
+    if (elements.singleProgressBar) elements.singleProgressBar.style.width = `${percent}%`;
+}
+
 // 显示批量状态
 function showBatchStatus(batch) {
     const isUnlimited = !!(batch && (batch.is_unlimited || batch.count === 0));
@@ -1288,6 +1336,7 @@ function showBatchStatus(batch) {
     elements.batchProgressSection.style.display = 'block';
     elements.taskStatusRow.style.display = 'none';
     elements.taskStatusBadge.style.display = 'none';
+    renderSingleTaskProgressSummary(null, null);
     renderTaskSteps([]);
     elements.batchProgressText.textContent = isUnlimited ? '0/∞' : `0/${batch.count}`;
     elements.batchProgressPercent.textContent = isUnlimited ? '运行中' : '0%';
