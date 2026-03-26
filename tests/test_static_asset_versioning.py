@@ -60,8 +60,12 @@ def test_registration_workbench_page_uses_versioned_static_assets():
     assert response.status_code == 200
     _assert_versioned_asset(response.text, "/static/css/style.css")
     _assert_versioned_asset(response.text, "/static/css/registration_workbench.css")
+    _assert_versioned_asset(response.text, "/static/css/realtime_log_console.css")
     _assert_versioned_asset(response.text, "/static/js/workspace.js")
     _assert_versioned_asset(response.text, "/static/js/utils.js")
+    _assert_versioned_asset(response.text, "/static/js/realtime_log_store.js")
+    _assert_versioned_asset(response.text, "/static/js/realtime_log_client.js")
+    _assert_versioned_asset(response.text, "/static/js/realtime_log_console.js")
     _assert_versioned_asset(response.text, "/static/js/app.js")
 
 
@@ -101,6 +105,11 @@ def test_workspace_routes_render_after_login_with_page_specific_scripts():
             assert f'data-page-key="{page_key}"' in response.text
             _assert_versioned_asset(response.text, "/static/js/workspace.js")
             _assert_versioned_asset(response.text, script_path)
+            if path == "/scheduled-tasks":
+                _assert_versioned_asset(response.text, "/static/css/realtime_log_console.css")
+                _assert_versioned_asset(response.text, "/static/js/realtime_log_store.js")
+                _assert_versioned_asset(response.text, "/static/js/realtime_log_client.js")
+                _assert_versioned_asset(response.text, "/static/js/realtime_log_console.js")
 
 
 def test_settings_page_keeps_versioned_settings_assets():

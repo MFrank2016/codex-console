@@ -2,6 +2,7 @@
 
 {% block head_extra %}
 <link rel="stylesheet" href="{{ '/static/css/registration_workbench.css?v=' ~ static_version }}">
+<link rel="stylesheet" href="{{ '/static/css/realtime_log_console.css?v=' ~ static_version }}">
 <style>
     .task-status-row {
         display: grid;
@@ -463,6 +464,9 @@
 
 {% block page_scripts %}
 <script src="{{ '/static/js/utils.js?v=' ~ static_version }}"></script>
+<script src="{{ '/static/js/realtime_log_store.js?v=' ~ static_version }}"></script>
+<script src="{{ '/static/js/realtime_log_client.js?v=' ~ static_version }}"></script>
+<script src="{{ '/static/js/realtime_log_console.js?v=' ~ static_version }}"></script>
 <script src="{{ '/static/js/registration_stream.js?v=' ~ static_version }}"></script>
 <script src="{{ '/static/js/app.js?v=' ~ static_version }}"></script>
 {% endblock %}

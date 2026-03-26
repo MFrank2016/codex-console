@@ -1,5 +1,9 @@
 {% extends "_workspace_base.html" %}
 
+{% block head_extra %}
+<link rel="stylesheet" href="{{ '/static/css/realtime_log_console.css?v=' ~ static_version }}">
+{% endblock %}
+
 {% block page_content %}
 <div class="workspace-side-stack">
     <section class="workspace-panel workspace-table-panel"><div class="card">
@@ -294,5 +298,8 @@
 
 {% block page_scripts %}
 <script src="/static/js/utils.js?v={{ static_version }}"></script>
-    <script src="/static/js/scheduled_tasks.js?v={{ static_version }}"></script>
+<script src="/static/js/realtime_log_store.js?v={{ static_version }}"></script>
+<script src="/static/js/realtime_log_client.js?v={{ static_version }}"></script>
+<script src="/static/js/realtime_log_console.js?v={{ static_version }}"></script>
+<script src="/static/js/scheduled_tasks.js?v={{ static_version }}"></script>
 {% endblock %}

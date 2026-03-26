@@ -1,0 +1,99 @@
+:root {
+  --log-console-bg: #f8fafc;
+  --log-console-border: rgba(148, 163, 184, 0.25);
+  --log-console-muted: #475569;
+  --log-info-fg: #0f3d91;
+  --log-warn-fg: #9a5b00;
+  --log-error-fg: #a11d2d;
+}
+
+[data-theme="dark"] {
+  --log-console-bg: #0f172a;
+  --log-console-border: rgba(148, 163, 184, 0.35);
+  --log-console-muted: #cbd5e1;
+  --log-info-fg: #7dd3fc;
+  --log-warn-fg: #fbbf24;
+  --log-error-fg: #fca5a5;
+}
+
+.realtime-log-console-shell {
+  background: var(--log-console-bg);
+  border: 1px solid var(--log-console-border);
+  border-radius: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.realtime-log-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 0.75rem;
+  color: var(--log-console-muted);
+}
+
+.realtime-log-states {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.realtime-log-empty,
+.realtime-log-error {
+  display: none;
+  font-size: 0.75rem;
+}
+
+.realtime-log-empty.is-visible,
+.realtime-log-error.is-visible {
+  display: block;
+}
+
+.realtime-log-lines {
+  display: grid;
+  gap: 4px;
+}
+
+.realtime-log-line {
+  display: grid;
+  grid-template-columns: 72px 56px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.realtime-log-time {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  color: var(--log-console-muted);
+}
+
+.realtime-log-level-badge {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-weight: 700;
+}
+
+.realtime-log-level-info {
+  color: var(--log-info-fg);
+}
+
+.realtime-log-level-warn {
+  color: var(--log-warn-fg);
+}
+
+.realtime-log-level-error {
+  color: var(--log-error-fg);
+}
+
+.realtime-log-message {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.realtime-log-console--nowrap .realtime-log-message {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

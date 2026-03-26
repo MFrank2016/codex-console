@@ -13,6 +13,11 @@
   const hasOwn = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
 
   function reduce(state, event) {
+    const sharedStore = window?.realtimeLogStore;
+    if (sharedStore && typeof sharedStore.createState === 'function' && typeof sharedStore.reduceEvent === 'function') {
+      return sharedStore.reduceEvent(sharedStore.createState(state || {}), event);
+    }
+
     const currentState = state || {};
 
     if (!event || typeof event.kind !== 'string') {
