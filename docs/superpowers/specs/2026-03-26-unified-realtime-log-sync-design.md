@@ -269,7 +269,7 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 6. `run_status_changed`
 7. `run_progress_updated`
 8. `stream_closed`
-9. `snapshot_required`（控制消息）
+9. `snapshot_required`（stream 控制 envelope）
 
 说明：
 
@@ -389,13 +389,47 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 2. 前端控制台渲染只读取 `entry.display_time / entry.level / entry.message / entry.raw`。
 3. `raw` 始终作为复制与兜底展示的唯一原文来源。
 
-## 6.6 seq 与 replay 语义
+## 6.6 消息分类与解析规则
+
+统一 realtime client 按以下顺序解析消息：
+
+1. **stream envelope**
+   - 条件：消息对象同时包含 `kind` 与 `stream` 字段。
+   - 包括：
+     - `snapshot`
+     - `log_appended`
+     - `task_status_changed`
+     - `task_step_updated`
+     - `batch_progress_updated`
+     - `run_status_changed`
+     - `run_progress_updated`
+     - `stream_closed`
+     - `snapshot_required`
+2. **连接控制消息**
+   - 条件：消息对象包含 `type` 字段。
+   - 包括：
+     - `{"type":"ping"}`
+     - `{"type":"pong"}`
+     - `{"type":"cancel"}`（客户端上行）
+3. **未知消息**
+   - 不参与状态更新；
+   - 记录 console warning；
+   - 不得导致连接直接崩溃。
+
+这意味着：
+
+1. `snapshot_required` 虽然承担“控制”作用，但它仍属于 stream envelope，因为它必须带 `stream` 语义并参与当前 stream 的重同步流程。
+2. `ping/pong/cancel` 才属于纯连接级控制消息。
+
+## 6.7 seq 与 replay 语义
 
 1. `seq` 只在单 stream 内递增，不追求全局有序。
 2. 客户端只消费 `seq > lastSeq` 的事件。
 3. 若 `after_seq` 已超出缓冲区可覆盖范围，服务端返回 / 推送 `snapshot_required`。
 4. 客户端收到 `snapshot_required` 后拉取最新 snapshot，并保留连接继续接收后续 live event。
 5. replay 期间产生的新事件进入 pending 队列，等 replay 完成后按 `seq` 顺序 flush，避免丢消息。
+6. `logs_tail` 默认取最近 `10` 条，沿用当前系统窗口大小。
+7. 前端统一控制台默认保留最近 `500` 条日志条目作为 ring buffer，上限策略为“超出后从头部裁剪最旧条目”。
 
 ---
 
@@ -474,6 +508,16 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 
 如调度执行过程中已有清晰的阶段 / 汇总信息，可择机补充 `run_progress_updated`；但该事件不是本轮上线阻塞项。
 
+运行状态枚举以当前系统可感知集合为准，统一按以下取值规划：
+
+1. `running`
+2. `stopping`
+3. `success`
+4. `failed`
+5. `cancelled`
+
+其中 `success / failed / cancelled` 为终态，`stream_closed.final_status` 也必须落在这三个终态集合内。
+
 ## 7.5 HTTP 接口
 
 建议新增统一 realtime stream 路由族：
@@ -489,6 +533,16 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
 
 1. 旧的 `registration/streams/*` 路由先保留，可内部转到新实现。
 2. 旧的 `/scheduled-runs/{run_id}/logs` chunk 接口继续保留，用于加载完整历史日志。
+3. `GET .../events?after_seq=...` 统一返回：
+
+```json
+{
+  "stream": "run:123",
+  "events": [ ... ]
+}
+```
+
+且首轮不增加分页参数，默认返回“缓冲区内所有 `seq > after_seq` 的事件”；真正的数量边界由服务端缓冲区大小控制。
 
 ## 7.6 WebSocket 路由
 
@@ -520,6 +574,12 @@ RegistrationService / BatchService / SchedulerEngine / SchedulerRunners
    - 立刻拉取最新 snapshot；
    - 用 snapshot 重建当前窗口；
    - 保留当前 WebSocket 继续接收后续 live event。
+6. 在客户端进入 `snapshot_required` 重同步期间：
+   - 现有连接继续接收 live event；
+   - 所有新到达且 `seq > currentCursor` 的 stream envelope 先进入 `resync_pending_queue`；
+   - snapshot 拉取完成后，以 `snapshot.seq` 为新的 authoritative cursor；
+   - 再将 `resync_pending_queue` 中 `seq > snapshot.seq` 的事件按序重放并清空队列。
+   - 这样可以避免“拉 snapshot 的同时又收到了新日志”导致的覆盖或丢失。
 6. 心跳仍使用现有控制消息：
    - 客户端发 `{"type":"ping"}`
    - 服务端回 `{"type":"pong"}`
@@ -557,6 +617,7 @@ snapshot 只包含“当前可展示窗口”，不承载全部历史：
 4. 收到 `snapshot_required` 后自动拉 snapshot，并在不关闭现有连接的前提下重建当前视图窗口。
 5. WebSocket 失败时降级到 events HTTP 补偿轮询。
 6. 对外只抛出标准化事件，不直接操作 DOM。
+7. 当处于 `snapshot_required` 重同步阶段时，必须将新到达 live event 暂存到本地重同步队列，待 snapshot 应用后再按 `seq` 合并。
 
 ### 8.1.2 realtime log store
 
@@ -626,6 +687,19 @@ console 根据 store 渲染 DOM
 2. 再拉取 snapshot 获取当前状态与最近尾部窗口。
 3. 然后建立 WebSocket，接收后续增量。
 4. 断线后按 `after_seq` 做 replay 补偿；若游标过期，则重新拉 snapshot 并继续 live。
+
+为避免“chunk 历史无 seq、snapshot/live 有 seq”造成重复，统一采用以下拼接规则：
+
+1. 历史 chunk 日志进入 store 时标记为 `history_entries`，使用本地 `history_key` 标识，不参与 stream cursor 计算。
+2. snapshot 返回的 `logs_tail` 视为“当前尾部 authoritative window”。
+3. 首次打开日志弹窗时，前端将历史日志拆成两段：
+   - `history_prefix`：去除尾部重叠窗口后的历史前缀；
+   - `live_window`：以 snapshot `logs_tail` 为准的尾部窗口。
+4. 重叠判定方式以结构化条目的 `raw + timestamp + level + message` 为比较键，优先从历史尾部向后匹配 snapshot 尾部，删除重叠后再拼接。
+5. 后续 `log_appended` 只追加到 `live_window`，并由 `seq` 去重。
+6. 控制台最终渲染顺序为：`history_prefix + live_window`。
+
+这样即使历史 chunk 与 snapshot 尾部存在重叠，也不会因为两条链路的标识方式不同而造成重复展示。
 
 ## 8.4 日志控制台布局
 
