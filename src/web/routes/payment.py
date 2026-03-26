@@ -149,7 +149,7 @@ def batch_check_subscription(request: BatchCheckSubscriptionRequest):
             try:
                 status = check_subscription_status(account, proxy)
                 account.subscription_type = None if status == "free" else status
-                account.subscription_at = utc_now_naive() if status != "free" else account.subscription_at
+                account.subscription_at = utc_now_naive() if status != "free" else None
                 db.commit()
                 results["success_count"] += 1
                 results["details"].append(

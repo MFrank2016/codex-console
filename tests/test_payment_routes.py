@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
+from src.core.time import utc_now_naive
 from src.database import crud
 from src.database.models import Base
 from src.database.session import DatabaseSessionManager
@@ -133,3 +134,44 @@ def test_batch_check_subscription_reports_missing_account(tmp_path, monkeypatch)
     assert response["details"] == [
         {"id": 999999, "email": None, "success": False, "error": "账号不存在"}
     ]
+
+
+def test_batch_check_subscription_clears_subscription_time_when_result_is_free(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+
+    session = manager.SessionLocal()
+    try:
+        account = crud.create_account(
+            session,
+            email="free-now@example.com",
+            email_service="tempmail",
+        )
+        account_id = account.id
+        account.subscription_type = "plus"
+        account.subscription_at = utc_now_naive()
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr(payment_routes, "resolve_account_ids", lambda *args, **kwargs: [account_id])
+    monkeypatch.setattr(payment_routes, "check_subscription_status", lambda *args, **kwargs: "free")
+
+    response = payment_routes.batch_check_subscription(
+        payment_routes.BatchCheckSubscriptionRequest(
+            ids=[account_id],
+            proxy="http://proxy.local:8000",
+        )
+    )
+
+    assert response["success_count"] == 1
+    assert response["details"][0]["subscription_type"] == "free"
+
+    verify_session = manager.SessionLocal()
+    try:
+        persisted = crud.get_account_by_id(verify_session, account_id)
+        assert persisted is not None
+        assert persisted.subscription_type is None
+        assert persisted.subscription_at is None
+    finally:
+        verify_session.close()
