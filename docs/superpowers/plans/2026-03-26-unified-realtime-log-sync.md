@@ -124,7 +124,18 @@ def test_run_stream_snapshot_uses_structured_log_entries():
     manager = TaskManager()
     run_id = 321
 
-    manager.update_run_status(run_id, status="running", plan_name="cleanup")
+    manager.update_run_status(
+        run_id,
+        status="running",
+        id=run_id,
+        plan_id=12,
+        plan_name="cleanup",
+        task_type="cpa_cleanup",
+        is_running=True,
+        can_stop=True,
+        log_version=4,
+        last_log_at="2026-03-26T10:00:00+08:00",
+    )
     manager.add_run_log(
         run_id,
         {
@@ -142,6 +153,13 @@ def test_run_stream_snapshot_uses_structured_log_entries():
     assert snapshot["kind"] == "snapshot"
     assert isinstance(snapshot["seq"], int)
     assert snapshot["payload"]["run"]["status"] == "running"
+    assert snapshot["payload"]["run"]["id"] == 321
+    assert snapshot["payload"]["run"]["plan_id"] == 12
+    assert snapshot["payload"]["run"]["plan_name"] == "cleanup"
+    assert snapshot["payload"]["run"]["task_type"] == "cpa_cleanup"
+    assert snapshot["payload"]["run"]["is_running"] is True
+    assert snapshot["payload"]["run"]["can_stop"] is True
+    assert snapshot["payload"]["run"]["log_version"] == 4
     assert snapshot["payload"]["logs_tail"][0]["level"] == "INFO"
     assert snapshot["payload"]["logs_tail"][0]["message"] == "cleanup runner start"
 
@@ -161,7 +179,7 @@ def test_run_stream_close_appends_terminal_event():
 - [ ] **Step 2: 运行聚焦测试，确认当前实现缺少 run stream API**
 
 Run: `timeout 60s pytest tests/test_task_manager.py::test_run_stream_snapshot_uses_structured_log_entries tests/test_task_manager.py::test_run_stream_close_appends_terminal_event -q`
-Expected: FAIL，提示 `TaskManager` 不存在 `update_run_status` / `build_run_stream_snapshot` / `close_run_stream`。
+Expected: FAIL，提示 `TaskManager` 不存在 `update_run_status` / `build_run_stream_snapshot` / `close_run_stream`，或 snapshot 缺少 `id/plan_id/is_running/can_stop` 等字段。
 
 - [ ] **Step 3: 在 `realtime_streams.py` 和 `task_manager.py` 实现最小 run contract**
 
@@ -261,6 +279,35 @@ def test_run_realtime_stream_routes_and_websocket_contract(client):
     assert payload["stream"] == "run:777"
 
 
+def test_task_and_batch_realtime_stream_routes_also_use_new_contract(client):
+    task_manager.update_status("task-new-1", "running", email="demo@example.com")
+    task_manager.add_log("task-new-1", "task-line-1")
+    task_manager.init_batch("batch-new-1", total=3)
+    task_manager.update_batch_status("batch-new-1", completed=1, success=1, failed=0)
+    task_manager.add_batch_log("batch-new-1", "batch-line-1")
+
+    task_snapshot = client.get("/api/realtime-streams/task/task-new-1/snapshot")
+    task_events = client.get("/api/realtime-streams/task/task-new-1/events?after_seq=0")
+    batch_snapshot = client.get("/api/realtime-streams/batch/batch-new-1/snapshot")
+    batch_events = client.get("/api/realtime-streams/batch/batch-new-1/events?after_seq=0")
+
+    assert task_snapshot.status_code == 200
+    assert task_snapshot.json()["kind"] == "snapshot"
+    assert task_snapshot.json()["stream"] == "task:task-new-1"
+    assert task_events.json()["events"][-1]["kind"] == "log_appended"
+    assert batch_snapshot.status_code == 200
+    assert batch_snapshot.json()["stream"] == "batch:batch-new-1"
+    assert batch_events.json()["events"][-1]["stream"] == "batch:batch-new-1"
+
+    with client.websocket_connect("/api/ws/task/task-new-1?after_seq=0") as task_ws:
+        task_payload = task_ws.receive_json()
+    with client.websocket_connect("/api/ws/batch/batch-new-1?after_seq=0") as batch_ws:
+        batch_payload = batch_ws.receive_json()
+
+    assert task_payload["stream"] == "task:task-new-1"
+    assert batch_payload["stream"] == "batch:batch-new-1"
+
+
 def test_registration_stream_alias_routes_delegate_to_realtime_streams(client):
     task_manager.update_status("task-alias-1", "running")
     response = client.get("/api/registration/streams/task/task-alias-1/snapshot")
@@ -270,8 +317,8 @@ def test_registration_stream_alias_routes_delegate_to_realtime_streams(client):
 
 - [ ] **Step 2: 运行聚焦路由测试，确认当前缺少 `/api/realtime-streams/*` 和 run WebSocket**
 
-Run: `timeout 60s pytest tests/test_realtime_stream_routes.py::test_run_realtime_stream_routes_and_websocket_contract tests/test_registration_stream_routes.py::test_registration_stream_routes_return_404_for_missing_streams -q`
-Expected: FAIL，`/api/realtime-streams/run/777/snapshot` 返回 404，或 `/api/ws/run/777` 不存在。
+Run: `timeout 60s pytest tests/test_realtime_stream_routes.py::test_run_realtime_stream_routes_and_websocket_contract tests/test_realtime_stream_routes.py::test_task_and_batch_realtime_stream_routes_also_use_new_contract tests/test_registration_stream_routes.py::test_registration_stream_routes_return_404_for_missing_streams -q`
+Expected: FAIL，`/api/realtime-streams/run/777/snapshot` 返回 404，或 `/api/ws/run/777` 不存在，或 `task/batch` 尚未暴露到新 `/api/realtime-streams/*`。
 
 - [ ] **Step 3: 最小实现通用 router、legacy alias 委托和 run websocket replay**
 
@@ -348,12 +395,27 @@ def test_scheduler_engine_marks_stream_closed_on_failed_run(monkeypatch):
     monkeypatch.setattr(task_manager, "close_run_stream", lambda run_id, final_status: closed.append((run_id, final_status)))
     ...
     assert closed == [(run_id, "failed")]
+
+
+def test_scheduler_engine_emits_stopping_and_success_statuses(monkeypatch):
+    statuses = []
+    monkeypatch.setattr(task_manager, "update_run_status", lambda run_id, **payload: statuses.append((run_id, payload["status"])))
+    ...
+    assert ("stopping" in [status for _, status in statuses])
+    assert ("success" in [status for _, status in statuses])
+
+
+def test_scheduler_engine_marks_cancelled_run_as_terminal_stream(monkeypatch):
+    closed = []
+    monkeypatch.setattr(task_manager, "close_run_stream", lambda run_id, final_status: closed.append(final_status))
+    ...
+    assert closed[-1] == "cancelled"
 ```
 
 - [ ] **Step 2: 运行聚焦 scheduler 测试，确认当前不会发 realtime entry / stream_closed**
 
-Run: `timeout 60s pytest tests/test_scheduler_engine.py::test_append_run_log_emits_structured_realtime_entry tests/test_scheduler_engine.py::test_scheduler_engine_marks_stream_closed_on_failed_run -q`
-Expected: FAIL，`task_manager.add_run_log` / `close_run_stream` 未被调用。
+Run: `timeout 60s pytest tests/test_scheduler_engine.py::test_append_run_log_emits_structured_realtime_entry tests/test_scheduler_engine.py::test_scheduler_engine_marks_stream_closed_on_failed_run tests/test_scheduler_engine.py::test_scheduler_engine_emits_stopping_and_success_statuses tests/test_scheduler_engine.py::test_scheduler_engine_marks_cancelled_run_as_terminal_stream -q`
+Expected: FAIL，`task_manager.add_run_log` / `update_run_status` / `close_run_stream` 未被调用，或 `stopping/success/cancelled` 分支未覆盖。
 
 - [ ] **Step 3: 在 logger / engine 中补最小生命周期发射器**
 
@@ -387,8 +449,16 @@ def append_run_log(...):
 
 task_manager.update_run_status(run_id, status="running", plan_name=plan.name, ...)
 ...
+task_manager.update_run_status(run_id, status="stopping", stop_requested_at=requested_at)
+...
+task_manager.update_run_status(run_id, status="success", summary=summary)
+task_manager.close_run_stream(run_id, final_status="success")
+...
 task_manager.update_run_status(run_id, status="failed", error_message=str(exc))
 task_manager.close_run_stream(run_id, final_status="failed")
+...
+task_manager.update_run_status(run_id, status="cancelled", error_message=USER_REQUESTED_STOP_ERROR_MESSAGE)
+task_manager.close_run_stream(run_id, final_status="cancelled")
 ```
 
 - [ ] **Step 4: 重新运行 scheduler 聚焦测试，确认 run logger 和终态事件通过**
@@ -423,6 +493,8 @@ assert result["cursor_after_snapshot"] == 9
 assert result["visible_levels"] == ["INFO", "ERROR"]
 assert result["last_rendered_text"].startswith("10:00:00")
 assert result["theme_error_class"] == "realtime-log-level-error"
+assert result["live_window_size"] == 500
+assert result["resync_pending_replayed_in_order"] is True
 
 # tests/test_static_asset_versioning.py
 _assert_versioned_asset(response.text, "/static/css/realtime_log_console.css")
@@ -494,7 +566,7 @@ window.registrationStream = {
 - [ ] **Step 4: 重新运行 shared asset / harness 测试，确认 shared runtime contract 成立**
 
 Run: `timeout 60s pytest tests/test_static_asset_versioning.py -q`
-Expected: PASS（若 harness 已单列测试，也一并 PASS）。
+Expected: PASS（若 harness 已单列测试，也一并 PASS，并验证 `liveWindow` 只保留最近 500 条以及 `resync_pending_queue` 有序合并）。
 
 - [ ] **Step 5: 提交 Task 4**
 
@@ -520,6 +592,8 @@ assert result["ws_url"] == "ws://localhost/api/ws/run/123?after_seq=0"
 assert result["console_has_shared_class"] is True
 assert result["last_line_level_class"] == "realtime-log-level-error"
 assert result["history_tail_deduped"] is True
+assert result["teardown_closed_ws"] is True
+assert result["teardown_stopped_fallback"] is True
 
 # tests/test_scheduled_tasks_routes.py
 response = client.get("/api/realtime-streams/run/123/snapshot")
@@ -595,6 +669,8 @@ assert result["console_has_shared_class"] is True
 assert result["rendered_log_count"] == 2
 assert result["last_line_level_class"] == "realtime-log-level-info"
 assert result["legacy_direct_append_path_used"] is False
+assert result["teardown_closed_ws"] is True
+assert result["teardown_stopped_fallback"] is True
 
 script = Path("static/js/app.js").read_text(encoding="utf-8")
 assert "window.realtimeLogClient.createStreamClient" in script
