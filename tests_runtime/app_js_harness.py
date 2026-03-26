@@ -7,17 +7,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "static" / "js" / "app.js"
+REALTIME_LOG_STORE_JS = ROOT / "static" / "js" / "realtime_log_store.js"
 REGISTRATION_STREAM_JS = ROOT / "static" / "js" / "registration_stream.js"
 
 
 def run_app_js_scenario(name: str) -> dict:
     app_source = APP_JS.read_text(encoding="utf-8")
+    realtime_log_store_source = REALTIME_LOG_STORE_JS.read_text(encoding="utf-8")
     registration_stream_source = REGISTRATION_STREAM_JS.read_text(encoding="utf-8")
     node_script = rf"""
 const vm = require('vm');
 
 const scenarioName = {json.dumps(name)};
 const appSource = {json.dumps(app_source)};
+const realtimeLogStoreSource = {json.dumps(realtime_log_store_source)};
 const registrationStreamSource = {json.dumps(registration_stream_source)};
 
 const harnessConsole = {{
@@ -368,6 +371,7 @@ context.global = context;
 context.globalThis = context;
 
 vm.createContext(context);
+vm.runInContext(realtimeLogStoreSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
   appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,

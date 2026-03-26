@@ -9,12 +9,14 @@ def test_snapshot_required_resync_contract():
     assert result["last_rendered_text"].startswith("10:00:00")
     assert result["theme_error_class"] == "realtime-log-level-error"
     assert result["live_window_size"] == 500
+    assert result["history_chunk_merged"] is True
     assert result["resync_pending_replayed_in_order"] is True
 
 
 def test_search_and_level_filter_contract():
     result = run_realtime_log_scenario("search_and_level_filter")
     assert result["visible_messages"] == ["proxy fallback failed"]
+    assert result["registration_shim_uses_shared_store"] is True
 
 
 def test_wrap_and_auto_scroll_toggle_contract():
