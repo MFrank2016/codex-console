@@ -44,6 +44,7 @@ def clean_task_manager_globals():
         "_ws_sent_index",
         "_task_status",
         "_task_steps",
+        "_task_progress",
         "_task_cancelled",
         "_batch_status",
         "_batch_logs",
@@ -54,14 +55,18 @@ def clean_task_manager_globals():
     ]
     snapshots = {}
     for name in names:
-        store = getattr(task_manager_module, name)
+        store = getattr(task_manager_module, name, None)
+        if store is None:
+            continue
         snapshots[name] = store.copy()
         store.clear()
 
     yield
 
     for name in names:
-        store = getattr(task_manager_module, name)
+        store = getattr(task_manager_module, name, None)
+        if store is None:
+            continue
         store.clear()
         store.update(snapshots[name])
 
@@ -110,6 +115,57 @@ async def test_task_manager_builds_snapshot_and_incremental_events():
     assert snapshot["payload"]["logs_tail"] == ["[12:00:00] create email"]
     assert [item["seq"] for item in events] == [1, 2, 3]
     assert events[-1]["payload"]["message"] == "[12:00:00] create email"
+
+
+def test_task_stream_snapshot_includes_explicit_progress_contract():
+    manager = TaskManager()
+    task_uuid = "task-progress-snapshot"
+
+    manager.update_status(task_uuid, "running")
+    manager.set_task_steps(
+        task_uuid,
+        [
+            {"step_key": "create_email", "status": "completed"},
+            {"step_key": "submit_login_email", "status": "running"},
+        ],
+        task_progress={
+            "step_index": 2,
+            "total_steps": 5,
+            "progress_percent": 40,
+        },
+    )
+
+    snapshot = manager.build_task_stream_snapshot(task_uuid)
+
+    assert snapshot["payload"]["task_progress"] == {
+        "step_index": 2,
+        "total_steps": 5,
+        "progress_percent": 40,
+    }
+
+
+def test_task_step_updated_event_includes_explicit_progress_contract():
+    manager = TaskManager()
+    task_uuid = "task-progress-event"
+
+    manager.set_task_steps(
+        task_uuid,
+        [
+            {"step_key": "create_email", "status": "completed"},
+            {"step_key": "submit_login_email", "status": "running"},
+        ],
+        task_progress={
+            "step_index": 2,
+            "total_steps": 5,
+            "progress_percent": 40,
+        },
+    )
+
+    events = manager.get_stream_events_after(task_stream_id(task_uuid), after_seq=0)
+
+    assert events[-1]["kind"] == "task_step_updated"
+    assert events[-1]["payload"]["task_progress"]["step_index"] == 2
+    assert events[-1]["payload"]["task_progress"]["total_steps"] == 5
 
 
 @pytest.mark.anyio

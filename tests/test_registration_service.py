@@ -36,6 +36,7 @@ class FakeTaskManager:
     def __init__(self):
         self._task_status = {}
         self._task_steps = {}
+        self._task_progress = {}
         self._task_cancelled = {}
         self._logs = {}
         self._closed_streams = []
@@ -74,9 +75,14 @@ class FakeTaskManager:
 
     def clear_task_steps(self, task_uuid):
         self._task_steps.pop(task_uuid, None)
+        self._task_progress.pop(task_uuid, None)
 
-    def set_task_steps(self, task_uuid, steps):
+    def set_task_steps(self, task_uuid, steps, *, task_progress=None):
         self._task_steps[task_uuid] = list(steps or [])
+        if task_progress is None:
+            self._task_progress.pop(task_uuid, None)
+        else:
+            self._task_progress[task_uuid] = dict(task_progress)
 
     @property
     def executor(self):
@@ -96,12 +102,14 @@ def test_registration_service_emits_step_snapshot_and_closes_stream(db_factory, 
             {
                 "current_step": {"step_key": "create_email", "status": "running"},
                 "steps": [{"step_key": "create_email", "status": "running"}],
+                "task_progress": {"step_index": 1, "total_steps": 2, "progress_percent": 50},
             }
         )
         callback(
             {
                 "current_step": {"step_key": "create_email", "status": "completed"},
                 "steps": [{"step_key": "create_email", "status": "completed"}],
+                "task_progress": {"step_index": 1, "total_steps": 2, "progress_percent": 50},
             }
         )
         return RegistrationJobResult(
@@ -126,6 +134,11 @@ def test_registration_service_emits_step_snapshot_and_closes_stream(db_factory, 
     )
 
     assert task_manager._task_steps["task-step-stream"][-1]["status"] == "completed"
+    assert task_manager._task_progress["task-step-stream"] == {
+        "step_index": 1,
+        "total_steps": 2,
+        "progress_percent": 50,
+    }
     assert task_manager.get_status("task-step-stream")["current_step_key"] == "create_email"
     assert task_manager._closed_streams == [("task-step-stream", "completed")]
 
@@ -146,6 +159,7 @@ def test_registration_service_step_callback_does_not_override_terminal_status(db
             {
                 "current_step": {"step_key": "create_email", "status": "running"},
                 "steps": [{"step_key": "create_email", "status": "running"}],
+                "task_progress": {"step_index": 1, "total_steps": 3, "progress_percent": 33},
             }
         )
         assert task_manager.get_status(kwargs["task_uuid"])["status"] == "failed"
@@ -173,6 +187,11 @@ def test_registration_service_step_callback_does_not_override_terminal_status(db
 
     assert task_manager.get_status("task-terminal-step")["status"] == "failed"
     assert task_manager.get_status("task-terminal-step")["current_step_key"] == "create_email"
+    assert task_manager._task_progress["task-terminal-step"] == {
+        "step_index": 1,
+        "total_steps": 3,
+        "progress_percent": 33,
+    }
 
 
 def test_registration_service_creates_run_records_and_terminal_status(db_factory, temp_db):

@@ -263,6 +263,10 @@ const context = {{
     async get(path) {{
       logs.apiGetPaths.push(path);
 
+      if (scenarioName === 'single_task_log_event_immediate_append' && path === '/registration/tasks/task-single-01') {{
+        return new Promise(() => {{}});
+      }}
+
       if (path === '/registration/batch/batch-unlimited-01') {{
         return {{
           total: 0,
@@ -685,6 +689,51 @@ async function runScenario() {{
         log_count: Array.isArray(state.logs) ? state.logs.length : 0,
         rendered_log_count: logLines.length,
         last_rendered_contains_after_full: lastHtml.includes('after-full'),
+      }};
+    }}
+    case 'single_task_log_event_immediate_append': {{
+      const registrationPromise = exported.handleSingleRegistration({{
+        email_service_type: 'tempmail',
+        pipeline_key: 'codexgen_pipeline',
+      }});
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      getElement('console-log').innerHTML = '';
+
+      const ws = wsInstances[0];
+      if (ws && typeof ws.onmessage === 'function') {{
+        await ws.onmessage({{
+          data: JSON.stringify({{
+            seq: 1,
+            stream: 'task:task-single-01',
+            kind: 'snapshot',
+            payload: {{
+              task: {{ task_uuid: 'task-single-01', status: 'running' }},
+              current_step: {{ step_key: 'create_email', status: 'running' }},
+              steps: [{{ step_key: 'create_email', status: 'running' }}],
+              logs_tail: ['boot-line'],
+            }},
+          }}),
+        }});
+        await ws.onmessage({{
+          data: JSON.stringify({{
+            seq: 2,
+            stream: 'task:task-single-01',
+            kind: 'log_appended',
+            payload: {{ task_uuid: 'task-single-01', message: 'live-line' }},
+          }}),
+        }});
+      }}
+
+      const logLines = getElement('console-log').querySelectorAll('.log-line');
+      const lastLine = logLines.length ? logLines[logLines.length - 1] : null;
+      const lastHtml = lastLine ? String(lastLine.innerHTML || '') : '';
+
+      return {{
+        rendered_log_count: logLines.length,
+        last_rendered_contains_live_line: lastHtml.includes('live-line'),
       }};
     }}
     default:

@@ -39,6 +39,7 @@ _ws_sent_index: Dict[str, Dict] = defaultdict(dict)
 # 任务状态
 _task_status: Dict[str, dict] = {}
 _task_steps: Dict[str, List[dict]] = {}
+_task_progress: Dict[str, dict] = {}
 _experiment_status: Dict[int, dict] = {}
 
 # 任务取消标志
@@ -133,6 +134,7 @@ class TaskManager:
         stream_id = task_stream_id(task_uuid)
         task_snapshot = dict(self.get_status(task_uuid) or {})
         steps = self.get_task_steps(task_uuid)
+        task_progress = self.get_task_progress(task_uuid)
         current_step = steps[-1] if steps else {}
         logs_tail = _get_logs_tail(task_uuid, LOG_TAIL_SIZE)
         lock = _get_stream_lock(stream_id)
@@ -147,6 +149,7 @@ class TaskManager:
                 "task": task_snapshot,
                 "current_step": current_step,
                 "steps": steps,
+                "task_progress": task_progress,
                 "logs_tail": logs_tail,
             },
         }
@@ -455,13 +458,24 @@ class TaskManager:
         return (
             task_uuid in _task_status
             or task_uuid in _task_steps
+            or task_uuid in _task_progress
             or task_uuid in _log_queues
             or stream_id in _stream_events
         )
 
-    def set_task_steps(self, task_uuid: str, steps: List[dict]):
+    def set_task_steps(
+        self,
+        task_uuid: str,
+        steps: List[dict],
+        *,
+        task_progress: dict | None = None,
+    ):
         """设置任务步骤快照（轻量内存态，供 API 快速读取）。"""
         _task_steps[task_uuid] = list(steps or [])
+        if task_progress is None:
+            _task_progress.pop(task_uuid, None)
+        else:
+            _task_progress[task_uuid] = dict(task_progress)
         event = self.append_stream_event(
             task_stream_id(task_uuid),
             "task_step_updated",
@@ -469,6 +483,7 @@ class TaskManager:
                 "task_uuid": task_uuid,
                 "current_step": _task_steps[task_uuid][-1] if _task_steps[task_uuid] else {},
                 "steps": list(_task_steps[task_uuid]),
+                "task_progress": dict(_task_progress[task_uuid]) if task_uuid in _task_progress else None,
             },
         )
         if self._loop and self._loop.is_running():
@@ -484,9 +499,15 @@ class TaskManager:
         """获取任务步骤快照。"""
         return list(_task_steps.get(task_uuid, []))
 
+    def get_task_progress(self, task_uuid: str) -> Optional[dict]:
+        """获取任务进度快照。"""
+        payload = _task_progress.get(task_uuid)
+        return dict(payload) if isinstance(payload, dict) else None
+
     def clear_task_steps(self, task_uuid: str):
         """清理任务步骤快照。"""
         _task_steps.pop(task_uuid, None)
+        _task_progress.pop(task_uuid, None)
 
     def close_task_stream(self, task_uuid: str, *, final_status: str):
         """显式关闭 task stream（用于前端 reducer 停止等待）。"""

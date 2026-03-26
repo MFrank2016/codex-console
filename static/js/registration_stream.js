@@ -10,6 +10,7 @@
  */
 (function () {
   const MAX_LOG_LINES = 500;
+  const hasOwn = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
 
   function reduce(state, event) {
     const currentState = state || {};
@@ -53,6 +54,7 @@
               ...(event.payload && event.payload.batch ? { batch: { ...batch, ...event.payload.batch } } : null),
               ...(event.payload ? { currentStep: event.payload.current_step || currentState.currentStep } : null),
               ...(event.payload ? { steps: event.payload.steps || currentState.steps } : null),
+              ...(hasOwn(event.payload, 'task_progress') ? { taskProgress: event.payload.task_progress } : null),
               // snapshot 语义：重建当前窗口，而非增量追加（避免 snapshot_required 重放导致重复）
               ...(event.payload && Array.isArray(event.payload.logs_tail)
                 ? { logs: event.payload.logs_tail.map(message => ({ message, meta: { tail: true } })) }
@@ -93,6 +95,9 @@
             ...currentState,
             currentStep: event.payload ? event.payload.current_step : currentState.currentStep,
             steps: event.payload ? event.payload.steps : currentState.steps,
+            taskProgress: hasOwn(event.payload, 'task_progress')
+              ? event.payload.task_progress
+              : currentState.taskProgress,
           },
           stream,
           event.seq,

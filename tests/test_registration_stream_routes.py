@@ -21,6 +21,7 @@ def _clear_state_for_tests():
     for container in (
         task_manager_module._task_status,
         task_manager_module._task_steps,
+        task_manager_module._task_progress,
         task_manager_module._experiment_status,
         task_manager_module._log_queues,
         task_manager_module._log_locks,
@@ -62,6 +63,11 @@ def test_task_and_batch_stream_routes_return_expected_contract():
     task_uuid = f"task-route-{uuid4().hex}"
     batch_id = f"batch-route-{uuid4().hex}"
     task_manager.update_status(task_uuid, "running")
+    task_manager.set_task_steps(
+        task_uuid,
+        [{"step_key": "create_email", "status": "running"}],
+        task_progress={"step_index": 2, "total_steps": 5, "progress_percent": 40},
+    )
     task_manager.add_log(task_uuid, "line-1")
     task_manager.init_batch(batch_id, total=5)
     task_manager.update_batch_status(batch_id, completed=2, success=1, failed=1)
@@ -87,6 +93,11 @@ def test_task_and_batch_stream_routes_return_expected_contract():
     assert task_snapshot_json["timestamp"]
     assert isinstance(task_snapshot_json["payload"], dict)
     assert "task" in task_snapshot_json["payload"]
+    assert task_snapshot_json["payload"]["task_progress"] == {
+        "step_index": 2,
+        "total_steps": 5,
+        "progress_percent": 40,
+    }
     assert task_events.status_code == 200
     task_events_json = task_events.json()
     assert task_events_json["stream"] == f"task:{task_uuid}"
@@ -97,6 +108,12 @@ def test_task_and_batch_stream_routes_return_expected_contract():
         assert isinstance(event["seq"], int)
         assert event["kind"]
         assert "payload" in event
+    assert task_events_json["events"][1]["kind"] == "task_step_updated"
+    assert task_events_json["events"][1]["payload"]["task_progress"] == {
+        "step_index": 2,
+        "total_steps": 5,
+        "progress_percent": 40,
+    }
     last_event = task_events_json["events"][-1]
     assert last_event["kind"] == "log_appended"
     assert last_event["payload"].get("message") == "line-1"

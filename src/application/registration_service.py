@@ -239,7 +239,11 @@ class RegistrationService:
             try:
                 steps = payload.get("steps") if isinstance(payload, dict) else None
                 if steps is not None and hasattr(service.task_manager, "set_task_steps"):
-                    service.task_manager.set_task_steps(task_uuid, steps)
+                    service.task_manager.set_task_steps(
+                        task_uuid,
+                        steps,
+                        task_progress=payload.get("task_progress"),
+                    )
 
                 current_step = payload.get("current_step") if isinstance(payload, dict) else None
                 step_key = (current_step or {}).get("step_key")

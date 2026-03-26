@@ -43,6 +43,7 @@ let activeBatchId = null;    // 当前活跃的批量任务 ID（用于页面重
 let registrationStreamState = {
     cursors: {},
     task: {},
+    taskProgress: null,
     currentStep: null,
     steps: [],
     batch: {},
@@ -149,6 +150,7 @@ function resetRegistrationStreamViewState() {
     registrationStreamState = {
         ...registrationStreamState,
         task: {},
+        taskProgress: null,
         currentStep: null,
         steps: [],
         batch: {},
@@ -658,10 +660,11 @@ async function handleSingleRegistration(requestData) {
         addLog('info', `[系统] 任务已创建: ${data.task_uuid}`);
         showTaskStatus(data);
         updateTaskStatus('running');
-        await refreshTaskDetail(data.task_uuid);
+        const taskDetailRefresh = refreshTaskDetail(data.task_uuid);
 
         // 优先使用 WebSocket
         connectWebSocket(data.task_uuid);
+        await taskDetailRefresh;
 
     } catch (error) {
         addLog('error', `[错误] 启动失败: ${error.message}`);

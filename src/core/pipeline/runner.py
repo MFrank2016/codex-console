@@ -58,7 +58,13 @@ class PipelineRunner:
                 "error_message": None,
             }
             steps_snapshot.append(step_snapshot)
-            self._emit_step_snapshot(ctx, current_step=step_snapshot, steps_snapshot=steps_snapshot)
+            self._emit_step_snapshot(
+                ctx,
+                current_step=step_snapshot,
+                steps_snapshot=steps_snapshot,
+                pipeline_started_at=pipeline_started_at,
+                total_steps=len(pipeline.steps),
+            )
 
             try:
                 payload = step.handler(ctx) or {}
@@ -81,7 +87,13 @@ class PipelineRunner:
                     completed_at=failed_at,
                     error_message=str(exc),
                 )
-                self._emit_step_snapshot(ctx, current_step=step_snapshot, steps_snapshot=steps_snapshot)
+                self._emit_step_snapshot(
+                    ctx,
+                    current_step=step_snapshot,
+                    steps_snapshot=steps_snapshot,
+                    pipeline_started_at=pipeline_started_at,
+                    total_steps=len(pipeline.steps),
+                )
                 raise
 
             self._finalize_step(step_run, started_at, status="completed")
@@ -92,7 +104,13 @@ class PipelineRunner:
                     "error_message": step_run.error_message,
                 }
             )
-            self._emit_step_snapshot(ctx, current_step=step_snapshot, steps_snapshot=steps_snapshot)
+            self._emit_step_snapshot(
+                ctx,
+                current_step=step_snapshot,
+                steps_snapshot=steps_snapshot,
+                pipeline_started_at=pipeline_started_at,
+                total_steps=len(pipeline.steps),
+            )
 
         completed_at = self._utc_now()
         crud.update_registration_task(
@@ -110,6 +128,8 @@ class PipelineRunner:
         *,
         current_step: dict[str, Any],
         steps_snapshot: list[dict[str, Any]],
+        pipeline_started_at: datetime,
+        total_steps: int,
     ) -> None:
         callback = ctx.task_step_callback
         if not callable(callback):
@@ -117,10 +137,18 @@ class PipelineRunner:
 
         steps = [dict(item) for item in steps_snapshot]
         current_step_payload = {"step_key": current_step.get("step_key"), "status": current_step.get("status")}
+        step_index = int(current_step.get("step_order") or total_steps)
+        emitted_at = self._utc_now()
         callback(
             {
                 "current_step": current_step_payload,
                 "steps": steps,
+                "task_progress": {
+                    "step_index": step_index,
+                    "total_steps": total_steps,
+                    "progress_percent": int(step_index / total_steps * 100),
+                    "elapsed_ms": self._duration_ms(pipeline_started_at, emitted_at),
+                },
             }
         )
 

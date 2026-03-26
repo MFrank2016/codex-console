@@ -158,6 +158,12 @@ def test_registration_realtime_store_appends_log_when_window_is_full():
     assert result["last_rendered_contains_after_full"] is True
 
 
+def test_realtime_log_appended_event_updates_console_without_waiting_for_task_detail_refresh():
+    result = run_app_js_scenario("single_task_log_event_immediate_append")
+    assert result["rendered_log_count"] == 2
+    assert result["last_rendered_contains_live_line"] is True
+
+
 def test_app_js_task_realtime_fallback_prefers_stream_events_over_legacy_logs_endpoint():
     script = Path("static/js/app.js").read_text(encoding="utf-8")
 
