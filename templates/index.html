@@ -223,6 +223,24 @@
                         </select>
                     </div>
 
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                            <input type="checkbox" id="use-proxy" name="use_proxy">
+                            <span>是否使用代理</span>
+                        </label>
+                        <small style="color: var(--text-muted); font-size: 0.75rem;">
+                            启用后按“动态代理 → 代理列表 → 静态代理”顺序选择
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="proxy">静态代理（可选）</label>
+                        <input type="text" id="proxy" name="proxy" placeholder="http://127.0.0.1:7890">
+                        <small style="color: var(--text-muted); font-size: 0.75rem;">
+                            仅在启用代理时作为兜底代理使用
+                        </small>
+                    </div>
+
                     <div class="form-group" id="batch-count-group" style="display: none;">
                         <label for="batch-count">注册数量 (1-500)</label>
                         <input type="number" id="batch-count" name="batch_count" min="1" max="500" value="5">

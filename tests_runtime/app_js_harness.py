@@ -370,13 +370,14 @@ context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
   context,
 );
 
 const exported = context.__appTestExports;
 
 function setupBaseElements() {{
+  getElement('email-service').value = 'tempmail:default';
   getElement('reg-mode').value = 'single';
   getElement('batch-count').value = '5';
   getElement('interval-min').value = '5';
@@ -384,6 +385,8 @@ function setupBaseElements() {{
   getElement('concurrency-count').value = '3';
   getElement('concurrency-mode').value = 'pipeline';
   getElement('pipeline-key').value = 'current_pipeline';
+  getElement('use-proxy').checked = false;
+  getElement('proxy').value = '';
   getElement('batch-count-group').style.display = 'none';
   getElement('batch-options').style.display = 'none';
   getElement('batch-domain-stats').innerHTML = '';
@@ -414,6 +417,23 @@ async function runScenario() {{
       await exported.handleBatchRegistration(requestPayload);
       return {{
         request_payload: logs.lastPostPayload,
+      }};
+    }}
+    case 'single_use_proxy_request_matrix': {{
+      getElement('email-service').value = 'tempmail:default';
+      getElement('proxy').value = 'http://manual-static:8000';
+      getElement('use-proxy').checked = false;
+      await exported.handleStartRegistration({{ preventDefault() {{}} }});
+      const disabledRequest = JSON.parse(JSON.stringify(logs.lastPostPayload));
+
+      getElement('proxy').value = 'http://manual-static:8000';
+      getElement('use-proxy').checked = true;
+      await exported.handleStartRegistration({{ preventDefault() {{}} }});
+      const enabledRequest = JSON.parse(JSON.stringify(logs.lastPostPayload));
+
+      return {{
+        disabled_request: disabledRequest,
+        enabled_request: enabledRequest,
       }};
     }}
     case 'render_task_steps': {{

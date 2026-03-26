@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -99,8 +100,10 @@ class RegistrationService:
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
+        use_proxy: bool = False,
         proxy_task_group: str = "single_registration",
         proxy_overrides: dict[str, Any] | None = None,
+        resolved_proxy_candidate: ResolvedProxyCandidate | None = None,
     ) -> SingleTaskExecutionResult:
         loop = self.task_manager.get_loop()
         if loop is None:
@@ -131,8 +134,10 @@ class RegistrationService:
             "auto_upload_tm": auto_upload_tm,
             "tm_service_ids": tm_service_ids or [],
             "pipeline_key": pipeline_key,
+            "use_proxy": use_proxy,
             "proxy_task_group": proxy_task_group,
             "proxy_overrides": proxy_overrides or {},
+            "resolved_proxy_candidate": resolved_proxy_candidate,
             "utc_now_provider": self.utc_now_provider,
         }
 
@@ -175,8 +180,10 @@ class RegistrationService:
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
+        use_proxy: bool = False,
         proxy_task_group: str = "single_registration",
         proxy_overrides: dict[str, Any] | None = None,
+        resolved_proxy_candidate: ResolvedProxyCandidate | None = None,
     ) -> SingleTaskExecutionResult:
         return self.sync_runner(
             service=self,
@@ -194,8 +201,10 @@ class RegistrationService:
             auto_upload_tm=auto_upload_tm,
             tm_service_ids=tm_service_ids or [],
             pipeline_key=pipeline_key,
+            use_proxy=use_proxy,
             proxy_task_group=proxy_task_group,
             proxy_overrides=proxy_overrides or {},
+            resolved_proxy_candidate=resolved_proxy_candidate,
             utc_now_provider=self.utc_now_provider,
         )
 
@@ -217,8 +226,10 @@ class RegistrationService:
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
+        use_proxy: bool = False,
         proxy_task_group: str = "single_registration",
         proxy_overrides: dict[str, Any] | None = None,
+        resolved_proxy_candidate: ResolvedProxyCandidate | None = None,
         utc_now_provider: Callable[[], Any] | None = None,
     ) -> SingleTaskExecutionResult:
         now = utc_now_provider or service.utc_now_provider
@@ -320,9 +331,27 @@ class RegistrationService:
                 candidates = service._resolve_proxy_candidates(
                     db,
                     explicit_proxy=proxy,
+                    use_proxy=use_proxy,
                     task_group=proxy_task_group,
                     overrides=proxy_overrides or {},
+                    resolved_proxy_candidate=resolved_proxy_candidate,
                 )
+                if use_proxy and not candidates:
+                    error_message = "代理已启用，但当前没有可用代理"
+                    log_callback(f"[错误] {error_message}")
+                    crud.update_registration_task(
+                        db,
+                        task_uuid,
+                        status="failed",
+                        pipeline_status="failed",
+                        completed_at=now(),
+                        error_message=error_message,
+                    )
+                    runs_service.mark_failed(run.id, error_message=error_message)
+                    runs_service.append_event(run.id, level="error", message="failed")
+                    service.task_manager.update_status(task_uuid, "failed", error=error_message)
+                    _close_task_stream("failed")
+                    return service.build_result_for_task(task_uuid, db=db)
                 candidate_sequence: list[ResolvedProxyCandidate | None] = candidates or [None]
                 job_result: RegistrationJobResult | None = None
                 selected_candidate: ResolvedProxyCandidate | None = None
@@ -471,25 +500,69 @@ class RegistrationService:
         db,
         *,
         explicit_proxy: str | None,
+        use_proxy: bool,
         task_group: str,
         overrides: dict[str, Any],
+        resolved_proxy_candidate: ResolvedProxyCandidate | None = None,
     ) -> list[ResolvedProxyCandidate]:
-        if explicit_proxy:
-            return [ResolvedProxyCandidate(proxy_url=explicit_proxy, source="explicit")]
+        if resolved_proxy_candidate is not None:
+            return [resolved_proxy_candidate]
+
+        if not use_proxy:
+            return []
 
         if self.proxy_dispatcher is not None:
-            return self.proxy_dispatcher.resolve_single_candidates(task_group, None, overrides)
+            return self._dispatch_proxy_candidates(
+                task_group=task_group,
+                explicit_proxy=explicit_proxy,
+                overrides=overrides,
+                use_proxy=use_proxy,
+            )
 
+        candidates: list[ResolvedProxyCandidate] = []
         proxy_url, proxy_id = self.proxy_resolver(db)
         if proxy_url:
-            return [
+            candidates.append(
                 ResolvedProxyCandidate(
                     proxy_url=proxy_url,
                     source="legacy",
                     proxy_id=proxy_id,
                 )
-            ]
-        return []
+            )
+
+        if explicit_proxy and all(item.proxy_url != explicit_proxy for item in candidates):
+            candidates.append(
+                ResolvedProxyCandidate(
+                    proxy_url=explicit_proxy,
+                    source="static",
+                )
+            )
+
+        return candidates
+
+    def _dispatch_proxy_candidates(
+        self,
+        *,
+        task_group: str,
+        explicit_proxy: str | None,
+        overrides: dict[str, Any],
+        use_proxy: bool,
+    ) -> list[ResolvedProxyCandidate]:
+        resolver = self.proxy_dispatcher.resolve_single_candidates
+        try:
+            signature = inspect.signature(resolver)
+        except (TypeError, ValueError):
+            signature = None
+
+        if signature is not None and "use_proxy" not in signature.parameters:
+            return resolver(task_group, explicit_proxy, overrides)
+
+        return resolver(
+            task_group,
+            explicit_proxy,
+            overrides,
+            use_proxy=use_proxy,
+        )
 
     def _update_proxy_usage(self, db, proxy_id: int | None) -> None:
         if proxy_id:

@@ -44,9 +44,11 @@ class ProxyDispatchService:
         task_group: str,
         explicit_proxy: str | None,
         overrides: dict[str, Any] | None,
+        *,
+        use_proxy: bool,
     ) -> list[ResolvedProxyCandidate]:
-        if explicit_proxy:
-            return [ResolvedProxyCandidate(proxy_url=explicit_proxy, source="explicit")]
+        if not use_proxy:
+            return []
 
         effective = self._build_effective_config(task_group, overrides)
         dynamic_request_count = self._coerce_positive_int(
@@ -86,8 +88,11 @@ class ProxyDispatchService:
             if candidate is not None:
                 candidates.append(candidate)
 
+        if explicit_proxy:
+            candidates.append(ResolvedProxyCandidate(proxy_url=str(explicit_proxy), source="static"))
+
         static_proxy = self.static_proxy_provider()
-        if static_proxy:
+        if static_proxy and str(static_proxy) != str(explicit_proxy or ""):
             candidates.append(ResolvedProxyCandidate(proxy_url=str(static_proxy), source="static"))
 
         return candidates
@@ -97,8 +102,15 @@ class ProxyDispatchService:
         task_group: str,
         explicit_proxy: str | None,
         overrides: dict[str, Any] | None,
+        *,
+        use_proxy: bool,
     ) -> ResolvedProxyCandidate | None:
-        candidates = self.resolve_single_candidates(task_group, explicit_proxy, overrides)
+        candidates = self.resolve_single_candidates(
+            task_group,
+            explicit_proxy,
+            overrides,
+            use_proxy=use_proxy,
+        )
         return candidates[0] if candidates else None
 
     def resolve_proxy_candidates(
@@ -106,8 +118,15 @@ class ProxyDispatchService:
         task_group: str,
         explicit_proxy: str | None,
         overrides: dict[str, Any] | None,
+        *,
+        use_proxy: bool,
     ) -> list[ResolvedProxyCandidate]:
-        return self.resolve_single_candidates(task_group, explicit_proxy, overrides)
+        return self.resolve_single_candidates(
+            task_group,
+            explicit_proxy,
+            overrides,
+            use_proxy=use_proxy,
+        )
 
     def is_proxy_related_failure(self, error: Exception | str) -> bool:
         text = str(error).lower()

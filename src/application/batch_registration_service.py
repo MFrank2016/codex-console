@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import random
 import uuid
@@ -302,14 +303,38 @@ class BatchRegistrationService:
         *,
         batch_id: str,
         explicit_proxy: str | None,
-    ) -> tuple[str | None, ResolvedProxyCandidate | None]:
-        if explicit_proxy:
-            return explicit_proxy, None
-        pool = self._get_batch_proxy_pool(batch_id)
-        if pool is None:
+        use_proxy: bool,
+        task_group: str,
+        overrides: dict[str, Any] | None,
+    ) -> tuple[ResolvedProxyCandidate | None, ResolvedProxyCandidate | None]:
+        if not use_proxy:
             return None, None
-        candidate = pool.lease()
-        return candidate.proxy_url, candidate
+
+        pool = self._get_batch_proxy_pool(batch_id)
+        if pool is not None:
+            try:
+                candidate = pool.lease()
+                return candidate, candidate
+            except RuntimeError:
+                fallback_candidates = self._resolve_single_proxy_candidates(
+                    task_group=task_group,
+                    explicit_proxy=explicit_proxy,
+                    overrides=overrides or {},
+                    use_proxy=use_proxy,
+                )
+                if fallback_candidates:
+                    return fallback_candidates[0], None
+                raise
+
+        fallback_candidates = self._resolve_single_proxy_candidates(
+            task_group=task_group,
+            explicit_proxy=explicit_proxy,
+            overrides=overrides or {},
+            use_proxy=use_proxy,
+        )
+        if not fallback_candidates:
+            raise RuntimeError("代理已启用，但当前没有可用代理")
+        return fallback_candidates[0], None
 
     def _release_batch_proxy(
         self,
@@ -347,8 +372,48 @@ class BatchRegistrationService:
 
         if hasattr(self.task_manager, "update_status"):
             self.task_manager.update_status(task_uuid, "failed", error=error_message)
+        if hasattr(self.task_manager, "add_log"):
+            self.task_manager.add_log(task_uuid, f"[错误] {error_message}")
         if hasattr(self.task_manager, "clear_task_steps"):
             self.task_manager.clear_task_steps(task_uuid)
+        if hasattr(self.task_manager, "close_task_stream"):
+            try:
+                self.task_manager.close_task_stream(task_uuid, final_status="failed")
+            except TypeError:
+                self.task_manager.close_task_stream(task_uuid, "failed")
+
+    def _resolve_single_proxy_candidates(
+        self,
+        *,
+        task_group: str,
+        explicit_proxy: str | None,
+        overrides: dict[str, Any],
+        use_proxy: bool,
+    ) -> list[ResolvedProxyCandidate]:
+        if not use_proxy:
+            return []
+
+        if self.proxy_dispatcher is not None:
+            resolver = self.proxy_dispatcher.resolve_single_candidates
+            try:
+                signature = inspect.signature(resolver)
+            except (TypeError, ValueError):
+                signature = None
+
+            if signature is not None and "use_proxy" not in signature.parameters:
+                return resolver(task_group, explicit_proxy, overrides)
+
+            return resolver(
+                task_group,
+                explicit_proxy,
+                overrides,
+                use_proxy=use_proxy,
+            )
+
+        if explicit_proxy:
+            return [ResolvedProxyCandidate(proxy_url=explicit_proxy, source="static")]
+
+        return []
 
     async def _run_single_task(self, *args, **kwargs):
         if self.registration_task_runner is None:
@@ -376,6 +441,9 @@ class BatchRegistrationService:
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
+        use_proxy: bool = False,
+        proxy_task_group: str = "unlimited_registration",
+        proxy_overrides: dict[str, Any] | None = None,
     ) -> BatchExecutionSummary:
         if batch_id not in self.batch_tasks:
             self.init_batch_state(batch_id, [], is_unlimited=True, total=0)
@@ -393,27 +461,38 @@ class BatchRegistrationService:
             task_uuids.append(task_uuid)
             self.batch_tasks[batch_id]["task_uuids"].append(task_uuid)
             with self.db_factory() as db:
-                crud.create_registration_task(db, task_uuid=task_uuid, proxy=proxy, pipeline_key=pipeline_key)
+                crud.create_registration_task(
+                    db,
+                    task_uuid=task_uuid,
+                    proxy=proxy if use_proxy else None,
+                    pipeline_key=pipeline_key,
+                )
 
             leased_candidate = None
-            effective_proxy = proxy
+            selected_candidate = None
+            effective_proxy = proxy if use_proxy else None
             try:
-                effective_proxy, leased_candidate = self._lease_proxy_for_batch_task(
+                selected_candidate, leased_candidate = self._lease_proxy_for_batch_task(
                     batch_id=batch_id,
                     explicit_proxy=proxy,
+                    use_proxy=use_proxy,
+                    task_group=proxy_task_group,
+                    overrides=proxy_overrides or {},
                 )
+                effective_proxy = selected_candidate.proxy_url if selected_candidate is not None else None
             except RuntimeError as exc:
                 self._mark_proxy_pool_failure(batch_id, task_uuid, str(exc))
+                stop_reason = "proxy_unavailable" if "代理已启用" in str(exc) else "proxy_pool_exhausted"
                 async with counter_lock:
                     self.batch_outcome_applier(self.batch_tasks[batch_id], "failed")
-                    self.batch_tasks[batch_id]["stop_reason"] = "proxy_pool_exhausted"
+                    self.batch_tasks[batch_id]["stop_reason"] = stop_reason
                     update_batch_status(
                         completed=self.batch_tasks[batch_id]["completed"],
                         success=self.batch_tasks[batch_id]["success"],
                         failed=self.batch_tasks[batch_id]["failed"],
-                        stop_reason="proxy_pool_exhausted",
+                        stop_reason=stop_reason,
                     )
-                    add_batch_log(f"[任务{index}] [失败] 代理池耗尽: {exc}")
+                    add_batch_log(f"[任务{index}] [失败] {exc}")
                 return
 
             async with semaphore:
@@ -433,6 +512,10 @@ class BatchRegistrationService:
                         auto_upload_tm=auto_upload_tm,
                         tm_service_ids=tm_service_ids or [],
                         pipeline_key=pipeline_key,
+                        use_proxy=use_proxy,
+                        proxy_task_group=proxy_task_group,
+                        proxy_overrides=proxy_overrides or {},
+                        resolved_proxy_candidate=selected_candidate,
                     )
                 finally:
                     status = self._load_outcome_status(task_uuid) or "failed"
@@ -528,6 +611,9 @@ class BatchRegistrationService:
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
         enable_stats_finalization: bool = True,
+        use_proxy: bool = False,
+        proxy_task_group: str = "batch_registration",
+        proxy_overrides: dict[str, Any] | None = None,
     ) -> BatchExecutionSummary:
         statistics_context = None
         if enable_stats_finalization:
@@ -552,17 +638,22 @@ class BatchRegistrationService:
         async def _run_one(index: int, task_uuid: str):
             prefix = f"[任务{index + 1}]"
             leased_candidate = None
-            effective_proxy = proxy
+            selected_candidate = None
+            effective_proxy = proxy if use_proxy else None
             try:
-                effective_proxy, leased_candidate = self._lease_proxy_for_batch_task(
+                selected_candidate, leased_candidate = self._lease_proxy_for_batch_task(
                     batch_id=batch_id,
                     explicit_proxy=proxy,
+                    use_proxy=use_proxy,
+                    task_group=proxy_task_group,
+                    overrides=proxy_overrides or {},
                 )
+                effective_proxy = selected_candidate.proxy_url if selected_candidate is not None else None
             except RuntimeError as exc:
                 self._mark_proxy_pool_failure(batch_id, task_uuid, str(exc))
                 async with counter_lock:
                     self.batch_outcome_applier(self.batch_tasks[batch_id], "failed")
-                    add_batch_log(f"{prefix} [失败] 代理池耗尽: {exc}")
+                    add_batch_log(f"{prefix} [失败] {exc}")
                     update_batch_status(
                         completed=self.batch_tasks[batch_id]["completed"],
                         success=self.batch_tasks[batch_id]["success"],
@@ -587,6 +678,10 @@ class BatchRegistrationService:
                         auto_upload_tm=auto_upload_tm,
                         tm_service_ids=tm_service_ids or [],
                         pipeline_key=pipeline_key,
+                        use_proxy=use_proxy,
+                        proxy_task_group=proxy_task_group,
+                        proxy_overrides=proxy_overrides or {},
+                        resolved_proxy_candidate=selected_candidate,
                     )
                 finally:
                     status = self._load_outcome_status(task_uuid) or "failed"
@@ -662,6 +757,9 @@ class BatchRegistrationService:
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
         enable_stats_finalization: bool = True,
+        use_proxy: bool = False,
+        proxy_task_group: str = "batch_registration",
+        proxy_overrides: dict[str, Any] | None = None,
     ) -> BatchExecutionSummary:
         statistics_context = None
         if enable_stats_finalization:
@@ -686,18 +784,23 @@ class BatchRegistrationService:
 
         async def _run_and_release(index: int, task_uuid: str, prefix: str):
             leased_candidate = None
-            effective_proxy = proxy
+            selected_candidate = None
+            effective_proxy = proxy if use_proxy else None
             try:
                 try:
-                    effective_proxy, leased_candidate = self._lease_proxy_for_batch_task(
+                    selected_candidate, leased_candidate = self._lease_proxy_for_batch_task(
                         batch_id=batch_id,
                         explicit_proxy=proxy,
+                        use_proxy=use_proxy,
+                        task_group=proxy_task_group,
+                        overrides=proxy_overrides or {},
                     )
+                    effective_proxy = selected_candidate.proxy_url if selected_candidate is not None else None
                 except RuntimeError as exc:
                     self._mark_proxy_pool_failure(batch_id, task_uuid, str(exc))
                     async with counter_lock:
                         self.batch_outcome_applier(self.batch_tasks[batch_id], "failed")
-                        add_batch_log(f"{prefix} [失败] 代理池耗尽: {exc}")
+                        add_batch_log(f"{prefix} [失败] {exc}")
                         update_batch_status(
                             completed=self.batch_tasks[batch_id]["completed"],
                             success=self.batch_tasks[batch_id]["success"],
@@ -721,6 +824,10 @@ class BatchRegistrationService:
                     auto_upload_tm=auto_upload_tm,
                     tm_service_ids=tm_service_ids or [],
                     pipeline_key=pipeline_key,
+                    use_proxy=use_proxy,
+                    proxy_task_group=proxy_task_group,
+                    proxy_overrides=proxy_overrides or {},
+                    resolved_proxy_candidate=selected_candidate,
                 )
                 status = self._load_outcome_status(task_uuid)
                 with self.db_factory() as db:
@@ -814,6 +921,9 @@ class BatchRegistrationService:
         tm_service_ids: list[int] | None = None,
         pipeline_key: str | None = None,
         enable_stats_finalization: bool = True,
+        use_proxy: bool = False,
+        proxy_task_group: str = "batch_registration",
+        proxy_overrides: dict[str, Any] | None = None,
     ) -> BatchExecutionSummary:
         if mode == "parallel":
             return await self.run_batch_parallel(
@@ -834,6 +944,9 @@ class BatchRegistrationService:
                 tm_service_ids=tm_service_ids,
                 pipeline_key=pipeline_key,
                 enable_stats_finalization=enable_stats_finalization,
+                use_proxy=use_proxy,
+                proxy_task_group=proxy_task_group,
+                proxy_overrides=proxy_overrides or {},
             )
         return await self.run_batch_pipeline(
             batch_id=batch_id,
@@ -853,6 +966,9 @@ class BatchRegistrationService:
             tm_service_ids=tm_service_ids,
             pipeline_key=pipeline_key,
             enable_stats_finalization=enable_stats_finalization,
+            use_proxy=use_proxy,
+            proxy_task_group=proxy_task_group,
+            proxy_overrides=proxy_overrides or {},
         )
 
     async def run_outlook_batch_registration(
@@ -871,6 +987,9 @@ class BatchRegistrationService:
         sub2api_service_ids: list[int] | None = None,
         auto_upload_tm: bool = False,
         tm_service_ids: list[int] | None = None,
+        use_proxy: bool = False,
+        proxy_task_group: str = "outlook_batch",
+        proxy_overrides: dict[str, Any] | None = None,
     ) -> BatchExecutionSummary:
         loop = self.task_manager.get_loop()
         if loop is None:
@@ -879,7 +998,10 @@ class BatchRegistrationService:
             except RuntimeError:
                 pass
 
-        task_uuids = self.create_outlook_task_records(service_ids=service_ids, proxy=proxy)
+        task_uuids = self.create_outlook_task_records(
+            service_ids=service_ids,
+            proxy=proxy if use_proxy else None,
+        )
         return await self.run_batch_registration(
             batch_id=batch_id,
             task_uuids=task_uuids,
@@ -898,4 +1020,7 @@ class BatchRegistrationService:
             auto_upload_tm=auto_upload_tm,
             tm_service_ids=tm_service_ids,
             enable_stats_finalization=False,
+            use_proxy=use_proxy,
+            proxy_task_group=proxy_task_group,
+            proxy_overrides=proxy_overrides or {},
         )

@@ -85,6 +85,7 @@ class RegistrationTaskCreate(BaseModel):
     """创建注册任务请求"""
     email_service_type: str = "tempmail"
     pipeline_key: str = "current_pipeline"
+    use_proxy: bool = False
     proxy: Optional[str] = None
     email_service_config: Optional[dict] = None
     email_service_id: Optional[int] = None
@@ -103,6 +104,7 @@ class BatchRegistrationRequest(BaseModel):
     count: int = 1
     email_service_type: str = "tempmail"
     pipeline_key: str = "current_pipeline"
+    use_proxy: bool = False
     proxy: Optional[str] = None
     email_service_config: Optional[dict] = None
     email_service_id: Optional[int] = None
@@ -181,6 +183,7 @@ class OutlookBatchRegistrationRequest(BaseModel):
     """Outlook 批量注册请求"""
     service_ids: List[int]
     skip_registered: bool = True
+    use_proxy: bool = False
     proxy: Optional[str] = None
     interval_min: int = 5
     interval_max: int = 30
@@ -254,7 +257,7 @@ def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = No
     )
 
 
-def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None):
+def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, use_proxy: bool = False, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None, resolved_proxy_candidate: Any = None):
     return _build_registration_service().run_single_task_sync(
         task_uuid=task_uuid,
         email_service_type=email_service_type,
@@ -270,11 +273,13 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
         auto_upload_tm=auto_upload_tm,
         tm_service_ids=tm_service_ids or [],
         pipeline_key=pipeline_key,
-        proxy_task_group="single_registration",
-        proxy_overrides={},
+        use_proxy=use_proxy,
+        proxy_task_group=proxy_task_group,
+        proxy_overrides=proxy_overrides or {},
+        resolved_proxy_candidate=resolved_proxy_candidate,
     )
 
-async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None):
+async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, use_proxy: bool = False, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None, resolved_proxy_candidate: Any = None):
     return await _build_registration_service().run_single_task(
         task_uuid=task_uuid,
         email_service_type=email_service_type,
@@ -290,8 +295,10 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
         auto_upload_tm=auto_upload_tm,
         tm_service_ids=tm_service_ids or [],
         pipeline_key=pipeline_key,
+        use_proxy=use_proxy,
         proxy_task_group=proxy_task_group,
         proxy_overrides=proxy_overrides or {},
+        resolved_proxy_candidate=resolved_proxy_candidate,
     )
 
 def _init_batch_state(
@@ -384,6 +391,10 @@ async def run_unlimited_batch_registration(
     auto_upload_tm: bool = False,
     tm_service_ids: List[int] = None,
     pipeline_key: Optional[str] = None,
+    *,
+    use_proxy: bool = False,
+    proxy_task_group: str = "unlimited_registration",
+    proxy_overrides: Optional[dict] = None,
 ):
     return await _build_batch_registration_service().run_unlimited_batch_registration(
         batch_id=batch_id,
@@ -402,6 +413,9 @@ async def run_unlimited_batch_registration(
         auto_upload_tm=auto_upload_tm,
         tm_service_ids=tm_service_ids or [],
         pipeline_key=pipeline_key,
+        use_proxy=use_proxy,
+        proxy_task_group=proxy_task_group,
+        proxy_overrides=proxy_overrides or {},
     )
 
 async def run_batch_parallel(
@@ -422,6 +436,10 @@ async def run_batch_parallel(
     tm_service_ids: List[int] = None,
     pipeline_key: Optional[str] = None,
     enable_stats_finalization: bool = True,
+    *,
+    use_proxy: bool = False,
+    proxy_task_group: str = "batch_registration",
+    proxy_overrides: Optional[dict] = None,
 ):
     return await _build_batch_registration_service().run_batch_parallel(
         batch_id=batch_id,
@@ -441,6 +459,9 @@ async def run_batch_parallel(
         tm_service_ids=tm_service_ids or [],
         pipeline_key=pipeline_key,
         enable_stats_finalization=enable_stats_finalization,
+        use_proxy=use_proxy,
+        proxy_task_group=proxy_task_group,
+        proxy_overrides=proxy_overrides or {},
     )
 
 async def run_batch_pipeline(
@@ -461,6 +482,10 @@ async def run_batch_pipeline(
     tm_service_ids: List[int] = None,
     pipeline_key: Optional[str] = None,
     enable_stats_finalization: bool = True,
+    *,
+    use_proxy: bool = False,
+    proxy_task_group: str = "batch_registration",
+    proxy_overrides: Optional[dict] = None,
 ):
     return await _build_batch_registration_service().run_batch_pipeline(
         batch_id=batch_id,
@@ -480,6 +505,9 @@ async def run_batch_pipeline(
         tm_service_ids=tm_service_ids or [],
         pipeline_key=pipeline_key,
         enable_stats_finalization=enable_stats_finalization,
+        use_proxy=use_proxy,
+        proxy_task_group=proxy_task_group,
+        proxy_overrides=proxy_overrides or {},
     )
 
 async def run_batch_registration(
@@ -501,6 +529,10 @@ async def run_batch_registration(
     tm_service_ids: List[int] = None,
     pipeline_key: Optional[str] = None,
     enable_stats_finalization: bool = True,
+    *,
+    use_proxy: bool = False,
+    proxy_task_group: str = "batch_registration",
+    proxy_overrides: Optional[dict] = None,
 ):
     return await _build_batch_registration_service().run_batch_registration(
         batch_id=batch_id,
@@ -521,6 +553,9 @@ async def run_batch_registration(
         tm_service_ids=tm_service_ids or [],
         pipeline_key=pipeline_key,
         enable_stats_finalization=enable_stats_finalization,
+        use_proxy=use_proxy,
+        proxy_task_group=proxy_task_group,
+        proxy_overrides=proxy_overrides or {},
     )
 
 # ============== API Endpoints ==============
@@ -550,7 +585,7 @@ async def start_registration(
     task_uuid = str(uuid.uuid4())
     task = _build_registration_service().create_task(
         task_uuid=task_uuid,
-        proxy=request.proxy,
+        proxy=request.proxy if request.use_proxy else None,
         pipeline_key=request.pipeline_key,
         email_service_id=request.email_service_id,
     )
@@ -560,7 +595,7 @@ async def start_registration(
         run_registration_task,
         task_uuid,
         request.email_service_type,
-        request.proxy,
+        request.proxy if request.use_proxy else None,
         request.email_service_config,
         request.email_service_id,
         "",
@@ -572,6 +607,7 @@ async def start_registration(
         request.auto_upload_tm,
         request.tm_service_ids,
         request.pipeline_key,
+        use_proxy=request.use_proxy,
         proxy_task_group="single_registration",
         proxy_overrides=_build_single_proxy_overrides(request),
     )
@@ -622,9 +658,10 @@ async def start_batch_registration(
     batch_id = str(uuid.uuid4())
     batch_service = _build_batch_registration_service()
     batch_proxy_overrides = _build_batch_proxy_overrides(request)
+    batch_proxy_overrides = _build_batch_proxy_overrides(request)
 
     if is_unlimited:
-        if not request.proxy:
+        if request.use_proxy:
             try:
                 batch_service.prepare_batch_proxy_pool(
                     batch_id=batch_id,
@@ -633,13 +670,13 @@ async def start_batch_registration(
                     overrides=batch_proxy_overrides,
                 )
             except RuntimeError as exc:
-                raise HTTPException(status_code=400, detail=str(exc))
+                logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
         _init_batch_state(batch_id, [], is_unlimited=True, total=0)
         background_tasks.add_task(
             run_unlimited_batch_registration,
             batch_id,
             request.email_service_type,
-            request.proxy,
+            request.proxy if request.use_proxy else None,
             request.email_service_config,
             request.email_service_id,
             request.interval_min,
@@ -653,6 +690,9 @@ async def start_batch_registration(
             request.auto_upload_tm,
             request.tm_service_ids,
             request.pipeline_key,
+            use_proxy=request.use_proxy,
+            proxy_task_group="unlimited_registration",
+            proxy_overrides=batch_proxy_overrides,
         )
         return BatchRegistrationResponse(
             batch_id=batch_id,
@@ -661,7 +701,7 @@ async def start_batch_registration(
             tasks=[],
         )
 
-    if not request.proxy:
+    if request.use_proxy:
         try:
             batch_service.prepare_batch_proxy_pool(
                 batch_id=batch_id,
@@ -670,11 +710,11 @@ async def start_batch_registration(
                 overrides=batch_proxy_overrides,
             )
         except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
 
     tasks = batch_service.create_batch_tasks(
         count=request.count,
-        proxy=request.proxy,
+        proxy=request.proxy if request.use_proxy else None,
         pipeline_key=request.pipeline_key,
     )
     task_uuids = [task.task_uuid for task in tasks]
@@ -685,7 +725,7 @@ async def start_batch_registration(
         batch_id,
         task_uuids,
         request.email_service_type,
-        request.proxy,
+        request.proxy if request.use_proxy else None,
         request.email_service_config,
         request.email_service_id,
         request.interval_min,
@@ -699,6 +739,9 @@ async def start_batch_registration(
         request.auto_upload_tm,
         request.tm_service_ids,
         request.pipeline_key,
+        use_proxy=request.use_proxy,
+        proxy_task_group="batch_registration",
+        proxy_overrides=batch_proxy_overrides,
     )
 
     return BatchRegistrationResponse(
@@ -1118,6 +1161,10 @@ async def run_outlook_batch_registration(
     sub2api_service_ids: List[int] = None,
     auto_upload_tm: bool = False,
     tm_service_ids: List[int] = None,
+    *,
+    use_proxy: bool = False,
+    proxy_task_group: str = "outlook_batch",
+    proxy_overrides: Optional[dict] = None,
 ):
     return await _build_batch_registration_service().run_outlook_batch_registration(
         batch_id=batch_id,
@@ -1134,6 +1181,9 @@ async def run_outlook_batch_registration(
         sub2api_service_ids=sub2api_service_ids or [],
         auto_upload_tm=auto_upload_tm,
         tm_service_ids=tm_service_ids or [],
+        use_proxy=use_proxy,
+        proxy_task_group=proxy_task_group,
+        proxy_overrides=proxy_overrides or {},
     )
 
 @router.post("/outlook-batch", response_model=OutlookBatchRegistrationResponse)
@@ -1208,6 +1258,7 @@ async def start_outlook_batch_registration(
     # 创建批量任务
     batch_id = str(uuid.uuid4())
     batch_service = _build_batch_registration_service()
+    batch_proxy_overrides = _build_batch_proxy_overrides(request)
 
     # 初始化批量任务状态
     batch_tasks[batch_id] = {
@@ -1223,16 +1274,16 @@ async def start_outlook_batch_registration(
         "finished": False
     }
 
-    if not request.proxy:
+    if request.use_proxy:
         try:
             batch_service.prepare_batch_proxy_pool(
                 batch_id=batch_id,
                 task_group="outlook_batch",
                 concurrency=request.concurrency,
-                overrides=_build_batch_proxy_overrides(request),
+                overrides=batch_proxy_overrides,
             )
         except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            logger.warning("Outlook 批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
 
     # 在后台运行批量注册
     background_tasks.add_task(
@@ -1240,7 +1291,7 @@ async def start_outlook_batch_registration(
         batch_id,
         actual_service_ids,
         request.skip_registered,
-        request.proxy,
+        request.proxy if request.use_proxy else None,
         request.interval_min,
         request.interval_max,
         request.concurrency,
@@ -1251,6 +1302,9 @@ async def start_outlook_batch_registration(
         request.sub2api_service_ids,
         request.auto_upload_tm,
         request.tm_service_ids,
+        use_proxy=request.use_proxy,
+        proxy_task_group="outlook_batch",
+        proxy_overrides=batch_proxy_overrides,
     )
 
     return OutlookBatchRegistrationResponse(

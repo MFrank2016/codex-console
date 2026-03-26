@@ -6,7 +6,7 @@ import pytest
 from src.application.proxy_dispatch_service import ProxyDispatchService
 
 
-def test_resolve_single_candidates_returns_explicit_proxy_only_when_present():
+def test_resolve_single_candidates_returns_empty_when_use_proxy_disabled():
     service = ProxyDispatchService(
         settings_provider=lambda: SimpleNamespace(proxy_dynamic_task_defaults={}),
         dynamic_candidates_provider=lambda **_: ["http://dynamic-1:8000"],
@@ -18,27 +18,32 @@ def test_resolve_single_candidates_returns_explicit_proxy_only_when_present():
         task_group="generic_single",
         explicit_proxy="http://manual-1:8000",
         overrides={},
+        use_proxy=False,
     )
 
-    assert [item.proxy_url for item in candidates] == ["http://manual-1:8000"]
+    assert candidates == []
 
 
-def test_resolve_single_candidates_orders_dynamic_then_proxy_list_then_static():
+def test_resolve_single_candidates_prefers_dynamic_then_pool_then_static_when_use_proxy_enabled():
     service = ProxyDispatchService(
         settings_provider=lambda: SimpleNamespace(proxy_dynamic_task_defaults={}),
-        dynamic_candidates_provider=lambda **_: ["http://dynamic-1:8000", "http://dynamic-2:8000"],
-        proxy_list_provider=lambda limit: ["http://local-1:8000", "http://local-2:8000"],
-        static_proxy_provider=lambda: "http://static-1:8000",
+        dynamic_candidates_provider=lambda **_: ["http://dynamic-1:8000"],
+        proxy_list_provider=lambda limit: ["http://local-1:8000"],
+        static_proxy_provider=lambda: None,
     )
 
-    candidates = service.resolve_single_candidates("generic_single", None, {"proxy_list_candidate_limit": 2})
+    candidates = service.resolve_single_candidates(
+        "generic_single",
+        "http://manual-1:8000",
+        {"proxy_list_candidate_limit": 2},
+        use_proxy=True,
+    )
 
-    assert [item.source for item in candidates] == [
-        "dynamic_pool",
-        "dynamic_pool",
-        "proxy_list",
-        "proxy_list",
-        "static",
+    assert [item.source for item in candidates] == ["dynamic_pool", "proxy_list", "static"]
+    assert [item.proxy_url for item in candidates] == [
+        "http://dynamic-1:8000",
+        "http://local-1:8000",
+        "http://manual-1:8000",
     ]
 
 
@@ -66,7 +71,7 @@ def test_resolve_single_candidates_uses_random_sample_for_proxy_list_limit(monke
         static_proxy_provider=lambda: None,
     )
 
-    candidates = service.resolve_single_candidates("generic_single", None, {})
+    candidates = service.resolve_single_candidates("generic_single", None, {}, use_proxy=True)
 
     proxy_list_candidates = [item.proxy_url for item in candidates if item.source == "proxy_list"]
     assert sample_calls == [(local_candidates, 5)]
@@ -113,6 +118,7 @@ def test_resolve_single_candidates_uses_override_proxy_list_limit_over_task_grou
             "dynamic_request_count": 2,
             "proxy_list_candidate_limit": 2,
         },
+        use_proxy=True,
     )
 
     proxy_list_candidates = [item.proxy_url for item in candidates if item.source == "proxy_list"]
@@ -132,7 +138,7 @@ def test_resolve_single_candidates_falls_back_when_dynamic_provider_raises():
         static_proxy_provider=lambda: "http://static-1:8000",
     )
 
-    candidates = service.resolve_single_candidates("generic_single", None, {})
+    candidates = service.resolve_single_candidates("generic_single", None, {}, use_proxy=True)
 
     proxy_list_candidates = [item.proxy_url for item in candidates if item.source == "proxy_list"]
     assert [item.source for item in candidates[:-1]] == ["proxy_list"] * 5

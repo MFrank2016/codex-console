@@ -281,6 +281,7 @@ def test_start_registration_queues_proxy_override_metadata(route_db, batch_state
         registration_routes.start_registration(
             registration_routes.RegistrationTaskCreate(
                 email_service_type="tempmail",
+                use_proxy=True,
                 dynamic_proxy_request_count=4,
                 proxy_list_candidate_limit=2,
             ),
@@ -290,6 +291,7 @@ def test_start_registration_queues_proxy_override_metadata(route_db, batch_state
 
     queued = background.tasks[0]
     assert queued.kwargs["proxy_task_group"] == "single_registration"
+    assert queued.kwargs["use_proxy"] is True
     assert queued.kwargs["proxy_overrides"] == {
         "dynamic_request_count": 4,
         "proxy_list_candidate_limit": 2,
@@ -318,6 +320,7 @@ def test_start_batch_registration_prepares_proxy_pool_with_overrides(route_db, b
             registration_routes.BatchRegistrationRequest(
                 count=2,
                 email_service_type="tempmail",
+                use_proxy=True,
                 concurrency=3,
                 dynamic_proxy_request_count=9,
                 dynamic_proxy_probe_url="https://probe.example.com/ip",
@@ -338,30 +341,38 @@ def test_start_batch_registration_prepares_proxy_pool_with_overrides(route_db, b
     }
 
 
-def test_start_batch_registration_rejects_when_proxy_pool_prepare_fails(route_db, batch_state, monkeypatch):
+def test_start_batch_registration_keeps_queued_flow_when_proxy_pool_prepare_fails(route_db, batch_state, monkeypatch):
     monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
 
     class FakeBatchService:
         def prepare_batch_proxy_pool(self, **kwargs):
             raise RuntimeError("insufficient proxy candidates for batch pool")
 
+        def create_batch_tasks(self, *, count, proxy, pipeline_key):
+            return [
+                crud.create_registration_task(route_db, task_uuid=f"proxy-fallback-task-{idx}", proxy=proxy, pipeline_key=pipeline_key)
+                for idx in range(count)
+            ]
+
     monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: FakeBatchService())
+    background = BackgroundTasks()
 
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(
-            registration_routes.start_batch_registration(
-                registration_routes.BatchRegistrationRequest(
-                    count=2,
-                    email_service_type="tempmail",
-                    concurrency=2,
-                    dynamic_proxy_strategy="exclusive",
-                ),
-                BackgroundTasks(),
-            )
+    response = asyncio.run(
+        registration_routes.start_batch_registration(
+            registration_routes.BatchRegistrationRequest(
+                count=2,
+                email_service_type="tempmail",
+                use_proxy=True,
+                concurrency=2,
+                dynamic_proxy_strategy="exclusive",
+            ),
+            background,
         )
+    )
 
-    assert exc_info.value.status_code == 400
-    assert "insufficient proxy candidates" in exc_info.value.detail
+    assert response.count == 2
+    assert len(response.tasks) == 2
+    assert background.tasks[0].func is registration_routes.run_batch_registration
 
 
 def test_start_outlook_batch_registration_prepares_proxy_pool(route_db, batch_state, monkeypatch):
@@ -392,6 +403,7 @@ def test_start_outlook_batch_registration_prepares_proxy_pool(route_db, batch_st
         registration_routes.start_outlook_batch_registration(
             registration_routes.OutlookBatchRegistrationRequest(
                 service_ids=[service.id],
+                use_proxy=True,
                 concurrency=2,
                 dynamic_proxy_request_count=6,
                 dynamic_proxy_probe_url="https://probe.example.com/outlook",

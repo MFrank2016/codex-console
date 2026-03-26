@@ -38,6 +38,8 @@ class FakeTaskManager:
     def __init__(self):
         self._batch_status = {}
         self._batch_logs = {}
+        self._task_status = {}
+        self._task_logs = {}
         self._cancelled = set()
         self._closed_streams = []
         self._loop = None
@@ -71,6 +73,21 @@ class FakeTaskManager:
 
     def get_batch_logs(self, batch_id):
         return list(self._batch_logs.get(batch_id, []))
+
+    def update_status(self, task_uuid, status, **kwargs):
+        self._task_status.setdefault(task_uuid, {}).update({"status": status, **kwargs})
+
+    def add_log(self, task_uuid, message):
+        self._task_logs.setdefault(task_uuid, []).append(message)
+
+    def get_logs(self, task_uuid):
+        return list(self._task_logs.get(task_uuid, []))
+
+    def clear_task_steps(self, task_uuid):
+        return None
+
+    def close_task_stream(self, task_uuid, final_status):
+        return None
 
     def is_batch_cancelled(self, batch_id):
         return batch_id in self._cancelled or self._batch_status.get(batch_id, {}).get("cancelled", False)
@@ -245,6 +262,7 @@ async def test_batch_registration_service_uses_batch_proxy_pool_for_parallel_bat
         task_uuids=task_ids,
         email_service_type="tempmail",
         proxy=None,
+        use_proxy=True,
         email_service_config=None,
         email_service_id=None,
         concurrency=1,
@@ -305,6 +323,7 @@ async def test_batch_registration_service_marks_task_failed_when_proxy_pool_exha
         task_uuids=task_ids,
         email_service_type="tempmail",
         proxy=None,
+        use_proxy=True,
         email_service_config=None,
         email_service_id=None,
         interval_min=0,
@@ -318,3 +337,51 @@ async def test_batch_registration_service_marks_task_failed_when_proxy_pool_exha
     assert failed_task is not None
     assert failed_task.status == "failed"
     assert "proxy pool exhausted" in (failed_task.error_message or "")
+
+
+@pytest.mark.anyio
+async def test_batch_registration_service_marks_task_failed_when_use_proxy_enabled_but_no_proxy_available(db_factory, temp_db):
+    from src.application.batch_registration_service import BatchRegistrationService
+
+    task_ids = []
+    for idx in range(2):
+        task = crud.create_registration_task(temp_db, task_uuid=f"proxy-required-task-{idx}")
+        task_ids.append(task.task_uuid)
+
+    async def fake_runner(task_uuid, *args, **kwargs):
+        raise AssertionError("runner should not be called when no proxy candidates are available")
+
+    class FakeDispatcher:
+        def resolve_single_candidates(self, task_group, explicit_proxy, overrides, *, use_proxy):
+            assert task_group == "batch_registration"
+            assert explicit_proxy is None
+            assert use_proxy is True
+            return []
+
+    task_manager = FakeTaskManager()
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        batch_tasks_store={},
+        registration_task_runner=fake_runner,
+        proxy_dispatcher=FakeDispatcher(),
+    )
+
+    summary = await service.run_batch_parallel(
+        batch_id="batch-proxy-required",
+        task_uuids=task_ids,
+        email_service_type="tempmail",
+        proxy=None,
+        use_proxy=True,
+        email_service_config=None,
+        email_service_id=None,
+        concurrency=1,
+        proxy_task_group="batch_registration",
+        proxy_overrides={},
+    )
+
+    failed_tasks = [crud.get_registration_task(temp_db, task_uuid) for task_uuid in task_ids]
+    assert summary.failed == 2
+    assert all(task is not None and task.status == "failed" for task in failed_tasks)
+    assert all("代理已启用" in (task.error_message or "") for task in failed_tasks if task is not None)
+    assert any("代理已启用" in line for line in task_manager.get_batch_logs("batch-proxy-required"))

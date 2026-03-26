@@ -39,6 +39,7 @@ class FakeTaskManager:
         self._task_progress = {}
         self._task_cancelled = {}
         self._logs = {}
+        self._stream_events = {}
         self._closed_streams = []
         self._loop = None
 
@@ -62,9 +63,18 @@ class FakeTaskManager:
 
     def add_log(self, task_uuid, message):
         self._logs.setdefault(task_uuid, []).append(message)
+        self._stream_events.setdefault(task_uuid, []).append(
+            {
+                "kind": "log_appended",
+                "payload": {"task_uuid": task_uuid, "message": message},
+            }
+        )
 
     def get_logs(self, task_uuid):
         return list(self._logs.get(task_uuid, []))
+
+    def get_stream_events(self, task_uuid):
+        return list(self._stream_events.get(task_uuid, []))
 
     def create_log_callback(self, task_uuid, prefix="", batch_id=""):
         def _callback(message: str):
@@ -350,6 +360,7 @@ def test_registration_service_retries_proxy_related_failure_with_next_candidate(
         email_service_type="tempmail",
         proxy=None,
         email_service_config=None,
+        use_proxy=True,
         proxy_task_group="single_registration",
         proxy_overrides={"dynamic_request_count": 2},
     )
@@ -395,9 +406,50 @@ def test_registration_service_does_not_retry_non_proxy_failure(db_factory, temp_
         email_service_type="tempmail",
         proxy=None,
         email_service_config=None,
+        use_proxy=True,
         proxy_task_group="single_registration",
         proxy_overrides={},
     )
 
     assert attempts == ["http://dynamic-1:8000"]
     assert result.run.status == "failed"
+
+
+def test_registration_service_marks_task_failed_after_creation_when_use_proxy_enabled_but_no_proxy_available(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-proxy-required", pipeline_key="current_pipeline")
+    task_manager = FakeTaskManager()
+
+    class FakeDispatcher:
+        def resolve_single_candidates(self, task_group, explicit_proxy, overrides, *, use_proxy):
+            assert task_group == "single_registration"
+            assert explicit_proxy is None
+            assert use_proxy is True
+            return []
+
+        def is_proxy_related_failure(self, error):
+            return False
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=lambda **kwargs: RegistrationJobResult(success=True, email="unexpected@example.com"),
+        proxy_dispatcher=FakeDispatcher(),
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid="task-proxy-required",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        use_proxy=True,
+        proxy_task_group="single_registration",
+        proxy_overrides={},
+    )
+
+    stream_events = task_manager.get_stream_events("task-proxy-required")
+    assert result.task is not None
+    assert result.task.status == "failed"
+    assert "代理已启用" in (result.task.error_message or "")
+    assert any("代理已启用" in item["payload"]["message"] for item in stream_events)

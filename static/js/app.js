@@ -172,6 +172,8 @@ const elements = {
     form: document.getElementById('registration-form'),
     emailService: document.getElementById('email-service'),
     pipelineKey: document.getElementById('pipeline-key'),
+    useProxy: document.getElementById('use-proxy'),
+    proxy: document.getElementById('proxy'),
     regMode: document.getElementById('reg-mode'),
     regModeGroup: document.getElementById('reg-mode-group'),
     batchCountGroup: document.getElementById('batch-count-group'),
@@ -623,9 +625,13 @@ async function handleStartRegistration(e) {
     resetRegistrationStreamViewState();
 
     // 构建请求数据（代理从设置中自动获取）
+    const useProxy = !!elements.useProxy?.checked;
+    const staticProxy = useProxy ? ((elements.proxy?.value || '').trim() || null) : null;
     const requestData = {
         email_service_type: emailServiceType,
         pipeline_key: elements.pipelineKey ? (elements.pipelineKey.value || 'current_pipeline') : 'current_pipeline',
+        use_proxy: useProxy,
+        proxy: staticProxy,
         auto_upload_cpa: elements.autoUploadCpa ? elements.autoUploadCpa.checked : false,
         cpa_service_ids: elements.autoUploadCpa && elements.autoUploadCpa.checked ? getSelectedServiceIds(elements.cpaServiceSelect) : [],
         auto_upload_sub2api: elements.autoUploadSub2api ? elements.autoUploadSub2api.checked : false,
@@ -1715,6 +1721,8 @@ async function handleOutlookBatchRegistration() {
         interval_max: intervalMax,
         concurrency: Math.min(50, Math.max(1, concurrency)),
         mode: mode,
+        use_proxy: !!elements.useProxy?.checked,
+        proxy: elements.useProxy?.checked ? ((elements.proxy?.value || '').trim() || null) : null,
         auto_upload_cpa: elements.autoUploadCpa ? elements.autoUploadCpa.checked : false,
         cpa_service_ids: elements.autoUploadCpa && elements.autoUploadCpa.checked ? getSelectedServiceIds(elements.cpaServiceSelect) : [],
         auto_upload_sub2api: elements.autoUploadSub2api ? elements.autoUploadSub2api.checked : false,

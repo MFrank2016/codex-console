@@ -85,6 +85,12 @@ def test_registration_template_recent_accounts_uses_shared_table_shell():
     assert "recent-accounts-table table-shell" in template or "table-shell recent-accounts-table" in template
 
 
+def test_registration_template_contains_use_proxy_controls_in_config_panel():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    assert 'id="use-proxy"' in template
+    assert 'id="proxy"' in template
+
+
 def test_registration_workbench_stylesheet_stretches_console_log_for_taller_log_panel():
     stylesheet = Path("static/css/registration_workbench.css").read_text(encoding="utf-8")
     assert ".feedback-panel-log .console-log" in stylesheet
@@ -101,6 +107,14 @@ def test_app_js_posts_count_zero_for_unlimited_mode():
 def test_app_js_posts_selected_pipeline_key_for_batch_request():
     result = run_app_js_scenario("pipeline_batch_request")
     assert result["request_payload"]["pipeline_key"] == "codexgen_pipeline"
+
+
+def test_app_js_builds_use_proxy_request_matrix_from_config_controls():
+    result = run_app_js_scenario("single_use_proxy_request_matrix")
+    assert result["disabled_request"]["use_proxy"] is False
+    assert result["disabled_request"]["proxy"] is None
+    assert result["enabled_request"]["use_proxy"] is True
+    assert result["enabled_request"]["proxy"] == "http://manual-static:8000"
 
 
 def test_app_js_renders_task_step_waterfall_html():
