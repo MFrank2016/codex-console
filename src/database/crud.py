@@ -1363,21 +1363,34 @@ def mark_scheduled_run_stop_requested(
     requested_at: Optional[datetime] = None,
 ) -> Optional[ScheduledRun]:
     """标记定时执行记录已请求停止。"""
+    actual_requested_at = requested_at or utc_now_naive()
+    updated_rows = (
+        db.query(ScheduledRun)
+        .filter(ScheduledRun.id == run_id)
+        .filter(ScheduledRun.status == "running")
+        .filter(ScheduledRun.finished_at.is_(None))
+        .filter(ScheduledRun.stop_requested_at.is_(None))
+        .update(
+            {
+                ScheduledRun.stop_requested_at: actual_requested_at,
+                ScheduledRun.stop_requested_by: requested_by,
+                ScheduledRun.stop_reason: reason,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+
     run = get_scheduled_run_by_id(db, run_id)
     if not run:
         return None
-
+    if updated_rows == 1:
+        return run
     if run.status != "running" or run.finished_at is not None:
         return None
     if run.stop_requested_at is not None:
         return run
-
-    run.stop_requested_at = requested_at or utc_now_naive()
-    run.stop_requested_by = requested_by
-    run.stop_reason = reason
-    db.commit()
-    db.refresh(run)
-    return run
+    return None
 
 
 def get_scheduled_run_log_chunk(

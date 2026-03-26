@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from threading import Event
+from threading import Barrier, Event, Thread, current_thread
 
 import pytest
 from fastapi.testclient import TestClient
@@ -240,6 +240,56 @@ def test_scheduler_engine_request_run_stop_emits_stopping_only_once(temp_db):
 
     assert engine.request_run_stop(run_id, requested_by="tester", reason="first") is True
     assert engine.request_run_stop(run_id, requested_by="tester", reason="second") is True
+
+    status_events = [
+        event["payload"]["status"]
+        for event in _get_run_stream_events(run_id)
+        if event["kind"] == "run_status_changed"
+    ]
+    assert status_events == ["running", "stopping"]
+
+
+def test_scheduler_engine_request_run_stop_emits_stopping_only_once_under_race(temp_db, monkeypatch):
+    plan = _create_plan(temp_db, task_type="cpa_cleanup", due=False)
+    engine = SchedulerEngine(
+        runner_map={"cpa_cleanup": lambda **kwargs: None},
+        worker_spawner=lambda _fn, _name: None,
+    )
+    run_id = engine.trigger_plan_now(plan.id)
+
+    barrier = Barrier(2)
+    original_get_run = crud.get_scheduled_run_by_id
+
+    def _gated_get_run(db, lookup_run_id):
+        run = original_get_run(db, lookup_run_id)
+        if (
+            lookup_run_id == run_id
+            and run is not None
+            and run.stop_requested_at is None
+            and current_thread().name.startswith("stop-race-")
+        ):
+            barrier.wait(timeout=1.0)
+        return run
+
+    monkeypatch.setattr(crud, "get_scheduled_run_by_id", _gated_get_run)
+
+    results: list[bool] = []
+    errors: list[Exception] = []
+
+    def _request_stop():
+        try:
+            results.append(engine.request_run_stop(run_id, requested_by="tester", reason="race"))
+        except Exception as exc:  # pragma: no cover - 并发兜底
+            errors.append(exc)
+
+    threads = [Thread(target=_request_stop, name=f"stop-race-{index}") for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2.0)
+
+    assert not errors
+    assert results == [True, True]
 
     status_events = [
         event["payload"]["status"]
