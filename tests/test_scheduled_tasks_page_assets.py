@@ -144,16 +144,31 @@ def test_scheduled_tasks_template_contains_run_center_hooks():
 def test_scheduled_tasks_run_center_filter_panel_uses_shared_shell_classes():
     template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
     assert "filter-panel" in template
+    assert "scheduled-filter-toolbar" in template
+    assert "scheduled-filter-title-group" in template
+    assert "scheduled-filter-caption" in template
     assert "filter-panel-grid" in template
+    assert "filter-panel-grid--dense" in template
+    assert template.count("scheduled-filter-field") >= 4
+    assert template.count("scheduled-filter-label") >= 4
     assert "filter-panel-actions" in template
+    assert "filter-panel-actions--dense" in template
     assert "pagination-panel" in template
+    assert "pagination-panel--dense" in template
     assert "pagination-jump" in template
+    assert "pagination-jump--dense" in template
+    assert "pagination-summary-pill" in template
     _assert_tag_class_contains(_get_tag_by_id(template, "select", "scheduled-run-filter-task-type"), "form-select")
     _assert_tag_class_contains(_get_tag_by_id(template, "select", "scheduled-run-filter-status"), "form-select")
     _assert_tag_class_contains(_get_tag_by_id(template, "input", "scheduled-run-filter-started-from"), "form-input")
     _assert_tag_class_contains(_get_tag_by_id(template, "input", "scheduled-run-filter-started-to"), "form-input")
     _assert_tag_class_contains(_get_tag_by_id(template, "input", "scheduled-run-page-jump-input"), "form-input")
     _assert_tag_class_contains(_get_tag_by_id(template, "input", "scheduled-run-page-jump-input"), "pagination-jump-input")
+    _assert_tag_class_contains(_get_tag_by_id(template, "div", "scheduled-run-pagination-summary"), "pagination-summary-pill")
+    assert '<label class="scheduled-filter-label" for="scheduled-run-filter-task-type">任务类型</label>' in template
+    assert '<label class="scheduled-filter-label" for="scheduled-run-filter-status">运行状态</label>' in template
+    assert '<label class="scheduled-filter-label" for="scheduled-run-filter-started-from">开始时间从</label>' in template
+    assert '<label class="scheduled-filter-label" for="scheduled-run-filter-started-to">开始时间到</label>' in template
 
     header_span = _find_div_start_by_class_tokens(template, {"card-header", "filter-panel"})
     assert header_span is not None
@@ -180,6 +195,22 @@ def test_scheduled_tasks_template_contains_run_center_pagination_hooks():
     assert 'id="scheduled-run-page-jump-input"' in template
     assert 'id="scheduled-run-page-jump-btn"' in template
     assert 'id="scheduled-run-pagination-summary"' in template
+
+
+def test_scheduled_tasks_template_uses_dense_colgroup_layout_for_plan_and_run_tables():
+    template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
+
+    assert 'class="data-table scheduled-dense-table scheduled-plans-grid"' in template
+    assert 'class="data-table scheduled-dense-table scheduled-runs-grid"' in template
+    assert template.count("<colgroup>") >= 2
+    assert 'class="scheduled-col-plan-id"' in template
+    assert 'class="scheduled-col-plan-name"' in template
+    assert 'class="scheduled-col-run-summary"' in template
+    assert 'class="scheduled-col-run-actions"' in template
+    assert template.count('class="scheduled-table-heading"') >= 9
+    assert template.count('class="scheduled-table-heading-meta"') >= 9
+    assert '<span class="scheduled-table-heading">摘要</span>' in template
+    assert '<span class="scheduled-table-heading-meta">关键指标</span>' in template
 
 
 def test_scheduled_tasks_template_keeps_pagination_markup_minimal_without_inline_layout_styles():
@@ -487,7 +518,11 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     stylesheet = Path("static/css/style.css").read_text(encoding="utf-8")
     assert ".table-shell" in stylesheet
     assert ".table-actions" in stylesheet
+    assert ".table-actions--compact" in stylesheet
+    assert ".scheduled-dense-table" in stylesheet
+    assert ".scheduled-plan-link" in stylesheet
     assert ".scheduled-run-summary" in stylesheet
+    assert ".scheduled-run-summary-number" in stylesheet
     assert ".scheduled-run-detail-head" in stylesheet
     assert ".scheduled-run-log-panel" in stylesheet
     assert ".scheduled-run-log-modal-content" in stylesheet
@@ -499,6 +534,23 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert ".scheduled-run-log-timestamp" in stylesheet
     assert ".scheduled-run-log-message" in stylesheet
     assert ".scheduled-run-log-level-error" in stylesheet
+    assert ".scheduled-filter-toolbar" in stylesheet
+    assert ".scheduled-filter-title-group" in stylesheet
+    assert ".scheduled-filter-caption" in stylesheet
+    assert ".scheduled-filter-field" in stylesheet
+    assert ".scheduled-filter-label" in stylesheet
+    assert ".filter-panel-grid--dense" in stylesheet
+    assert ".filter-panel-actions--dense" in stylesheet
+    assert ".pagination-panel--dense" in stylesheet
+    assert ".pagination-summary-pill" in stylesheet
+    assert ".pagination-jump--dense" in stylesheet
+    assert ".pagination-jump-field" in stylesheet
+    assert ".scheduled-table-heading" in stylesheet
+    assert ".scheduled-table-heading-meta" in stylesheet
+    assert '[data-run-state="running"]' in stylesheet
+    assert '[data-run-state="failed"]' in stylesheet
+    assert '[data-plan-enabled="true"]' in stylesheet
+    assert '[data-plan-enabled="false"]' in stylesheet
 
     shell_block = _extract_css_block(stylesheet, ".scheduled-run-console-shell")
     row_block = _extract_css_block(stylesheet, ".scheduled-run-log-line")
@@ -523,6 +575,42 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert "padding: 6px 8px;" in status_spacing_blocks[0]
     assert "margin-bottom: 6px;" in status_spacing_blocks[0]
     assert "padding: 6px 8px;" in toolbar_spacing_blocks[0]
+
+    dense_td_blocks = _extract_css_blocks_for_selector(stylesheet, ".scheduled-dense-table td")
+    assert any("padding: 10px 12px;" in block for block in dense_td_blocks)
+
+    summary_number_block = _extract_css_block(stylesheet, ".scheduled-run-summary-number")
+    assert "font-weight: 700;" in summary_number_block
+    assert "color: var(--primary-color);" in summary_number_block
+
+    compact_button_block = _extract_css_block(stylesheet, ".table-actions--compact .btn")
+    assert "min-width: 0;" in compact_button_block
+
+    filter_toolbar_block = _extract_css_block(stylesheet, ".scheduled-filter-toolbar")
+    assert "padding:" in filter_toolbar_block
+    assert "border-radius:" in filter_toolbar_block
+
+    filter_label_block = _extract_css_block(stylesheet, ".scheduled-filter-label")
+    assert "font-size:" in filter_label_block
+    assert "font-weight:" in filter_label_block
+
+    filter_dense_input_blocks = _extract_css_blocks_for_selector(stylesheet, ".scheduled-filter-toolbar .form-select")
+    assert any("min-height: 36px;" in block for block in filter_dense_input_blocks)
+
+    pagination_panel_block = _extract_css_block(stylesheet, ".pagination-panel--dense")
+    assert "padding:" in pagination_panel_block
+    assert "border-radius:" in pagination_panel_block
+
+    pagination_summary_block = _extract_css_block(stylesheet, ".pagination-summary-pill")
+    assert "font-variant-numeric: tabular-nums;" in pagination_summary_block
+    assert "background:" in pagination_summary_block
+
+    table_heading_block = _extract_css_block(stylesheet, ".scheduled-table-heading")
+    assert "font-weight:" in table_heading_block
+
+    table_heading_meta_block = _extract_css_block(stylesheet, ".scheduled-table-heading-meta")
+    assert "font-size:" in table_heading_meta_block
+    assert "color:" in table_heading_meta_block
 
 
 def test_realtime_log_stylesheet_aligns_scheduled_run_shared_console_with_registration_console():
@@ -617,10 +705,11 @@ def test_scheduled_tasks_script_contains_run_center_live_log_and_stop_hooks():
     assert "function stopScheduledRunLogPolling(" in script
     assert "function appendScheduledRunLogChunk(" in script
     assert ("setInterval(" in script or "setTimeout(" in script) and "scheduled-runs" in script
-    assert 'data-action="filter-plan-runs"' in script
+    assert 'data-action="filter-plan-runs"' not in script
     assert 'data-action="view-run-detail"' in script
     assert 'data-action="view-run-log"' in script
     assert 'data-action="stop-run"' in script
+    assert 'class="scheduled-plan-link"' in script
     assert "async function stopScheduledRun(" in script
     assert '"stopping"' in script or "'stopping'" in script
 
@@ -741,6 +830,96 @@ if (!html.includes('处理 30 · 刷新 28 · 上传 27')) throw new Error('miss
     assert completed.returncode == 0, completed.stderr
 
 
+def test_scheduled_tasks_render_run_rows_use_compact_statusful_markup():
+    node_script = r"""
+const fs = require('fs');
+const vm = require('vm');
+
+function makeElement() {
+  let html = '';
+  const classes = new Set();
+  return {
+    dataset: {},
+    style: {},
+    disabled: false,
+    setAttribute: () => {},
+    removeAttribute: () => {},
+    addEventListener: () => {},
+    scrollIntoView: () => {},
+    get innerHTML() { return html; },
+    set innerHTML(next) { html = String(next ?? ''); },
+    classList: {
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      contains: (name) => classes.has(name),
+    },
+  };
+}
+
+const runsBody = makeElement();
+
+global.window = {};
+global.document = {
+  getElementById: (id) => (id === 'scheduled-runs-table-body' ? runsBody : null),
+  querySelectorAll: () => [],
+  addEventListener: () => {},
+  createElement: () => {
+    let value = '';
+    return {
+      set textContent(next) { value = String(next ?? ''); },
+      get textContent() { return value; },
+      get innerHTML() { return value; },
+      set innerHTML(next) { value = String(next ?? ''); },
+    };
+  },
+};
+
+global.api = { get: async () => ({}), post: async () => ({}), put: async () => ({}) };
+global.toast = { error: () => {}, warning: () => {}, success: () => {} };
+global.format = { date: (value) => String(value ?? '-') };
+global.theme = { toggle: () => {} };
+
+vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
+  filename: 'static/js/scheduled_tasks.js',
+});
+
+window.renderScheduledRuns([
+  {
+    id: 1,
+    plan_id: 101,
+    plan_name: 'cleanup',
+    task_type: 'cpa_cleanup',
+    trigger_source: 'manual',
+    status: 'running',
+    can_stop: true,
+    started_at: null,
+    finished_at: null,
+    summary: { probe_items_selected: 5000, remote_deleted: 18, remaining_valid_count: 982 },
+  },
+]);
+
+const html = runsBody.innerHTML;
+if (!html.includes('class="scheduled-run-row')) throw new Error('missing scheduled run row class: ' + html);
+if (!html.includes('data-run-state="running"')) throw new Error('missing run state attribute: ' + html);
+if (!html.includes('table-actions table-actions--compact')) throw new Error('missing compact actions class: ' + html);
+if (!html.includes('class="scheduled-plan-link"')) throw new Error('missing plan link action: ' + html);
+if (!html.includes('data-action="logs"')) throw new Error('missing plan filter shortcut action: ' + html);
+if (html.includes('>同计划<')) throw new Error('same-plan button should be removed: ' + html);
+if (!html.includes('scheduled-run-summary-number')) throw new Error('missing summary number emphasis: ' + html);
+if (!html.includes('data-summary-text="扫描 5000 · 清理 18 · 剩余 982"')) throw new Error('missing raw summary attribute: ' + html);
+if (!html.includes('data-action="stop-run"')) throw new Error('missing stop action: ' + html);
+"""
+    completed = subprocess.run(
+        ["node", "-e", node_script],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_scheduled_tasks_failed_or_cancelled_runs_append_short_reason_to_summary():
     node_script = r"""
 const fs = require('fs');
@@ -828,6 +1007,118 @@ if (!html.includes('扫描 5000 · 清理 4 · 剩余 996 · 原因：接口超�
 if (!html.includes('补号 3 · 原因：用户停止')) {
   throw new Error('missing cancelled refill fallback summary: ' + html);
 }
+"""
+    completed = subprocess.run(
+        ["node", "-e", node_script],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_scheduled_tasks_load_plans_renders_dense_stateful_rows():
+    node_script = r"""
+const fs = require('fs');
+const vm = require('vm');
+
+function makeElement() {
+  let html = '';
+  const classes = new Set();
+  return {
+    dataset: {},
+    style: {},
+    disabled: false,
+    value: '',
+    checked: false,
+    setAttribute: () => {},
+    removeAttribute: () => {},
+    addEventListener: () => {},
+    scrollIntoView: () => {},
+    get innerHTML() { return html; },
+    set innerHTML(next) { html = String(next ?? ''); },
+    classList: {
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      contains: (name) => classes.has(name),
+    },
+  };
+}
+
+const plansBody = makeElement();
+
+global.window = {};
+global.document = {
+  getElementById: (id) => (id === 'scheduled-plans-table-body' ? plansBody : null),
+  querySelectorAll: () => [],
+  addEventListener: () => {},
+  createElement: () => {
+    let value = '';
+    return {
+      set textContent(next) { value = String(next ?? ''); },
+      get textContent() { return value; },
+      get innerHTML() { return value; },
+      set innerHTML(next) { value = String(next ?? ''); },
+    };
+  },
+};
+
+global.api = {
+  get: async (url) => {
+    if (url === '/scheduled-plans') {
+      return [
+        {
+          id: 1,
+          name: 'hourly cleanup',
+          task_type: 'cpa_cleanup',
+          trigger_type: 'interval',
+          interval_value: 60,
+          interval_unit: 'minutes',
+          next_run_at: '2026-03-27T10:00:00',
+          last_run_started_at: '2026-03-27T09:00:00',
+          enabled: true,
+        },
+        {
+          id: 2,
+          name: 'nightly refill',
+          task_type: 'cpa_refill',
+          trigger_type: 'cron',
+          cron_expression: '0 0 * * *',
+          next_run_at: null,
+          last_run_started_at: null,
+          enabled: false,
+        },
+      ];
+    }
+    throw new Error('unexpected url: ' + url);
+  },
+  post: async () => ({}),
+  put: async () => ({}),
+};
+global.toast = { error: () => {}, warning: () => {}, success: () => {} };
+global.format = { date: (value) => String(value ?? '-') };
+global.theme = { toggle: () => {} };
+
+vm.runInThisContext(fs.readFileSync('static/js/scheduled_tasks.js', 'utf8'), {
+  filename: 'static/js/scheduled_tasks.js',
+});
+
+async function main() {
+  await window.loadPlans();
+  const html = plansBody.innerHTML;
+  if (!html.includes('class="scheduled-plan-row')) throw new Error('missing scheduled plan row class: ' + html);
+  if (!html.includes('data-plan-enabled="true"')) throw new Error('missing enabled plan attribute: ' + html);
+  if (!html.includes('data-plan-enabled="false"')) throw new Error('missing disabled plan attribute: ' + html);
+  if (!html.includes('table-actions table-actions--compact')) throw new Error('missing compact plan actions class: ' + html);
+  if (html.includes('display:flex;gap:4px;flex-wrap:wrap;')) throw new Error('inline action layout should be removed: ' + html);
+}
+
+main().catch((err) => {
+  console.error(err && err.stack ? err.stack : String(err));
+  process.exit(1);
+});
 """
     completed = subprocess.run(
         ["node", "-e", node_script],

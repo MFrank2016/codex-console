@@ -50,8 +50,22 @@ const REGISTRATION_WS_HANDSHAKE_TIMEOUT_MS = 2500;
 
 function parseRegistrationTimestampMs(value) {
     if (!value) return null;
-    const timestamp = Date.parse(String(value));
+    const raw = String(value).trim();
+    const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(raw)
+        ? raw
+        : (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(raw) ? `${raw}Z` : raw);
+    const timestamp = Date.parse(normalized);
     return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isBatchRegistrationModeSelected() {
+    const mode = elements?.regMode?.value;
+    return mode === 'batch' || mode === 'unlimited';
+}
+
+function shouldRenderSingleTaskSteps(task) {
+    const pipelineKey = task?.pipeline_key || currentTask?.pipeline_key || registrationStreamState?.task?.pipeline_key;
+    return pipelineKey !== 'codexgen_pipeline';
 }
 
 function formatElapsedMsToClock(elapsedMs) {
@@ -881,7 +895,7 @@ function isUnlimitedRegistrationMode() {
 
 function handleModeChange(e) {
     const mode = e.target.value;
-    isBatchMode = mode === 'batch' || mode === 'unlimited';
+    isBatchMode = isBatchRegistrationModeSelected();
 
     elements.batchCountGroup.style.display = mode === 'batch' ? 'block' : 'none';
     elements.batchOptions.style.display = isBatchMode ? 'block' : 'none';
@@ -946,6 +960,7 @@ async function handleStartRegistration(e) {
         requestData.email_service_id = parseInt(serviceId);
     }
 
+    isBatchMode = isBatchRegistrationModeSelected();
     if (isBatchMode) {
         await handleBatchRegistration(requestData);
     } else {
@@ -1018,13 +1033,24 @@ function finalizeSingleTaskIfTerminal(taskUuid, status) {
     stopTaskStreamPolling();
     stopLogPolling();
 
+    rememberSingleTaskStart(currentTask || registrationStreamState?.task, registrationStreamState?.taskProgress);
+    const finalElapsedText = Number.isFinite(singleTaskStartedAtMs)
+        ? formatElapsedMsToClock(Date.now() - singleTaskStartedAtMs)
+        : (elements.singleProgressElapsed?.textContent || '00:00:00');
+    setSingleTaskElapsedText(finalElapsedText);
+    stopRegistrationRuntimeTicker();
+
     // 先断开 WebSocket，让 onclose 能基于 taskFinalStatus/taskCompleted 做出正确分支判断
     disconnectWebSocket();
 
     // 让 realtime store 的连接状态收口（meta.local=true，不污染服务端 cursor）
     emitConnectionStateChanged('disconnected');
 
-    resetButtons();
+    elements.startBtn.disabled = false;
+    elements.cancelBtn.disabled = true;
+    activeTaskUuid = null;
+    sessionStorage.removeItem('activeTask');
+    setSingleTaskElapsedText(finalElapsedText);
 
     if (!toastShown) {
         toastShown = true;
@@ -1624,7 +1650,12 @@ function showTaskStatus(task) {
     elements.taskService.textContent = task.email_service ? getServiceTypeText(task.email_service) : '-';
     rememberSingleTaskStart(task, task.task_progress || registrationStreamState.taskProgress);
     renderSingleTaskProgressSummary(task.task_progress || registrationStreamState.taskProgress, registrationStreamState.currentStep);
-    renderTaskSteps(task.steps || []);
+    renderTaskSteps(shouldRenderSingleTaskSteps(task) ? (task.steps || []) : []);
+    renderSingleTaskElapsedClock();
+    if (isTerminalTaskStatus(task.status)) {
+        stopRegistrationRuntimeTicker();
+        return;
+    }
     ensureRegistrationRuntimeTicker();
 }
 
@@ -2062,7 +2093,7 @@ function resetButtons() {
     batchTaskStartedAtMs = null;
     currentTask = null;
     currentBatch = null;
-    isBatchMode = false;
+    isBatchMode = isBatchRegistrationModeSelected();
     // 重置完成标志
     taskCompleted = false;
     batchCompleted = false;

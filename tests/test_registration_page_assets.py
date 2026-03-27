@@ -138,6 +138,12 @@ def test_app_js_posts_selected_pipeline_key_for_batch_request():
     assert result["request_payload"]["pipeline_key"] == "codexgen_pipeline"
 
 
+def test_app_js_keeps_batch_submission_after_reset_when_ui_mode_still_batch():
+    result = run_app_js_scenario("batch_mode_persists_after_reset")
+    assert result["reg_mode_value"] == "batch"
+    assert result["request_path"] == "/registration/batch"
+
+
 def test_app_js_builds_use_proxy_request_matrix_from_config_controls():
     result = run_app_js_scenario("single_use_proxy_request_matrix")
     assert result["disabled_request"]["use_proxy"] is False
@@ -164,6 +170,12 @@ def test_app_js_single_task_flow_fetches_task_detail_and_renders_steps():
     assert "88ms" not in result["waterfall_html"]
 
 
+def test_app_js_hides_codexgen_single_task_step_waterfall():
+    result = run_app_js_scenario("codexgen_single_task_hides_steps")
+    assert result["waterfall_html"] == ""
+    assert result["waterfall_display"] == "none"
+
+
 def test_app_js_renders_single_task_progress_summary_instead_of_waterfall_primary_view():
     result = run_app_js_scenario("single_task_progress_summary")
     assert result["progress_step_text"] == "第 2 / 5 步"
@@ -176,6 +188,19 @@ def test_app_js_renders_single_task_runtime_timer_from_started_at():
     result = run_app_js_scenario("single_task_runtime_timer")
     assert result["progress_elapsed_text"] == "01:01:01"
     assert result["progress_elapsed_after_tick"] == "01:01:02"
+
+
+def test_app_js_treats_naive_utc_started_at_as_utc_for_runtime_timer():
+    result = run_app_js_scenario("single_task_runtime_timer_naive_utc")
+    assert result["progress_elapsed_text"] == "01:01:01"
+    assert result["progress_elapsed_after_tick"] == "01:01:02"
+
+
+def test_app_js_freezes_single_task_elapsed_when_task_reaches_terminal_status():
+    result = run_app_js_scenario("single_task_terminal_freezes_elapsed")
+    assert result["progress_elapsed_before_finalize"] == "01:01:01"
+    assert result["progress_elapsed_after_finalize"] == "01:01:06"
+    assert result["runtime_handle_cleared"] is True
 
 
 def test_app_js_renders_unlimited_progress_without_domain_stats_until_finished():

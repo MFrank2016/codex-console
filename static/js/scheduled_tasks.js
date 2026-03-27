@@ -880,16 +880,16 @@ function renderPlans(plans) {
             const toggleLabel = plan.enabled ? '禁用' : '启用';
             const shouldEnable = plan.enabled ? 'false' : 'true';
             return `
-                <tr>
+                <tr class="scheduled-plan-row" data-plan-id="${plan.id}" data-plan-enabled="${plan.enabled ? 'true' : 'false'}">
                     <td>${plan.id}</td>
-                    <td>${escapeHtml(plan.name || '-')}</td>
+                    <td class="scheduled-name-cell" title="${escapeHtml(plan.name || '-')}">${escapeHtml(plan.name || '-')}</td>
                     <td>${getTaskTypeText(plan.task_type)}</td>
-                    <td>${escapeHtml(getTriggerText(plan))}</td>
-                    <td>${format.date(plan.next_run_at)}</td>
+                    <td class="scheduled-trigger-cell" title="${escapeHtml(getTriggerText(plan))}">${escapeHtml(getTriggerText(plan))}</td>
+                    <td class="scheduled-time-cell">${format.date(plan.next_run_at)}</td>
                     <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                    <td>${format.date(plan.last_run_started_at)}</td>
+                    <td class="scheduled-time-cell">${format.date(plan.last_run_started_at)}</td>
                     <td>
-                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                        <div class="table-actions table-actions--compact">
                             <button class="btn btn-secondary btn-sm" data-action="detail" data-plan-id="${plan.id}" onclick="handlePlanAction(this)">详情</button>
                             <button class="btn btn-secondary btn-sm" data-action="logs" data-plan-id="${plan.id}" onclick="handlePlanAction(this)">记录</button>
                             <button class="btn btn-secondary btn-sm" data-action="edit" data-plan-id="${plan.id}" onclick="handlePlanAction(this)">编辑</button>
@@ -1389,6 +1389,28 @@ function summarizeScheduledRun(run) {
     return baseSummary;
 }
 
+function highlightScheduledRunSummaryNumbers(summaryText) {
+    const safeSummaryText = escapeHtml(summaryText || '-');
+    return safeSummaryText.replace(/\d+(?:\.\d+)?/g, (matched) => (
+        `<span class="scheduled-run-summary-number">${matched}</span>`
+    ));
+}
+
+function renderScheduledRunSummaryHtml(run) {
+    const uiStatus = getScheduledRunUiStatus(run);
+    const summaryText = summarizeScheduledRun(run);
+    const safeSummaryText = escapeHtml(summaryText || '-');
+
+    return `
+        <div
+            class="scheduled-run-summary"
+            data-summary-state="${escapeHtml(uiStatus || 'default')}"
+            data-summary-text="${safeSummaryText}"
+            title="${safeSummaryText}"
+        >${highlightScheduledRunSummaryNumbers(summaryText)}</div>
+    `;
+}
+
 function updateScheduledRunCacheItem(runId, updater) {
     const targetId = Number(runId);
     scheduledRunsCache = scheduledRunsCache.map((run) => {
@@ -1424,24 +1446,39 @@ function renderScheduledRuns(runs) {
 
     tbody.innerHTML = rows.map((run) => {
         const uiStatus = getScheduledRunUiStatus(run);
+        const rowClasses = ['scheduled-run-row'];
+        if (uiStatus) {
+            rowClasses.push(`scheduled-run-row--${uiStatus}`);
+        }
+        if (uiStatus === 'stopping') {
+            rowClasses.push('stopping');
+        }
         const stopAction = run.can_stop
             ? `<button class="btn btn-secondary btn-sm" data-action="stop-run" data-run-id="${run.id}" onclick="handleRunLogAction(this)">停止</button>`
             : '';
         return `
-            <tr class="${uiStatus === 'stopping' ? 'stopping' : ''}" data-run-id="${run.id}" data-run-state="${uiStatus}">
+            <tr class="${rowClasses.join(' ')}" data-run-id="${run.id}" data-run-state="${uiStatus}">
                 <td>${run.id}</td>
-                <td>${escapeHtml(run.plan_name || `计划 #${run.plan_id}`)}</td>
+                <td class="scheduled-name-cell">
+                    <button
+                        type="button"
+                        class="scheduled-plan-link"
+                        data-action="logs"
+                        data-plan-id="${run.plan_id}"
+                        onclick="handlePlanAction(this)"
+                        title="筛选同计划运行记录"
+                    >${escapeHtml(run.plan_name || `计划 #${run.plan_id}`)}</button>
+                </td>
                 <td>${getTaskTypeText(run.task_type)}</td>
                 <td>${escapeHtml(run.trigger_source || '-')}</td>
                 <td><span class="status-badge ${uiStatus}">${getRunStatusText(uiStatus)}</span></td>
-                <td>${format.date(run.started_at)}</td>
-                <td>${format.date(run.finished_at)}</td>
-                <td class="scheduled-run-summary-cell"><div class="scheduled-run-summary">${escapeHtml(summarizeScheduledRun(run))}</div></td>
+                <td class="scheduled-time-cell">${format.date(run.started_at)}</td>
+                <td class="scheduled-time-cell">${format.date(run.finished_at)}</td>
+                <td class="scheduled-run-summary-cell">${renderScheduledRunSummaryHtml(run)}</td>
                 <td>
-                    <div class="table-actions">
+                    <div class="table-actions table-actions--compact">
                         <button class="btn btn-secondary btn-sm" data-action="view-run-detail" data-run-id="${run.id}" onclick="handleRunLogAction(this)">详情</button>
                         <button class="btn btn-secondary btn-sm" data-action="view-run-log" data-run-id="${run.id}" onclick="handleRunLogAction(this)">日志</button>
-                        <button class="btn btn-secondary btn-sm" data-action="filter-plan-runs" data-plan-id="${run.plan_id}" onclick="handlePlanAction(this)">同计划</button>
                         ${stopAction}
                     </div>
                 </td>
@@ -2194,7 +2231,6 @@ async function handlePlanAction(button) {
                 showPlanDetail(planId);
                 return;
             case 'logs':
-            case 'filter-plan-runs':
                 await openRunLogs(planId);
                 return;
             case 'edit':

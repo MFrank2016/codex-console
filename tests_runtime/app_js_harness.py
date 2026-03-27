@@ -476,7 +476,7 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  elements,\n}};`,
   context,
 );
 
@@ -557,6 +557,18 @@ async function runScenario() {{
         request_payload: logs.lastPostPayload,
       }};
     }}
+    case 'batch_mode_persists_after_reset': {{
+      const regMode = getElement('reg-mode');
+      regMode.value = 'batch';
+      exported.handleModeChange({{ target: regMode }});
+      exported.resetButtons();
+      getElement('pipeline-key').value = 'codexgen_pipeline';
+      await exported.handleStartRegistration({{ preventDefault() {{}} }});
+      return {{
+        reg_mode_value: regMode.value,
+        request_path: logs.lastPostPath,
+      }};
+    }}
     case 'single_use_proxy_request_matrix': {{
       getElement('email-service').value = 'tempmail:default';
       getElement('proxy').value = 'http://manual-static:8000';
@@ -584,10 +596,35 @@ async function runScenario() {{
       }};
     }}
     case 'single_task_step_refresh': {{
-      await exported.handleSingleRegistration({{ email_service_type: 'tempmail', pipeline_key: 'codexgen_pipeline' }});
+      await exported.handleSingleRegistration({{ email_service_type: 'tempmail', pipeline_key: 'current_pipeline' }});
       return {{
         api_get_paths: logs.apiGetPaths.slice(),
         waterfall_html: getElement('task-step-waterfall').innerHTML,
+      }};
+    }}
+    case 'codexgen_single_task_hides_steps': {{
+      exported.showTaskStatus({{
+        task_uuid: 'task-single-01',
+        status: 'running',
+        email: 'tester@example.com',
+        email_service: 'tempmail',
+        pipeline_key: 'codexgen_pipeline',
+        started_at: '2026-03-27T09:00:49Z',
+        task_progress: {{
+          step_index: 2,
+          total_steps: 5,
+          progress_percent: 40,
+          elapsed_ms: 12000,
+        }},
+        steps: [
+          {{ step_key: 'create_email', status: 'completed', duration_ms: 100 }},
+          {{ step_key: 'submit_login_email', status: 'running', duration_ms: 200 }},
+        ],
+      }});
+
+      return {{
+        waterfall_html: getElement('task-step-waterfall').innerHTML,
+        waterfall_display: getElement('task-step-waterfall').style.display || '',
       }};
     }}
     case 'single_task_progress_summary': {{
@@ -646,6 +683,75 @@ async function runScenario() {{
       return {{
         progress_elapsed_text: progressElapsedText,
         progress_elapsed_after_tick: getElement('single-progress-elapsed').textContent,
+      }};
+    }}
+    case 'single_task_runtime_timer_naive_utc': {{
+      const originalParse = context.Date.parse;
+      context.Date.parse = (value) => {{
+        const text = String(value ?? '');
+        if (/Z$|[+-]\\d\\d:\\d\\d$/.test(text)) {{
+          return NativeDate.parse(text);
+        }}
+        return NativeDate.parse(`${{text}}+08:00`);
+      }};
+      currentNowMs = NativeDate.parse('2026-03-27T09:01:01Z');
+      exported.showTaskStatus({{
+        task_uuid: 'task-single-01',
+        status: 'running',
+        email: 'tester@example.com',
+        email_service: 'tempmail',
+        started_at: '2026-03-27T08:00:00',
+        task_progress: {{
+          step_index: 2,
+          total_steps: 5,
+          progress_percent: 40,
+          elapsed_ms: 12000,
+        }},
+        steps: [],
+      }});
+
+      const progressElapsedText = getElement('single-progress-elapsed').textContent;
+      const runtimeHandle = intervalHandles.find(handle => handle && handle.ms === 1000 && handle.cleared !== true);
+      if (!runtimeHandle) {{
+        throw new Error('runtime interval handle missing');
+      }}
+      currentNowMs += 1000;
+      await runtimeHandle.fn();
+      context.Date.parse = originalParse;
+      return {{
+        progress_elapsed_text: progressElapsedText,
+        progress_elapsed_after_tick: getElement('single-progress-elapsed').textContent,
+      }};
+    }}
+    case 'single_task_terminal_freezes_elapsed': {{
+      currentNowMs = NativeDate.parse('2026-03-27T09:01:01Z');
+      exported.showTaskStatus({{
+        task_uuid: 'task-single-01',
+        status: 'running',
+        email: 'tester@example.com',
+        email_service: 'tempmail',
+        pipeline_key: 'current_pipeline',
+        started_at: '2026-03-27T08:00:00Z',
+        task_progress: {{
+          step_index: 2,
+          total_steps: 5,
+          progress_percent: 40,
+          elapsed_ms: 12000,
+        }},
+        steps: [],
+      }});
+
+      const runtimeHandle = intervalHandles.find(handle => handle && handle.ms === 1000 && handle.cleared !== true);
+      if (!runtimeHandle) {{
+        throw new Error('runtime interval handle missing');
+      }}
+      const progressElapsedBeforeFinalize = getElement('single-progress-elapsed').textContent;
+      currentNowMs += 5000;
+      exported.finalizeSingleTaskIfTerminal('task-single-01', 'completed');
+      return {{
+        progress_elapsed_before_finalize: progressElapsedBeforeFinalize,
+        progress_elapsed_after_finalize: getElement('single-progress-elapsed').textContent,
+        runtime_handle_cleared: runtimeHandle.cleared === true,
       }};
     }}
     case 'single_task_snapshot_required_terminal_snapshot_should_finalize': {{
