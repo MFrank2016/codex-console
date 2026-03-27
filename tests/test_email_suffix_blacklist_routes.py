@@ -84,3 +84,20 @@ def test_email_suffix_blacklist_rejects_full_email_value(client):
         json={"suffix": "foo@bar.com"},
     )
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"suffix": None},
+        {"suffix": ""},
+        {"suffix": "   "},
+    ],
+)
+def test_email_suffix_blacklist_rejects_empty_suffix_as_400(client, payload):
+    response = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json=payload,
+    )
+    assert response.status_code == 400

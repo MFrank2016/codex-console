@@ -91,7 +91,7 @@ class AllSettings(BaseModel):
 
 
 class EmailSuffixBlacklistCreateRequest(BaseModel):
-    suffix: str
+    suffix: str | None = None
     enabled: bool = True
     reason: str | None = None
 
@@ -105,7 +105,7 @@ class EmailSuffixBlacklistUpdateRequest(BaseModel):
 # ============== API Endpoints ==============
 
 
-def _normalize_blacklist_suffix_or_400(raw_suffix: str) -> str:
+def _normalize_blacklist_suffix_or_400(raw_suffix: str | None) -> str:
     text = str(raw_suffix or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="邮箱后缀不能为空")
