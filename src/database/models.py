@@ -4,7 +4,7 @@ SQLAlchemy ORM 模型定义
 
 from typing import Optional, Dict, Any
 import json
-from sqlalchemy import Column, Integer, Float, String, Text, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, Float, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -169,6 +169,55 @@ class RegistrationTask(Base):
     # 关系
     email_service = relationship('EmailService')
     experiment_batch = relationship('ExperimentBatch', back_populates='registration_tasks')
+
+
+class RegistrationFailureRecord(Base):
+    """注册失败尝试记录表。"""
+    __tablename__ = "registration_failure_records"
+    __table_args__ = (
+        UniqueConstraint("task_uuid", "attempt_no", name="uq_registration_failure_task_attempt"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_uuid = Column(String(36), nullable=False, index=True)
+    attempt_no = Column(Integer, nullable=False)
+    batch_id = Column(String(36), index=True)
+    pipeline_key = Column(String(64), nullable=False, index=True)
+    registration_mode = Column(String(32), nullable=False, index=True)
+    email = Column(String(255))
+    email_suffix = Column(String(255), index=True)
+    email_service_type = Column(String(64))
+    display_name = Column(String(255))
+    birthdate = Column(String(32))
+    proxy = Column(String(255))
+    proxy_ip = Column(String(64))
+    error_code = Column(String(64), nullable=False)
+    error_detail = Column(Text, nullable=False)
+    failed_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    extra_json = Column(JSONEncodedDict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "task_uuid": self.task_uuid,
+            "attempt_no": self.attempt_no,
+            "batch_id": self.batch_id,
+            "pipeline_key": self.pipeline_key,
+            "registration_mode": self.registration_mode,
+            "email": self.email,
+            "email_suffix": self.email_suffix,
+            "email_service_type": self.email_service_type,
+            "display_name": self.display_name,
+            "birthdate": self.birthdate,
+            "proxy": self.proxy,
+            "proxy_ip": self.proxy_ip,
+            "error_code": self.error_code,
+            "error_detail": self.error_detail,
+            "failed_at": self.failed_at.isoformat() if self.failed_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "extra_json": self.extra_json or {},
+        }
 
 
 class RegistrationRun(Base):
