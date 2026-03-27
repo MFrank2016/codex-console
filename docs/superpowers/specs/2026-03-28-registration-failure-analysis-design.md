@@ -164,7 +164,7 @@
 14. `error_detail`
     - 原始错误详情、异常消息或 API 返回摘要。
     - 第一版使用 `TEXT` 存储。
-    - 若错误详情超长，第一版按**字符数**截断到 `4000` 字符，并在尾部追加 `...`。
+    - 若错误详情超长，第一版按**字符数**截断到 `4000` 字符，并仅在实际发生截断时于尾部追加 `...`。
 
 15. `failed_at`
     - 实际失败时间。
@@ -383,8 +383,10 @@
 
 1. Top 列表统一取前 `5` 项。
 2. `proxy_ip` 为空时归并到 `unknown`。
-3. `summary` 默认时间范围与列表接口保持一致：**最近 7 天**。
-4. `today_failed_attempts` 的“今日”按 **Asia/Shanghai** 自然日口径计算。
+3. `summary` 默认时间范围与列表接口保持一致：**最近 7 天**，即未传 `failed_from / failed_to` 时按“当前 Asia/Shanghai 时间往前推 7 天”的滚动窗口聚合。
+4. `today_failed_attempts` 的“今日”按 **Asia/Shanghai** 当前自然日口径计算，且仍受当前筛选条件约束：
+   - 等价于“满足当前全部筛选条件，且 `failed_at` 落在当前 Asia/Shanghai 自然日窗口 `[当日 00:00:00, 次日 00:00:00)` 内”的失败次数。
+   - 如果调用方传入的时间范围不包含当前 Asia/Shanghai 自然日，则该值返回 `0`。
 5. Top 列表统一按 `count DESC, value ASC` 排序，保证并列时返回稳定结果。
 6. 如果前端显式传入 `failed_from / failed_to`，则 `summary` 按传入范围聚合，必须与列表使用相同时间口径。
 
@@ -437,8 +439,8 @@
 4. 过滤边界采用闭区间：
    - `failed_at >= failed_from`
    - `failed_at <= failed_to`
-5. 若仅传 `failed_from`，则从该时间开始筛到 **当前 Asia/Shanghai 时间**。
-6. 若仅传 `failed_to`，则时间窗口解释为 **[`failed_to - 7 天`, `failed_to`]**。
+5. 若仅传 `failed_from`，则从该时间开始筛到 **当前 Asia/Shanghai 时间**，其中“当前”以**服务端接收请求时刻**为准。
+6. 若仅传 `failed_to`，则时间窗口解释为 **[`failed_to - 7 天`, `failed_to`]**，其中“减去 7 天”按 **7 × 24 小时** 的 duration 计算。
 7. 若 `failed_from > failed_to`，接口返回 `400`。
 
 ### 7.3 失败详情接口
