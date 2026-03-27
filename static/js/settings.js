@@ -632,8 +632,7 @@ async function handleSaveRegistration(e) {
 }
 
 function normalizeEmailSuffixInput(value) {
-    if (typeof value !== 'string') return '';
-    return value.trim().toLowerCase().replace(/^@+/, '');
+    return String(value || '').trim().replace(/^@+/, '').toLowerCase();
 }
 
 async function loadEmailSuffixBlacklist() {
@@ -662,19 +661,28 @@ function renderEmailSuffixBlacklist(items) {
         `;
         return;
     }
-    elements.emailSuffixBlacklistTable.innerHTML = emailSuffixBlacklistItems.map(item => `
-        <tr>
-            <td>${item.id ?? '-'}</td>
-            <td>${escapeHtml(item.suffix || '')}</td>
-            <td>${item.enabled ? '✅ 已启用' : '⭕ 已禁用'}</td>
-            <td>${escapeHtml(item.reason || '-')}</td>
-            <td style="white-space:nowrap;">
-                <button class="btn btn-secondary btn-sm" onclick="openEmailSuffixBlacklistModalById(${item.id})">编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="toggleEmailSuffixBlacklistItem(${item.id}, ${!item.enabled})">${item.enabled ? '禁用' : '启用'}</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteEmailSuffixBlacklistItem(${item.id})">删除</button>
-            </td>
-        </tr>
-    `).join('');
+    elements.emailSuffixBlacklistTable.innerHTML = emailSuffixBlacklistItems.map(item => {
+        const normalizedId = Number(item.id);
+        const hasValidId = Number.isFinite(normalizedId);
+        const actionHtml = hasValidId
+            ? `
+                <button class="btn btn-secondary btn-sm" onclick="openEmailSuffixBlacklistModalById(${normalizedId})">编辑</button>
+                <button class="btn btn-secondary btn-sm" onclick="toggleEmailSuffixBlacklistItem(${normalizedId}, ${!item.enabled})">${item.enabled ? '禁用' : '启用'}</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteEmailSuffixBlacklistItem(${normalizedId})">删除</button>
+            `
+            : '<span style="color:var(--text-muted);">ID 无效</span>';
+        return `
+            <tr>
+                <td>${escapeHtml(item.id ?? '-')}</td>
+                <td>${escapeHtml(item.suffix || '')}</td>
+                <td>${item.enabled ? '✅ 已启用' : '⭕ 已禁用'}</td>
+                <td>${escapeHtml(item.reason || '-')}</td>
+                <td style="white-space:nowrap;">
+                    ${actionHtml}
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function closeEmailSuffixBlacklistModal() {

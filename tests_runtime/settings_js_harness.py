@@ -451,6 +451,59 @@ async function runScenario() {{
         html: getElement('email-suffix-blacklist-table').innerHTML,
       }};
     }}
+    case 'save_email_suffix_blacklist_empty_suffix': {{
+      if (typeof exported.handleSaveEmailSuffixBlacklist !== 'function') {{
+        throw new Error('handleSaveEmailSuffixBlacklist is not implemented');
+      }}
+      getElement('email-suffix-blacklist-id').value = '';
+      getElement('email-suffix-blacklist-suffix').value = '   @@@   ';
+      getElement('email-suffix-blacklist-enabled').checked = true;
+      getElement('email-suffix-blacklist-reason').value = 'x';
+      await exported.handleSaveEmailSuffixBlacklist({{ preventDefault() {{}} }});
+      return {{
+        post_called: logs.apiPosts.length > 0,
+        patch_called: logs.apiPatches.length > 0,
+        error_toasts: logs.toasts
+          .filter(([level]) => level === 'error')
+          .map(([, message]) => message),
+      }};
+    }}
+    case 'edit_email_suffix_blacklist': {{
+      if (typeof exported.handleSaveEmailSuffixBlacklist !== 'function') {{
+        throw new Error('handleSaveEmailSuffixBlacklist is not implemented');
+      }}
+      getElement('email-suffix-blacklist-id').value = '42';
+      getElement('email-suffix-blacklist-suffix').value = '  @Example.COM ';
+      getElement('email-suffix-blacklist-enabled').checked = false;
+      getElement('email-suffix-blacklist-reason').value = 'manual';
+      await exported.handleSaveEmailSuffixBlacklist({{ preventDefault() {{}} }});
+      const patch = logs.apiPatches.at(-1) || [null, null];
+      return {{
+        patch_path: patch[0],
+        patch_payload: patch[1],
+      }};
+    }}
+    case 'normalize_email_suffix_input_edge_cases': {{
+      if (typeof exported.normalizeEmailSuffixInput !== 'function') {{
+        throw new Error('normalizeEmailSuffixInput is not implemented');
+      }}
+      return {{
+        null_value: exported.normalizeEmailSuffixInput(null),
+        number_value: exported.normalizeEmailSuffixInput(123),
+        mixed_case_with_at: exported.normalizeEmailSuffixInput('  @BadMail.COM '),
+      }};
+    }}
+    case 'render_email_suffix_blacklist_escape_and_invalid_id': {{
+      if (typeof exported.renderEmailSuffixBlacklist !== 'function') {{
+        throw new Error('renderEmailSuffixBlacklist is not implemented');
+      }}
+      exported.renderEmailSuffixBlacklist([
+        {{ id: 'bad-id', suffix: '<script>alert(1)</script>', enabled: true, reason: '<b>bad\"&</b>' }},
+      ]);
+      return {{
+        html: getElement('email-suffix-blacklist-table').innerHTML,
+      }};
+    }}
     default:
       throw new Error(`Unknown scenario: ${{scenarioName}}`);
   }}

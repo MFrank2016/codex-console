@@ -29,3 +29,44 @@ def test_settings_js_render_email_suffix_blacklist_rows_contains_action_hooks():
     assert "badmail.com" in html
     assert "toggleEmailSuffixBlacklistItem(5, false)" in html
     assert "deleteEmailSuffixBlacklistItem(5)" in html
+
+
+def test_settings_js_save_email_suffix_blacklist_rejects_empty_suffix_without_request():
+    result = run_settings_js_scenario("save_email_suffix_blacklist_empty_suffix")
+
+    assert result["post_called"] is False
+    assert result["patch_called"] is False
+    assert result["error_toasts"] == ["邮箱后缀不能为空"]
+
+
+def test_settings_js_save_email_suffix_blacklist_edit_uses_patch():
+    result = run_settings_js_scenario("edit_email_suffix_blacklist")
+
+    assert result["patch_path"] == "/settings/email-suffix-blacklist/42"
+    assert result["patch_payload"] == {
+        "suffix": "example.com",
+        "enabled": False,
+        "reason": "manual",
+    }
+
+
+def test_settings_js_normalize_email_suffix_input_handles_non_string_values():
+    result = run_settings_js_scenario("normalize_email_suffix_input_edge_cases")
+
+    assert result == {
+        "null_value": "",
+        "number_value": "123",
+        "mixed_case_with_at": "badmail.com",
+    }
+
+
+def test_settings_js_render_email_suffix_blacklist_escapes_html_and_invalid_id_actions():
+    result = run_settings_js_scenario("render_email_suffix_blacklist_escape_and_invalid_id")
+    html = result["html"]
+
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&lt;b&gt;bad&quot;&amp;&lt;/b&gt;" in html
+    assert "openEmailSuffixBlacklistModalById(" not in html
+    assert "toggleEmailSuffixBlacklistItem(" not in html
+    assert "deleteEmailSuffixBlacklistItem(" not in html
