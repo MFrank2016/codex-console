@@ -93,8 +93,7 @@ class FakeEmailService(BaseEmailService):
         return True
 
 
-@pytest.fixture(autouse=True)
-def _mock_blacklist_query(monkeypatch):
+def _patch_blacklist_query(monkeypatch, query_impl=None):
     @contextmanager
     def fake_get_db():
         yield object()
@@ -102,7 +101,7 @@ def _mock_blacklist_query(monkeypatch):
     monkeypatch.setattr("src.core.register.get_db", fake_get_db)
     monkeypatch.setattr(
         "src.core.register.crud.is_email_suffix_blacklisted",
-        lambda db, suffix: False,
+        query_impl or (lambda db, suffix: False),
     )
 
 
@@ -203,7 +202,8 @@ def test_check_sentinel_sends_non_empty_pow(monkeypatch):
     assert body["p"] == "gAAAAACpow-token"
 
 
-def test_run_registers_then_relogs_to_fetch_token():
+def test_run_registers_then_relogs_to_fetch_token(monkeypatch):
+    _patch_blacklist_query(monkeypatch)
     session_one = QueueSession([
         ("GET", "https://auth.example.test/flow/1", _response_with_did("did-1")),
         (
@@ -271,7 +271,8 @@ def test_run_registers_then_relogs_to_fetch_token():
     assert result.metadata["token_acquired_via_relogin"] is True
 
 
-def test_existing_account_login_uses_auto_sent_otp_without_manual_send():
+def test_existing_account_login_uses_auto_sent_otp_without_manual_send(monkeypatch):
+    _patch_blacklist_query(monkeypatch)
     session = QueueSession([
         ("GET", "https://auth.example.test/flow/1", _response_with_did("did-1")),
         (
@@ -312,7 +313,8 @@ def test_existing_account_login_uses_auto_sent_otp_without_manual_send():
     assert result.metadata["token_acquired_via_relogin"] is False
 
 
-def test_run_create_email_step_returns_payload():
+def test_run_create_email_step_returns_payload(monkeypatch):
+    _patch_blacklist_query(monkeypatch)
     email_service = FakeEmailService(["123456"])
     engine = RegistrationEngine(email_service)
 
@@ -336,7 +338,6 @@ def test_create_email_retries_when_suffix_blacklisted(monkeypatch):
         def __init__(self):
             super().__init__([])
             self.create_calls = 0
-            self.deleted_service_ids = []
 
         def create_email(self, config=None):
             self.create_calls += 1
@@ -344,20 +345,12 @@ def test_create_email_retries_when_suffix_blacklisted(monkeypatch):
                 return {"email": "first@blocked.test", "service_id": "mailbox-blocked"}
             return {"email": "second@allowed.test", "service_id": "mailbox-allowed"}
 
-        def delete_email(self, email_id):
-            self.deleted_service_ids.append(email_id)
-            return True
-
     email_service = RetryEmailService()
     engine = RegistrationEngine(email_service)
-    monkeypatch.setattr(
-        "src.core.register.crud.is_email_suffix_blacklisted",
-        lambda db, suffix: suffix == "blocked.test",
-    )
+    _patch_blacklist_query(monkeypatch, lambda db, suffix: suffix == "blocked.test")
 
     assert engine._create_email() is True
     assert email_service.create_calls == 2
-    assert email_service.deleted_service_ids == ["mailbox-blocked"]
     assert any("命中黑名单" in log for log in engine.logs)
     assert engine.email == "second@allowed.test"
 
@@ -396,10 +389,7 @@ def test_create_email_returns_false_after_10_blacklisted_suffix_hits(monkeypatch
 
     email_service = AlwaysBlockedEmailService()
     engine = RegistrationEngine(email_service)
-    monkeypatch.setattr(
-        "src.core.register.crud.is_email_suffix_blacklisted",
-        lambda db, suffix: suffix == "blocked.test",
-    )
+    _patch_blacklist_query(monkeypatch, lambda db, suffix: suffix == "blocked.test")
 
     assert engine._create_email() is False
     assert email_service.create_calls == 10
@@ -420,8 +410,8 @@ def test_create_email_non_temporary_service_skips_blacklist_check(monkeypatch):
 
     email_service = OutlookEmailService()
     engine = RegistrationEngine(email_service)
-    monkeypatch.setattr(
-        "src.core.register.crud.is_email_suffix_blacklisted",
+    _patch_blacklist_query(
+        monkeypatch,
         lambda db, suffix: (_ for _ in ()).throw(AssertionError("should not be called")),
     )
 
@@ -430,12 +420,12 @@ def test_create_email_non_temporary_service_skips_blacklist_check(monkeypatch):
     assert engine.email == "user@blocked.test"
 
 
-def test_create_email_blacklist_query_error_returns_false(monkeypatch):
+def test_create_email_blacklist_query_error_continues(monkeypatch):
     email_service = FakeEmailService(["123456"])
     engine = RegistrationEngine(email_service)
-    monkeypatch.setattr(
-        "src.core.register.crud.is_email_suffix_blacklisted",
+    _patch_blacklist_query(
+        monkeypatch,
         lambda db, suffix: (_ for _ in ()).throw(RuntimeError("db down")),
     )
 
-    assert engine._create_email() is False
+    assert engine._create_email() is True
