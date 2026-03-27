@@ -209,6 +209,7 @@ def test_dashboard_summary_api_returns_expected_nested_contract_for_authenticate
     assert "label" in quick_link
     assert "href" in quick_link
     assert "description" in quick_link
+    assert any(item.get("href") == "/run-center" for item in payload["quick_links"])
 
     assert isinstance(payload["recent_activity"], list)
     assert payload["recent_activity"]

@@ -24,7 +24,7 @@ WORKSPACE_NAV = [
             {
                 "key": "run_center",
                 "label": "运行中心",
-                "href": "/scheduled-tasks#scheduled-runs-card",
+                "href": "/run-center",
                 "icon": "run_center",
             },
             {

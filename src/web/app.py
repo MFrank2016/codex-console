@@ -214,6 +214,21 @@ def create_app() -> FastAPI:
             ),
         )
 
+    @app.get("/run-center", response_class=HTMLResponse)
+    async def run_center_page(request: Request):
+        if not is_authenticated(request):
+            return _redirect_to_login(request)
+        return templates.TemplateResponse(
+            request,
+            "run_center.html",
+            _workspace_context(
+                request,
+                page_key="run_center",
+                page_title="运行中心",
+                page_subtitle="集中查看运行摘要、执行列表与日志面板。",
+            ),
+        )
+
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         if not is_authenticated(request):

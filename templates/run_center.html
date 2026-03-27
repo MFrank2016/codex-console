@@ -1,0 +1,34 @@
+{% extends "_workspace_base.html" %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ '/static/css/run_center.css?v=' ~ static_version }}">
+{% endblock %}
+
+{% block page_content %}
+<section id="run-center-page" class="run-center-page">
+  <section id="run-center-summary-panel" class="workspace-panel run-center-panel">
+    <header class="run-center-panel-head">
+      <h2 class="run-center-panel-title">运行摘要</h2>
+    </header>
+    <div id="run-center-summary-hooks" class="run-center-panel-body"></div>
+  </section>
+
+  <section id="run-center-list-panel" class="workspace-panel run-center-panel">
+    <header class="run-center-panel-head">
+      <h2 class="run-center-panel-title">运行列表</h2>
+    </header>
+    <div id="run-center-list-hooks" class="run-center-panel-body"></div>
+  </section>
+
+  <section id="run-center-log-panel" class="workspace-panel run-center-panel">
+    <header class="run-center-panel-head">
+      <h2 class="run-center-panel-title">日志面板</h2>
+    </header>
+    <div id="run-center-log-hooks" class="run-center-panel-body"></div>
+  </section>
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="{{ '/static/js/run_center.js?v=' ~ static_version }}"></script>
+{% endblock %}
