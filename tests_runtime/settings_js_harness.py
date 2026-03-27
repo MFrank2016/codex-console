@@ -151,6 +151,8 @@ document.body.removeChild = () => {{}};
 const logs = {{
   apiGets: [],
   apiPosts: [],
+  apiPatches: [],
+  apiDeletes: [],
   toasts: [],
 }};
 
@@ -199,8 +201,14 @@ const context = {{
       logs.apiPosts.push([path, payload]);
       return {{ success: true }};
     }},
-    async patch() {{ return {{ success: true }}; }},
-    async delete() {{ return {{ success: true }}; }},
+    async patch(path, payload) {{
+      logs.apiPatches.push([path, payload]);
+      return {{ success: true }};
+    }},
+    async delete(path) {{
+      logs.apiDeletes.push(path);
+      return {{ success: true }};
+    }},
   }},
   confirm: async () => true,
 }};
@@ -210,7 +218,7 @@ context.globalThis = context;
 
 vm.createContext(context);
 vm.runInContext(
-  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResult,\n  renderProxies,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  elements,\n  getProxyFilters: () => ({{ ...proxyFilters }}),\n  getSelectedProxyIds: () => Array.from(selectedProxyIds).sort((a, b) => a - b),\n  resetProxyState: () => {{\n    Object.assign(proxyFilters, getDefaultProxyFilters());\n    selectedProxyIds = new Set();\n  }},\n}};`,
+  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResult,\n  renderProxies,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  normalizeEmailSuffixInput: typeof normalizeEmailSuffixInput === 'function' ? normalizeEmailSuffixInput : null,\n  renderEmailSuffixBlacklist: typeof renderEmailSuffixBlacklist === 'function' ? renderEmailSuffixBlacklist : null,\n  handleSaveEmailSuffixBlacklist: typeof handleSaveEmailSuffixBlacklist === 'function' ? handleSaveEmailSuffixBlacklist : null,\n  elements,\n  getProxyFilters: () => ({{ ...proxyFilters }}),\n  getSelectedProxyIds: () => Array.from(selectedProxyIds).sort((a, b) => a - b),\n  resetProxyState: () => {{\n    Object.assign(proxyFilters, getDefaultProxyFilters());\n    selectedProxyIds = new Set();\n  }},\n}};`,
   context,
 );
 
@@ -415,6 +423,32 @@ async function runScenario() {{
         error_toasts: logs.toasts
           .filter(([level]) => level === 'error')
           .map(([, message]) => message),
+      }};
+    }}
+    case 'save_email_suffix_blacklist': {{
+      if (typeof exported.handleSaveEmailSuffixBlacklist !== 'function') {{
+        throw new Error('handleSaveEmailSuffixBlacklist is not implemented');
+      }}
+      getElement('email-suffix-blacklist-id').value = '';
+      getElement('email-suffix-blacklist-suffix').value = '@BadMail.COM';
+      getElement('email-suffix-blacklist-enabled').checked = true;
+      getElement('email-suffix-blacklist-reason').value = '临时封禁';
+      await exported.handleSaveEmailSuffixBlacklist({{ preventDefault() {{}} }});
+      const post = logs.apiPosts.at(-1) || [null, null];
+      return {{
+        post_path: post[0],
+        payload: post[1],
+      }};
+    }}
+    case 'render_email_suffix_blacklist_rows': {{
+      if (typeof exported.renderEmailSuffixBlacklist !== 'function') {{
+        throw new Error('renderEmailSuffixBlacklist is not implemented');
+      }}
+      exported.renderEmailSuffixBlacklist([
+        {{ id: 5, suffix: 'badmail.com', enabled: true, reason: '高风险域名' }},
+      ]);
+      return {{
+        html: getElement('email-suffix-blacklist-table').innerHTML,
       }};
     }}
     default:
