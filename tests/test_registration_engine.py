@@ -1,9 +1,11 @@
 import base64
 import json
 import pytest
+from contextlib import contextmanager
 
 from src.config.constants import EmailServiceType, OPENAI_API_ENDPOINTS, OPENAI_PAGE_TYPES
 from src.core.http_client import OpenAIHTTPClient
+from src.core.email_suffix_blacklist import RegistrationDisallowedSuffixError
 from src.core.openai.oauth import OAuthStart
 from src.core.register import RegistrationEngine
 from src.services.base import BaseEmailService
@@ -314,3 +316,55 @@ def test_run_create_email_step_raises_when_create_email_failed(monkeypatch):
 
     with pytest.raises(RuntimeError, match="create_email failed"):
         engine.run_create_email_step()
+
+
+def test_create_email_retries_when_suffix_blacklisted(monkeypatch):
+    class RetryEmailService(FakeEmailService):
+        def __init__(self):
+            super().__init__([])
+            self.create_calls = 0
+
+        def create_email(self, config=None):
+            self.create_calls += 1
+            if self.create_calls == 1:
+                return {"email": "first@blocked.test", "service_id": "mailbox-blocked"}
+            return {"email": "second@allowed.test", "service_id": "mailbox-allowed"}
+
+    email_service = RetryEmailService()
+    engine = RegistrationEngine(email_service)
+
+    @contextmanager
+    def fake_get_db():
+        yield object()
+
+    monkeypatch.setattr("src.core.register.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "src.core.register.crud.is_email_suffix_blacklisted",
+        lambda db, suffix: suffix == "blocked.test",
+    )
+
+    assert engine._create_email() is True
+    assert email_service.create_calls == 2
+    assert engine.email == "second@allowed.test"
+
+
+def test_create_user_account_raises_registration_disallowed_suffix_error():
+    email_service = FakeEmailService([])
+    engine = RegistrationEngine(email_service)
+    engine.email = "tester@blocked.test"
+    engine.session = QueueSession([
+        (
+            "POST",
+            OPENAI_API_ENDPOINTS["create_account"],
+            DummyResponse(
+                status_code=400,
+                payload={"error": {"code": "registration_disallowed", "message": "deny"}},
+                text='{"error":{"code":"registration_disallowed"}}',
+            ),
+        ),
+    ])
+
+    with pytest.raises(RegistrationDisallowedSuffixError) as exc_info:
+        engine._create_user_account()
+
+    assert exc_info.value.suffix == "blocked.test"

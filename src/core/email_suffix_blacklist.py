@@ -31,4 +31,6 @@ def extract_email_suffix(email: str) -> str | None:
 
 
 def should_apply_email_suffix_blacklist(service_type: str | None) -> bool:
-    return str(service_type or "").strip().lower() in TEMPORARY_EMAIL_BLACKLIST_SERVICE_TYPES
+    raw_service_type = getattr(service_type, "value", service_type)
+    normalized = str(raw_service_type or "").strip().lower()
+    return normalized in TEMPORARY_EMAIL_BLACKLIST_SERVICE_TYPES
