@@ -1731,6 +1731,7 @@ console.log(JSON.stringify(result.map((entry) => ({
     assert {"key": "custom_keep", "builtin": False, "valueDescription": "保留我"} in keys
     assert all(item["key"] not in {"max_probe_count", "max_cleanup_count"} for item in keys)
     assert any(item["key"] == "target_valid_count" and item["builtin"] is True for item in keys)
+    assert any(item["key"] == "concurrency" and item["builtin"] is True for item in keys)
 
 
 def test_scheduled_tasks_run_log_loading_drains_chunks_even_when_run_is_finished():

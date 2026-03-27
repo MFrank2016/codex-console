@@ -125,6 +125,14 @@ const TASK_CONFIG_SCHEMAS = {
             readonly_key: true,
         },
         {
+            key: 'concurrency',
+            key_description: '注册并发数',
+            value_type: 'number',
+            default_value: 5,
+            value_description: '同一轮补号同时运行多少个注册任务',
+            readonly_key: true,
+        },
+        {
             key: 'email_service_type',
             key_description: '注册使用的邮箱服务类型',
             value_type: 'string',

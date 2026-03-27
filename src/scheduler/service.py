@@ -23,6 +23,23 @@ def _validate_optional_non_negative_int(config: dict[str, Any], key: str) -> Non
         raise ValueError(f"{key} must be a non-negative integer")
 
 
+def _validate_optional_positive_int(config: dict[str, Any], key: str) -> None:
+    if key not in config:
+        return
+
+    raw_value = config.get(key)
+    if raw_value in (None, ""):
+        return
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be a positive integer") from exc
+
+    if parsed <= 0:
+        raise ValueError(f"{key} must be a positive integer")
+
+
 def validate_trigger_payload(
     trigger_type: str,
     *,
@@ -73,5 +90,7 @@ def validate_plan_payload(
         _validate_optional_non_negative_int(config, "probe_workers")
         _validate_optional_non_negative_int(config, "delete_workers")
 
-    if task_type == "cpa_refill" and not config.get("max_consecutive_failures"):
-        raise ValueError("max_consecutive_failures is required")
+    if task_type == "cpa_refill":
+        if not config.get("max_consecutive_failures"):
+            raise ValueError("max_consecutive_failures is required")
+        _validate_optional_positive_int(config, "concurrency")

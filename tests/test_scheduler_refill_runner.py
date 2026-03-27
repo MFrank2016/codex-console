@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from src.core.registration_job import RegistrationJobResult
@@ -33,7 +36,17 @@ def _create_refill_plan_and_run(
     target_valid_count: int = 3,
     max_refill_count: int = 5,
     max_consecutive_failures: int = 3,
+    concurrency: int | None = None,
 ):
+    config = {
+        "target_valid_count": target_valid_count,
+        "max_refill_count": max_refill_count,
+        "max_consecutive_failures": max_consecutive_failures,
+        "email_service_type": "tempmail",
+    }
+    if concurrency is not None:
+        config["concurrency"] = concurrency
+
     service = crud.create_cpa_service(
         temp_db,
         name="refill-cpa",
@@ -48,12 +61,7 @@ def _create_refill_plan_and_run(
         trigger_type="interval",
         interval_value=1,
         interval_unit="hours",
-        config={
-            "target_valid_count": target_valid_count,
-            "max_refill_count": max_refill_count,
-            "max_consecutive_failures": max_consecutive_failures,
-            "email_service_type": "tempmail",
-        },
+        config=config,
     )
     run = crud.create_scheduled_run(temp_db, plan_id=plan.id, trigger_source="manual")
     return service, plan, run
@@ -210,3 +218,70 @@ def test_refill_runner_marks_run_cancelled_and_logs_user_stop_when_stop_requeste
     assert summary["uploaded_success"] == 1
     assert "收到停止请求" in (persisted_run.logs or "")
     assert "任务已按请求停止" in (persisted_run.logs or "")
+
+
+def test_refill_runner_defaults_to_parallel_registration_batches(temp_db, monkeypatch):
+    _, plan, run = _create_refill_plan_and_run(
+        temp_db,
+        target_valid_count=3,
+        max_refill_count=3,
+        max_consecutive_failures=5,
+    )
+
+    state = {"active": 0, "max_active": 0, "next_account_id": 0}
+    lock = threading.Lock()
+
+    monkeypatch.setattr(refill_runner, "count_valid_accounts", lambda *a, **k: 0)
+
+    def _run_registration_job(**kwargs):
+        with lock:
+            state["active"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+            state["next_account_id"] += 1
+            account_id = state["next_account_id"]
+        time.sleep(0.05)
+        with lock:
+            state["active"] -= 1
+        return RegistrationJobResult(success=True, account_id=account_id)
+
+    monkeypatch.setattr(refill_runner, "run_registration_job", _run_registration_job)
+    monkeypatch.setattr(refill_runner, "upload_account_to_bound_cpa", lambda **_: (True, "ok"))
+
+    summary = run_refill_plan(plan_id=plan.id, run_id=run.id)
+
+    assert summary["uploaded_success"] == 3
+    assert state["max_active"] >= 2
+
+
+def test_refill_runner_honors_explicit_concurrency_limit(temp_db, monkeypatch):
+    _, plan, run = _create_refill_plan_and_run(
+        temp_db,
+        target_valid_count=3,
+        max_refill_count=3,
+        max_consecutive_failures=5,
+        concurrency=1,
+    )
+
+    state = {"active": 0, "max_active": 0, "next_account_id": 0}
+    lock = threading.Lock()
+
+    monkeypatch.setattr(refill_runner, "count_valid_accounts", lambda *a, **k: 0)
+
+    def _run_registration_job(**kwargs):
+        with lock:
+            state["active"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+            state["next_account_id"] += 1
+            account_id = state["next_account_id"]
+        time.sleep(0.02)
+        with lock:
+            state["active"] -= 1
+        return RegistrationJobResult(success=True, account_id=account_id)
+
+    monkeypatch.setattr(refill_runner, "run_registration_job", _run_registration_job)
+    monkeypatch.setattr(refill_runner, "upload_account_to_bound_cpa", lambda **_: (True, "ok"))
+
+    summary = run_refill_plan(plan_id=plan.id, run_id=run.id)
+
+    assert summary["uploaded_success"] == 3
+    assert state["max_active"] == 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ...core.registration_job import run_registration_job
@@ -14,6 +15,8 @@ from ..run_logger import append_run_log, finalize_cancelled_run, finalize_run, r
 
 AUTO_DISABLE_REASON = "consecutive_failures_reached"
 _PROGRESS_EVERY = 20
+_DEFAULT_REFILL_CONCURRENCY = 5
+_MAX_REFILL_CONCURRENCY = 50
 
 
 def _parse_int(value: Any, default: int = 0) -> int:
@@ -28,6 +31,31 @@ def _resolve_refill_target(*, current_valid: int, target_valid: int, max_refill_
     if max_refill_count > 0:
         return min(needed, max_refill_count)
     return needed
+
+
+def _resolve_refill_concurrency(value: Any) -> int:
+    parsed = _parse_int(value, _DEFAULT_REFILL_CONCURRENCY)
+    if parsed <= 0:
+        return _DEFAULT_REFILL_CONCURRENCY
+    return min(parsed, _MAX_REFILL_CONCURRENCY)
+
+
+def _run_refill_registration_attempt(
+    *,
+    email_service_type: str,
+    email_service_id: int | None,
+    email_service_config: dict[str, Any] | None,
+    proxy: str | None,
+):
+    with get_db() as db:
+        return run_registration_job(
+            db=db,
+            email_service_type=email_service_type,
+            email_service_id=email_service_id,
+            proxy=proxy,
+            email_service_config=email_service_config,
+            auto_upload=False,
+        )
 
 
 def upload_account_to_bound_cpa(*, db, account_id: int, cpa_service_id: int) -> tuple[bool, str]:
@@ -120,6 +148,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             target_valid_count = max(0, _parse_int(config.get("target_valid_count"), 0))
             max_refill_count = max(0, _parse_int(config.get("max_refill_count"), 0))
             max_consecutive_failures = max(1, _parse_int(config.get("max_consecutive_failures"), 1))
+            concurrency = _resolve_refill_concurrency(config.get("concurrency"))
             email_service_type = str(config.get("email_service_type") or "tempmail")
             email_service_id = config.get("email_service_id")
             email_service_config = config.get("email_service_config")
@@ -133,6 +162,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             cpa_service_id = plan.cpa_service_id
 
         append_run_log(run_id, f"refill runner start (plan_id={plan_id})", level="INFO")
+        append_run_log(run_id, f"refill concurrency resolved (concurrency={concurrency})", level="INFO")
 
         current_valid_count = count_valid_accounts(service_payload)
         refill_target = _resolve_refill_target(
@@ -157,86 +187,105 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
         consecutive_failures = 0
         next_attempt_progress = [_PROGRESS_EVERY]
         next_success_progress = [_PROGRESS_EVERY]
-        while summary["uploaded_success"] < refill_target:
-            raise_if_stop_requested(run_id, stage="refill loop")
-            with get_db() as db:
-                job = run_registration_job(
-                    db=db,
-                    email_service_type=email_service_type,
-                    email_service_id=email_service_id,
-                    proxy=proxy,
-                    email_service_config=email_service_config,
-                    auto_upload=False,
+        with ThreadPoolExecutor(
+            max_workers=concurrency,
+            thread_name_prefix=f"refill-{plan_id}",
+        ) as executor:
+            while summary["uploaded_success"] < refill_target:
+                raise_if_stop_requested(run_id, stage="refill loop")
+                remaining = refill_target - summary["uploaded_success"]
+                batch_size = min(
+                    concurrency,
+                    remaining,
+                    max(1, max_consecutive_failures - consecutive_failures),
                 )
+                jobs = [
+                    executor.submit(
+                        _run_refill_registration_attempt,
+                        email_service_type=email_service_type,
+                        email_service_id=email_service_id,
+                        email_service_config=email_service_config,
+                        proxy=proxy,
+                    )
+                    for _ in range(batch_size)
+                ]
 
-                if not job.success:
-                    summary["registered_failed"] += 1
-                    consecutive_failures += 1
-                    summary["consecutive_failures"] = consecutive_failures
-                    append_run_log(
-                        run_id,
-                        f"registration failed: {job.error_message or 'unknown error'}",
-                        level="WARN",
-                    )
-                    raise_if_stop_requested(run_id, stage="refill registration")
-                elif not job.account_id:
-                    summary["registered_failed"] += 1
-                    consecutive_failures += 1
-                    summary["consecutive_failures"] = consecutive_failures
-                    append_run_log(run_id, "registration returned no account_id", level="WARN")
-                    raise_if_stop_requested(run_id, stage="refill registration")
-                else:
-                    summary["registered_success"] += 1
-                    summary["upload_attempted"] += 1
-                    raise_if_stop_requested(run_id, stage="refill registration")
-                    ok, message = upload_account_to_bound_cpa(
-                        db=db,
-                        account_id=job.account_id,
-                        cpa_service_id=cpa_service_id,
-                    )
-                    if ok:
-                        summary["uploaded_success"] += 1
-                        consecutive_failures = 0
-                        summary["consecutive_failures"] = 0
-                        append_run_log(
-                            run_id,
-                            f"uploaded account to bound cpa (account_id={job.account_id})",
-                            level="INFO",
-                        )
-                    else:
-                        summary["uploaded_failed"] += 1
+                for future in jobs:
+                    job = future.result()
+
+                    if not job.success:
+                        summary["registered_failed"] += 1
                         consecutive_failures += 1
                         summary["consecutive_failures"] = consecutive_failures
                         append_run_log(
                             run_id,
-                            f"upload failed (account_id={job.account_id}): {message}",
+                            f"registration failed: {job.error_message or 'unknown error'}",
                             level="WARN",
                         )
-                    raise_if_stop_requested(run_id, stage="refill upload")
+                        raise_if_stop_requested(run_id, stage="refill registration")
+                    elif not job.account_id:
+                        summary["registered_failed"] += 1
+                        consecutive_failures += 1
+                        summary["consecutive_failures"] = consecutive_failures
+                        append_run_log(run_id, "registration returned no account_id", level="WARN")
+                        raise_if_stop_requested(run_id, stage="refill registration")
+                    else:
+                        summary["registered_success"] += 1
+                        summary["upload_attempted"] += 1
+                        raise_if_stop_requested(run_id, stage="refill registration")
+                        with get_db() as db:
+                            ok, message = upload_account_to_bound_cpa(
+                                db=db,
+                                account_id=job.account_id,
+                                cpa_service_id=cpa_service_id,
+                            )
+                        if ok:
+                            summary["uploaded_success"] += 1
+                            consecutive_failures = 0
+                            summary["consecutive_failures"] = 0
+                            append_run_log(
+                                run_id,
+                                f"uploaded account to bound cpa (account_id={job.account_id})",
+                                level="INFO",
+                            )
+                        else:
+                            summary["uploaded_failed"] += 1
+                            consecutive_failures += 1
+                            summary["consecutive_failures"] = consecutive_failures
+                            append_run_log(
+                                run_id,
+                                f"upload failed (account_id={job.account_id}): {message}",
+                                level="WARN",
+                            )
+                        raise_if_stop_requested(run_id, stage="refill upload")
 
-            raise_if_stop_requested(run_id, stage="refill iteration")
-            _emit_refill_progress_if_needed(
-                run_id,
-                summary,
-                refill_target=refill_target,
-                next_attempt_progress=next_attempt_progress,
-                next_success_progress=next_success_progress,
-            )
-
-            if consecutive_failures >= max_consecutive_failures:
-                with get_db() as db:
-                    crud.disable_scheduled_plan(
-                        db,
-                        plan_id=plan_id,
-                        reason=AUTO_DISABLE_REASON,
+                    _emit_refill_progress_if_needed(
+                        run_id,
+                        summary,
+                        refill_target=refill_target,
+                        next_attempt_progress=next_attempt_progress,
+                        next_success_progress=next_success_progress,
                     )
-                summary["auto_disabled"] = True
-                append_run_log(
-                    run_id,
-                    f"refill plan auto-disabled: {AUTO_DISABLE_REASON}",
-                    level="WARN",
-                )
-                break
+
+                    if summary["uploaded_success"] >= refill_target:
+                        break
+
+                raise_if_stop_requested(run_id, stage="refill iteration")
+
+                if consecutive_failures >= max_consecutive_failures:
+                    with get_db() as db:
+                        crud.disable_scheduled_plan(
+                            db,
+                            plan_id=plan_id,
+                            reason=AUTO_DISABLE_REASON,
+                        )
+                    summary["auto_disabled"] = True
+                    append_run_log(
+                        run_id,
+                        f"refill plan auto-disabled: {AUTO_DISABLE_REASON}",
+                        level="WARN",
+                    )
+                    break
 
         append_run_log(
             run_id,
