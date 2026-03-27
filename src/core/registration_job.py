@@ -7,8 +7,8 @@ from typing import Any, Callable
 
 from ..config.constants import EmailServiceType
 from ..config.settings import get_settings
+from .email_suffix_blacklist import RegistrationDisallowedSuffixError, extract_email_suffix
 from .time import utc_now_naive
-from .email_suffix_blacklist import RegistrationDisallowedSuffixError
 from .pipeline import PipelineContext, PipelineRunner
 from .pipeline.registry import get_pipeline
 from .pipeline.steps.codexgen import build_codexgen_runtime
@@ -309,19 +309,30 @@ def run_registration_job(
         except RegistrationDisallowedSuffixError as exc:
             if engine is not None:
                 engine.flush_task_logs()
+            db.rollback()
             known_email = exc.email or known_email
             error_message = str(exc.detail or exc) or "注册异常"
+            suffix = exc.suffix or extract_email_suffix(exc.email or "")
 
-            if exc.suffix:
+            if suffix:
                 crud.upsert_auto_blacklist_suffix(
                     db,
-                    exc.suffix,
+                    suffix,
                     reason=error_message,
                 )
                 if callback_logger:
-                    callback_logger(f"已将邮箱后缀加入黑名单: {exc.suffix}")
+                    callback_logger(f"已将邮箱后缀加入黑名单: {suffix}")
 
             if attempt < max_retries:
+                if task_uuid:
+                    crud.update_registration_task(
+                        db,
+                        task_uuid,
+                        status="running",
+                        pipeline_status="running",
+                        error_message=None,
+                        completed_at=None,
+                    )
                 if callback_logger:
                     callback_logger("当前任务将使用新邮箱重新尝试注册")
                 continue
@@ -345,6 +356,7 @@ def run_registration_job(
             logger.error("run_registration_job failed: %s", exc)
             if engine is not None:
                 engine.flush_task_logs()
+            db.rollback()
             _update_registration_task_failure(
                 db,
                 task_uuid=task_uuid,

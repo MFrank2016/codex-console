@@ -149,3 +149,94 @@ def test_run_registration_job_fails_after_exceeding_max_retries(temp_db, monkeyp
     row = temp_db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.suffix == "blocked.test").first()
     assert row is not None
     assert row.hit_count == 2
+
+
+def test_run_registration_job_auto_blacklist_uses_email_suffix_fallback_and_resets_task_for_retry(
+    temp_db, monkeypatch
+):
+    task_uuid = "task-retry-reset"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+
+    stats = {"engine_run": 0, "rollback": 0}
+    update_calls: list[dict] = []
+
+    class FakeResult:
+        success = True
+        email = "retry-ok@test.dev"
+        error_message = None
+
+        def to_dict(self):
+            return {"success": True, "email": self.email}
+
+    class FallbackSuffixEngine:
+        def __init__(self, **_kwargs):
+            return None
+
+        def run(self):
+            stats["engine_run"] += 1
+            if stats["engine_run"] == 1:
+                raise RegistrationDisallowedSuffixError(
+                    email="u@blocked.test",
+                    suffix=None,
+                    detail="registration disallowed without suffix",
+                )
+            return FakeResult()
+
+        def save_to_database(self, result):
+            crud.create_account(
+                temp_db,
+                email=result.email,
+                email_service="tempmail",
+                password="p",
+                client_id="cid",
+            )
+            return True
+
+        def flush_task_logs(self):
+            return None
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FallbackSuffixEngine)
+    monkeypatch.setattr(
+        "src.core.registration_job.get_settings",
+        lambda: types.SimpleNamespace(registration_max_retries=1),
+    )
+
+    def fake_rollback():
+        stats["rollback"] += 1
+
+    monkeypatch.setattr(temp_db, "rollback", fake_rollback)
+
+    def fake_update_registration_task(_db, _task_uuid, **fields):
+        update_calls.append({"task_uuid": _task_uuid, **fields})
+
+    monkeypatch.setattr("src.core.registration_job.crud.update_registration_task", fake_update_registration_task)
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy=None,
+        email_service_config={},
+        task_uuid=task_uuid,
+    )
+
+    assert result.success is True
+    assert stats["rollback"] >= 1
+    row = temp_db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.suffix == "blocked.test").first()
+    assert row is not None
+    assert any(
+        call.get("task_uuid") == task_uuid
+        and call.get("status") == "running"
+        and call.get("pipeline_status") == "running"
+        and call.get("error_message") is None
+        and call.get("completed_at") is None
+        for call in update_calls
+    )
