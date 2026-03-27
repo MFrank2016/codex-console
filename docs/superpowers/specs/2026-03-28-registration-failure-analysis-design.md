@@ -163,6 +163,8 @@
 
 14. `error_detail`
     - 原始错误详情、异常消息或 API 返回摘要。
+    - 第一版使用 `TEXT` 存储。
+    - 若错误详情超长，第一版建议在写入前截断到 `4000` 字符。
 
 15. `failed_at`
     - 实际失败时间。
@@ -244,7 +246,19 @@
 1. 每轮 attempt 在收口处只调用一次“失败记录写入”。
 2. 写入时显式带上 `task_uuid + attempt_no`。
 3. 若同一 `(task_uuid, attempt_no)` 已存在，则后续写入应更新该条记录或直接跳过，不能插入第二条。
-4. 第一版推荐采用“先查后写”或“唯一约束 + upsert”保证幂等。
+4. 第一版在此做最终裁决：采用 **upsert 覆盖策略**，不采用“跳过”策略。
+5. 当 `(task_uuid, attempt_no)` 已存在时，以“本次有效值覆盖旧值”为准，允许覆盖字段：
+   - `email`
+   - `email_suffix`
+   - `display_name`
+   - `birthdate`
+   - `proxy`
+   - `proxy_ip`
+   - `error_code`
+   - `error_detail`
+   - `failed_at`
+   - `extra_json`
+6. 这样做的目标是：当同一 attempt 在更靠后的收口点拿到了更完整的错误详情时，保留最后一次有效信息。
 
 ### 5.5 用户资料来源
 
@@ -370,6 +384,8 @@
 1. Top 列表统一取前 `5` 项。
 2. `proxy_ip` 为空时归并到 `unknown`。
 3. `summary` 默认按“全部时间”聚合，但如果前端传了时间范围，则按传入范围聚合。
+4. `today_failed_attempts` 的“今日”按 **Asia/Shanghai** 自然日口径计算。
+5. Top 列表统一按 `count DESC, value ASC` 排序，保证并列时返回稳定结果。
 
 ### 7.2 失败记录列表接口
 
@@ -409,6 +425,20 @@
 2. 默认 `page = 1`
 3. 默认 `page_size = 20`
 4. 第一版允许的 `page_size` 上限建议为 `100`
+5. 第一版默认时间范围为 **最近 7 天**
+6. 如果调用方未传 `failed_from / failed_to`，后端按“当前 Asia/Shanghai 时间往前推 7 天”过滤
+
+时间参数约定：
+
+1. `failed_from / failed_to` 使用 ISO8601 字符串。
+2. 若字符串带时区偏移或 `Z`，按其显式时区解析。
+3. 若字符串不带时区（适配前端 `datetime-local`），按 **Asia/Shanghai** 解释。
+4. 过滤边界采用闭区间：
+   - `failed_at >= failed_from`
+   - `failed_at <= failed_to`
+5. 若仅传 `failed_from`，则从该时间开始筛到现在。
+6. 若仅传 `failed_to`，则筛到该时间为止，并仍受默认 7 天窗口约束。
+7. 若 `failed_from > failed_to`，接口返回 `400`。
 
 ### 7.3 失败详情接口
 
@@ -546,6 +576,7 @@
 2. 不开放匿名访问。
 3. 不在第一版增加对外导出接口。
 4. 前端表格默认展示完整值，但仍受现有 Web UI 访问控制保护。
+5. `GET /api/registration/failures` 与 `GET /api/registration/failures/summary` 必须在后端接口层执行与注册工作台一致的登录鉴权，不能只依赖前端页面入口限制。
 
 ## 12. 结论
 
