@@ -27,6 +27,8 @@
         })();
     </script>
     <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
+    <link rel="stylesheet" href="{{ '/static/css/workspace_shell.css?v=' ~ static_version }}">
+    <link rel="stylesheet" href="{{ '/static/css/workspace_components.css?v=' ~ static_version }}">
     {% block head_extra %}{% endblock %}
 </head>
 <body class="workspace-shell" data-page-key="{{ page_key }}">
@@ -40,7 +42,7 @@
                 <h1 class="page-head-title">{{ page_title }}</h1>
                 <p class="page-head-subtitle">{{ page_subtitle }}</p>
             </div>
-            <div class="workspace-shell-actions">
+            <div class="workspace-shell-actions page-head-actions">
                 <button
                     type="button"
                     id="workspace-theme-toggle"

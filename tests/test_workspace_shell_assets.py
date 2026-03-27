@@ -6,8 +6,8 @@ from src.web.page_shell import WORKSPACE_NAV, build_page_shell
 from tests_runtime.workspace_js_harness import run_workspace_js_scenario
 
 
-def test_shared_stylesheet_defines_workspace_shell_selectors():
-    stylesheet = Path("static/css/style.css").read_text(encoding="utf-8")
+def test_workspace_shell_stylesheet_defines_workspace_shell_selectors():
+    stylesheet = Path("static/css/workspace_shell.css").read_text(encoding="utf-8")
     assert ".workspace-shell" in stylesheet
     assert ".workspace-sidebar" in stylesheet
     assert ".workspace-rail" in stylesheet
@@ -25,6 +25,19 @@ def test_shared_stylesheet_defines_workspace_shell_selectors():
     assert ".workspace-sidebar-collapsed .workspace-nav-label" in stylesheet
     assert ".workspace-sidebar-collapsed .workspace-nav-link" in stylesheet
     assert ".theme-toggle.workspace-theme-toggle" in stylesheet
+    assert ".workspace-sidebar-footer" in stylesheet
+    assert ".page-head-actions" in stylesheet
+
+
+def test_workspace_components_stylesheet_defines_shared_foundation_selectors():
+    stylesheet = Path("static/css/workspace_components.css").read_text(encoding="utf-8")
+    assert ".stat-card" in stylesheet
+    assert ".filter-panel" in stylesheet
+    assert ".table-shell" in stylesheet
+    assert ".status-badge" in stylesheet
+    assert ".empty-state" in stylesheet
+    assert ".modal" in stylesheet
+    assert ".drawer" in stylesheet
 
 
 def test_workspace_script_defines_sidebar_and_theme_helpers():
@@ -59,6 +72,14 @@ def test_workspace_base_template_wires_sidebar_shell_actions_and_rendered_worksp
     assert base_template.index("codex-console.workspace.sidebar") < base_template.index(
         "/static/css/style.css?v={{ static_version }}"
     )
+    assert "/static/css/workspace_shell.css?v=" in base_template
+    assert "/static/css/workspace_components.css?v=" in base_template
+    assert base_template.index("/static/css/style.css?v=") < base_template.index(
+        "/static/css/workspace_shell.css?v="
+    )
+    assert base_template.index("/static/css/workspace_shell.css?v=") < base_template.index(
+        "/static/css/workspace_components.css?v="
+    )
     assert base_template.index("codex-console.workspace.sidebar") < base_template.index(
         "/static/js/workspace.js?v="
     )
@@ -84,6 +105,8 @@ def test_workspace_base_template_wires_sidebar_shell_actions_and_rendered_worksp
         ],
     )
     assert "/static/js/workspace.js?v=" in rendered_html
+    assert "/static/css/workspace_shell.css?v=" in rendered_html
+    assert "/static/css/workspace_components.css?v=" in rendered_html
     assert 'id="workspace-theme-toggle"' in rendered_html
     assert 'id="workspace-sidebar-toggle"' in rendered_html
     assert 'href="/logout"' in rendered_html
