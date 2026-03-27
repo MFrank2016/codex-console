@@ -231,14 +231,21 @@ class RegistrationEngine:
                         with get_db() as db:
                             is_blacklisted = crud.is_email_suffix_blacklisted(db, suffix)
                     except Exception as e:
-                        self._log(f"邮箱后缀黑名单检查失败，跳过拦截: {e}", "warning")
-                        is_blacklisted = False
+                        self._log(f"邮箱后缀黑名单检查失败，终止创建邮箱: {e}", "error")
+                        return False
 
                     if is_blacklisted:
                         self._log(
                             f"邮箱后缀命中黑名单，丢弃并重试: {suffix} (第 {attempt}/{max_attempts} 次)",
                             "warning",
                         )
+                        service_id = self.email_info.get("service_id") if self.email_info else None
+                        delete_email = getattr(self.email_service, "delete_email", None)
+                        if service_id and callable(delete_email):
+                            try:
+                                delete_email(service_id)
+                            except Exception as e:
+                                self._log(f"清理命中黑名单邮箱失败: {service_id}, {e}", "warning")
                         self.email = None
                         self.email_info = None
                         continue

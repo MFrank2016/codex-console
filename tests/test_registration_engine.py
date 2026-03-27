@@ -93,6 +93,19 @@ class FakeEmailService(BaseEmailService):
         return True
 
 
+@pytest.fixture(autouse=True)
+def _mock_blacklist_query(monkeypatch):
+    @contextmanager
+    def fake_get_db():
+        yield object()
+
+    monkeypatch.setattr("src.core.register.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "src.core.register.crud.is_email_suffix_blacklisted",
+        lambda db, suffix: False,
+    )
+
+
 class FakeOAuthManager:
     def __init__(self):
         self.start_calls = 0
@@ -323,6 +336,7 @@ def test_create_email_retries_when_suffix_blacklisted(monkeypatch):
         def __init__(self):
             super().__init__([])
             self.create_calls = 0
+            self.deleted_service_ids = []
 
         def create_email(self, config=None):
             self.create_calls += 1
@@ -330,14 +344,12 @@ def test_create_email_retries_when_suffix_blacklisted(monkeypatch):
                 return {"email": "first@blocked.test", "service_id": "mailbox-blocked"}
             return {"email": "second@allowed.test", "service_id": "mailbox-allowed"}
 
+        def delete_email(self, email_id):
+            self.deleted_service_ids.append(email_id)
+            return True
+
     email_service = RetryEmailService()
     engine = RegistrationEngine(email_service)
-
-    @contextmanager
-    def fake_get_db():
-        yield object()
-
-    monkeypatch.setattr("src.core.register.get_db", fake_get_db)
     monkeypatch.setattr(
         "src.core.register.crud.is_email_suffix_blacklisted",
         lambda db, suffix: suffix == "blocked.test",
@@ -345,6 +357,8 @@ def test_create_email_retries_when_suffix_blacklisted(monkeypatch):
 
     assert engine._create_email() is True
     assert email_service.create_calls == 2
+    assert email_service.deleted_service_ids == ["mailbox-blocked"]
+    assert any("命中黑名单" in log for log in engine.logs)
     assert engine.email == "second@allowed.test"
 
 
@@ -368,3 +382,60 @@ def test_create_user_account_raises_registration_disallowed_suffix_error():
         engine._create_user_account()
 
     assert exc_info.value.suffix == "blocked.test"
+
+
+def test_create_email_returns_false_after_10_blacklisted_suffix_hits(monkeypatch):
+    class AlwaysBlockedEmailService(FakeEmailService):
+        def __init__(self):
+            super().__init__([])
+            self.create_calls = 0
+
+        def create_email(self, config=None):
+            self.create_calls += 1
+            return {"email": f"user{self.create_calls}@blocked.test", "service_id": f"mailbox-{self.create_calls}"}
+
+    email_service = AlwaysBlockedEmailService()
+    engine = RegistrationEngine(email_service)
+    monkeypatch.setattr(
+        "src.core.register.crud.is_email_suffix_blacklisted",
+        lambda db, suffix: suffix == "blocked.test",
+    )
+
+    assert engine._create_email() is False
+    assert email_service.create_calls == 10
+
+
+def test_create_email_non_temporary_service_skips_blacklist_check(monkeypatch):
+    class OutlookEmailService(FakeEmailService):
+        def __init__(self):
+            BaseEmailService.__init__(self, EmailServiceType.OUTLOOK)
+            self.create_calls = 0
+
+        def create_email(self, config=None):
+            self.create_calls += 1
+            return {"email": "user@blocked.test", "service_id": "mailbox-outlook"}
+
+        def get_verification_code(self, *args, **kwargs):
+            return "000000"
+
+    email_service = OutlookEmailService()
+    engine = RegistrationEngine(email_service)
+    monkeypatch.setattr(
+        "src.core.register.crud.is_email_suffix_blacklisted",
+        lambda db, suffix: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+
+    assert engine._create_email() is True
+    assert email_service.create_calls == 1
+    assert engine.email == "user@blocked.test"
+
+
+def test_create_email_blacklist_query_error_returns_false(monkeypatch):
+    email_service = FakeEmailService(["123456"])
+    engine = RegistrationEngine(email_service)
+    monkeypatch.setattr(
+        "src.core.register.crud.is_email_suffix_blacklisted",
+        lambda db, suffix: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
+
+    assert engine._create_email() is False

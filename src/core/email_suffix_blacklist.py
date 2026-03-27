@@ -1,4 +1,5 @@
 """邮箱后缀黑名单核心工具。"""
+from typing import Any
 
 TEMPORARY_EMAIL_BLACKLIST_SERVICE_TYPES = {
     "tempmail",
@@ -30,7 +31,7 @@ def extract_email_suffix(email: str) -> str | None:
     return normalized or None
 
 
-def should_apply_email_suffix_blacklist(service_type: str | None) -> bool:
+def should_apply_email_suffix_blacklist(service_type: str | Any | None) -> bool:
     raw_service_type = getattr(service_type, "value", service_type)
     normalized = str(raw_service_type or "").strip().lower()
     return normalized in TEMPORARY_EMAIL_BLACKLIST_SERVICE_TYPES
