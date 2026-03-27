@@ -86,13 +86,24 @@ class BatchRegistrationService:
         with self.db_factory() as db:
             for _ in range(count):
                 task_uuid = str(uuid.uuid4())
-                task = crud.create_registration_task(
-                    db,
+                task = RegistrationTask(
                     task_uuid=task_uuid,
                     proxy=proxy,
+                    status="pending",
                     pipeline_key=pipeline_key,
                 )
+                db.add(task)
                 tasks.append(task)
+
+            db.commit()
+
+            # 批量模式启动接口会在 session 关闭后立刻读取 task_uuid / status
+            # 这里显式 refresh + expunge，避免前面创建的 ORM 实例在后续 commit 中过期，
+            # 导致路由层序列化时触发 DetachedInstanceError。
+            for task in tasks:
+                db.refresh(task)
+                db.expunge(task)
+
         return tasks
 
     def create_outlook_task_records(self, *, service_ids: list[int], proxy: str | None) -> list[str]:

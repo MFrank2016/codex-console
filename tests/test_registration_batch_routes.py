@@ -129,6 +129,38 @@ def test_start_batch_registration_persists_pipeline_key_for_each_task(route_db, 
         assert task.pipeline_key == "codexgen_pipeline"
 
 
+def test_start_batch_registration_serializes_tasks_with_fresh_db_sessions(tmp_path, batch_state, monkeypatch):
+    db_path = tmp_path / "registration-batch-detached.db"
+    manager = DatabaseSessionManager(f"sqlite:///{db_path}")
+    Base.metadata.create_all(bind=manager.engine)
+
+    @contextmanager
+    def isolated_get_db():
+        session = manager.SessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    monkeypatch.setattr(registration_routes, "get_db", isolated_get_db)
+    monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
+    background = BackgroundTasks()
+
+    response = asyncio.run(
+        registration_routes.start_batch_registration(
+            registration_routes.BatchRegistrationRequest(
+                count=2,
+                email_service_type="tempmail",
+                pipeline_key="current_pipeline",
+            ),
+            background,
+        )
+    )
+
+    assert [item.status for item in response.tasks] == ["pending", "pending"]
+    assert len({item.task_uuid for item in response.tasks}) == 2
+
+
 def test_get_task_returns_step_aware_pipeline_payload(route_db):
     task = crud.create_registration_task(route_db, task_uuid="task-step-aware")
     crud.update_registration_task(
