@@ -97,6 +97,7 @@
 
 - `id`
 - `task_uuid`
+- `attempt_no`
 - `batch_id`
 - `pipeline_key`
 - `registration_mode`
@@ -121,34 +122,38 @@
 2. `batch_id`
    - 批量、无限、Outlook 批量时用于聚合同批次失败。
 
-3. `pipeline_key`
+3. `attempt_no`
+   - 同一 `task_uuid` 内的失败尝试序号，从 `1` 开始递增。
+   - 第一版采用 `(task_uuid, attempt_no)` 作为逻辑唯一定位，避免后续分析时分不清同一任务内的多次失败。
+
+4. `pipeline_key`
    - 区分 `current_pipeline` / `codexgen_pipeline`。
 
-4. `registration_mode`
+5. `registration_mode`
    - 记录当次运行模式：`single / batch / unlimited / outlook_batch`。
 
-5. `email`
+6. `email`
    - 本次失败尝试使用的邮箱。
 
-6. `email_suffix`
+7. `email_suffix`
    - 便于按邮箱后缀聚合分析。
 
-7. `email_service_type`
+8. `email_service_type`
    - 如 `tempmail / outlook / moe_mail / duck_mail`。
 
-8. `display_name`
+9. `display_name`
    - 本次注册尝试使用的姓名。
 
-9. `birthdate`
+10. `birthdate`
    - 本次注册尝试使用的出生日期。
 
-10. `proxy`
+11. `proxy`
     - 当次任务实际使用的代理地址。
 
-11. `proxy_ip`
+12. `proxy_ip`
     - 代理出口 IP；如果拿不到，允许为空。
 
-12. `error_code`
+13. `error_code`
     - 尽量结构化，如：
       - `registration_disallowed`
       - `create_email_failed`
@@ -156,13 +161,13 @@
       - `oauth_failed`
       - `unknown`
 
-13. `error_detail`
+14. `error_detail`
     - 原始错误详情、异常消息或 API 返回摘要。
 
-14. `failed_at`
+15. `failed_at`
     - 实际失败时间。
 
-15. `extra_json`
+16. `extra_json`
     - 用于扩展额外上下文，如失败 step、user info 原始结构、动态代理探测信息等。
 
 ### 4.3 约束建议
@@ -172,11 +177,12 @@
 3. `email_suffix` 可空（当邮箱缺失时允许为空）。
 4. `proxy_ip` 可空。
 5. `task_uuid` 建索引。
-6. `batch_id` 建索引。
-7. `pipeline_key` 建索引。
-8. `registration_mode` 建索引。
-9. `email_suffix` 建索引。
-10. `failed_at` 建索引。
+6. `(task_uuid, attempt_no)` 建联合唯一索引。
+7. `batch_id` 建索引。
+8. `pipeline_key` 建索引。
+9. `registration_mode` 建索引。
+10. `email_suffix` 建索引。
+11. `failed_at` 建索引。
 
 ## 5. 失败记录链路设计
 
@@ -193,6 +199,16 @@
 3. 无限注册中的每次失败，记录 1 条。
 4. Outlook 批量中的每次失败，记录 1 条。
 5. 中间失败但最终重试成功，也保留之前的失败记录。
+
+这里对“失败尝试”进一步定义为：
+
+- **同一 `task_uuid` 内，每进入一次新的完整注册尝试轮次（attempt），最多只写一条失败记录。**
+
+也就是说：
+
+1. attempt 内部即使经过多个 step，第一版也不按 step 级别拆多条失败记录。
+2. 若同一 attempt 最终以失败结束，只记录 1 条失败尝试记录。
+3. 若该失败随后触发下一轮重试，则下一轮使用 `attempt_no + 1`。
 
 ### 5.2 统一记录入口
 
@@ -221,7 +237,16 @@
    - 写一条失败记录
    - 再进入失败收口逻辑
 
-### 5.4 用户资料来源
+### 5.4 幂等与去重规则
+
+为避免同一 attempt 被重复写入，第一版明确约定：
+
+1. 每轮 attempt 在收口处只调用一次“失败记录写入”。
+2. 写入时显式带上 `task_uuid + attempt_no`。
+3. 若同一 `(task_uuid, attempt_no)` 已存在，则后续写入应更新该条记录或直接跳过，不能插入第二条。
+4. 第一版推荐采用“先查后写”或“唯一约束 + upsert”保证幂等。
+
+### 5.5 用户资料来源
 
 为了稳定记录“姓名”和“出生日期”，建议把注册尝试使用的用户资料显式挂在运行态上。
 
@@ -233,7 +258,7 @@
 
 而不是依赖日志反解析。
 
-### 5.5 代理 IP 来源
+### 5.6 代理 IP 来源
 
 建议按以下优先级填充 `proxy_ip`：
 
@@ -319,6 +344,33 @@
 
 支持与列表一致的筛选参数，保证摘要与列表口径一致。
 
+固定返回结构建议为：
+
+```json
+{
+  "total_failed_attempts": 123,
+  "today_failed_attempts": 17,
+  "top_email_suffixes": [
+    {"value": "blocked.test", "count": 23},
+    {"value": "badmail.com", "count": 18}
+  ],
+  "top_error_codes": [
+    {"value": "registration_disallowed", "count": 41},
+    {"value": "proxy_error", "count": 19}
+  ],
+  "top_proxy_ips": [
+    {"value": "1.2.3.4", "count": 11},
+    {"value": "unknown", "count": 7}
+  ]
+}
+```
+
+第一版约定：
+
+1. Top 列表统一取前 `5` 项。
+2. `proxy_ip` 为空时归并到 `unknown`。
+3. `summary` 默认按“全部时间”聚合，但如果前端传了时间范围，则按传入范围聚合。
+
 ### 7.2 失败记录列表接口
 
 新增：
@@ -332,8 +384,8 @@
 - `email_service_type`
 - `email_suffix`
 - `error_keyword`
-- `started_from`
-- `started_to`
+- `failed_from`
+- `failed_to`
 - `page`
 - `page_size`
 
@@ -341,6 +393,22 @@
 
 - `total`
 - `items`
+
+第一版匹配规则明确为：
+
+1. `pipeline_key`：精确匹配
+2. `registration_mode`：精确匹配
+3. `email_service_type`：精确匹配
+4. `email_suffix`：包含匹配（`ILIKE %keyword%`）
+5. `error_keyword`：对 `error_code + error_detail` 做包含匹配（大小写不敏感）
+6. `failed_from / failed_to`：按 `failed_at` 过滤，不按任务开始时间过滤
+
+默认排序与分页规则：
+
+1. 默认按 `failed_at DESC, id DESC` 排序
+2. 默认 `page = 1`
+3. 默认 `page_size = 20`
+4. 第一版允许的 `page_size` 上限建议为 `100`
 
 ### 7.3 失败详情接口
 
@@ -421,6 +489,7 @@
 3. 参数过滤
 4. 分页
 5. 聚合返回结构
+6. `(task_uuid, attempt_no)` 幂等写入
 
 ### 9.4 前端资产测试
 
@@ -461,6 +530,22 @@
 - 但失败记录表里仍有 1 条失败样本
 
 这正是分析面板需要保留的信息。
+
+### 11.4 敏感字段访问约束
+
+失败记录包含：
+
+- 邮箱
+- 姓名
+- 出生日期
+- 代理信息
+
+这些都属于敏感运行数据。第一版约定：
+
+1. 仅在已登录的注册工作台内展示。
+2. 不开放匿名访问。
+3. 不在第一版增加对外导出接口。
+4. 前端表格默认展示完整值，但仍受现有 Web UI 访问控制保护。
 
 ## 12. 结论
 
