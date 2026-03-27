@@ -44,6 +44,7 @@ class RegistrationService:
             task_manager = default_task_manager
         self.task_manager = task_manager
         self.job_runner = job_runner
+        self._uses_default_sync_runner = sync_runner is None
         self.sync_runner = sync_runner or self._run_single_task_sync_impl
         self.proxy_resolver = proxy_resolver or self._resolve_proxy_for_registration
         self.proxy_usage_updater = proxy_usage_updater or self._update_proxy_usage
@@ -142,7 +143,7 @@ class RegistrationService:
         }
 
         runner = self.sync_runner
-        if getattr(self.task_manager, "executor", None) is not None and runner is self._run_single_task_sync_impl:
+        if getattr(self.task_manager, "executor", None) is not None and self._uses_default_sync_runner:
             result = await loop.run_in_executor(
                 self.task_manager.executor,
                 lambda: runner(**payload),

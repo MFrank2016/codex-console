@@ -2544,7 +2544,7 @@ const context = {{
           last_log_at: '2026-03-27T09:00:00',
         }};
       }}
-      if (path === '/api/realtime-streams/run/123/snapshot') {{
+      if (path === '/realtime-streams/run/123/snapshot') {{
         return {{
           seq: 2,
           stream: 'run:123',
@@ -2587,7 +2587,7 @@ const context = {{
           }},
         }};
       }}
-      if (path.startsWith('/api/realtime-streams/run/123/events?after_seq=')) {{
+      if (path.startsWith('/realtime-streams/run/123/events?after_seq=')) {{
         return {{
           stream: 'run:123',
           events: [],
@@ -2763,6 +2763,8 @@ def test_scheduled_tasks_run_log_modal_uses_shared_console_and_run_ws_contract()
     result = run_scheduled_tasks_shared_console_scenario("run_ws_live_append")
 
     assert result["ws_url"] == "ws://localhost/api/ws/run/123?after_seq=0"
+    assert "/realtime-streams/run/123/snapshot" in result["api_requests"]
+    assert not any(request.startswith("/api/realtime-streams/") for request in result["api_requests"])
     assert result["console_has_shared_class"] is True
     assert result["last_line_level_class"] == "realtime-log-level-error"
     assert result["history_tail_deduped"] is True

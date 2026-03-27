@@ -321,6 +321,60 @@ async def test_registration_service_async_run_initializes_pending_status_and_que
     assert any("已加入队列" in line for line in task_manager.get_logs("task-3"))
 
 
+@pytest.mark.anyio
+async def test_registration_service_async_run_uses_executor_for_default_sync_runner(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-executor", pipeline_key="current_pipeline")
+
+    class FakeLoop:
+        def __init__(self):
+            self.calls = []
+
+        async def run_in_executor(self, executor, fn):
+            self.calls.append(executor)
+            return fn()
+
+    class ExecutorTaskManager(FakeTaskManager):
+        def __init__(self, loop):
+            super().__init__()
+            self._loop = loop
+            self._executor = object()
+
+        @property
+        def executor(self):
+            return self._executor
+
+    fake_loop = FakeLoop()
+    task_manager = ExecutorTaskManager(fake_loop)
+
+    def fake_job_runner(**kwargs):
+        return RegistrationJobResult(
+            success=True,
+            account_id=202,
+            email="executor@example.com",
+            result_payload={"success": True, "email": "executor@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    result = await service.run_single_task(
+        task_uuid="task-executor",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="current_pipeline",
+    )
+
+    assert len(fake_loop.calls) == 1
+    assert result.task is not None
+    assert result.task.status == "completed"
+
+
 def test_registration_service_retries_proxy_related_failure_with_next_candidate(db_factory, temp_db):
     from src.application.registration_service import RegistrationService
 

@@ -1568,7 +1568,7 @@ function scheduleScheduledRunSharedFallback(runId, token) {
             return;
         }
         try {
-            const eventsResponse = await api.get(`/api/realtime-streams/run/${Number(runId)}/events?after_seq=0`);
+            const eventsResponse = await api.get(`/realtime-streams/run/${Number(runId)}/events?after_seq=0`);
             if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
                 return;
             }
@@ -1616,7 +1616,7 @@ async function bootstrapScheduledRunSharedRealtime(runId, token) {
     }
     scheduledRunSharedClient.applyHistoryChunk(historyChunk?.chunk || '');
 
-    const snapshot = await api.get(`/api/realtime-streams/run/${Number(runId)}/snapshot`);
+    const snapshot = await api.get(`/realtime-streams/run/${Number(runId)}/snapshot`);
     if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
         return true;
     }
