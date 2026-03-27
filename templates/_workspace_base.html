@@ -1,9 +1,31 @@
+{% from "_workspace_icons.html" import workspace_icon %}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{{ page_title }} - OpenAI 注册系统{% endblock %}</title>
+    <script>
+        (function () {
+            const root = document.documentElement;
+
+            try {
+                const theme = localStorage.getItem('theme');
+                if (theme === 'dark' || theme === 'light') {
+                    root.setAttribute('data-theme', theme);
+                }
+            } catch (error) {
+                // ignore preflight theme restore errors
+            }
+
+            try {
+                const sidebar = localStorage.getItem('codex-console.workspace.sidebar');
+                root.classList.toggle('workspace-sidebar-collapsed', sidebar === 'collapsed');
+            } catch (error) {
+                // ignore preflight sidebar restore errors
+            }
+        })();
+    </script>
     <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
     {% block head_extra %}{% endblock %}
 </head>
@@ -19,7 +41,14 @@
                 <p class="page-head-subtitle">{{ page_subtitle }}</p>
             </div>
             <div class="workspace-shell-actions">
-                <a href="/logout" class="workspace-shell-link">退出登录</a>
+                <button
+                    type="button"
+                    id="workspace-theme-toggle"
+                    class="theme-toggle workspace-theme-toggle"
+                    aria-label="切换主题"
+                >
+                    {{ workspace_icon("theme_dark") }}
+                </button>
             </div>
         </header>
 

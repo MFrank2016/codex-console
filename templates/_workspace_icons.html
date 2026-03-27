@@ -1,0 +1,35 @@
+{% macro workspace_icon(icon_key) %}
+<svg class="workspace-icon-svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+    {% if icon_key == "dashboard" %}
+    <path d="M3 4h8v7H3zM13 4h8v5h-8zM13 11h8v9h-8zM3 13h8v7H3z" fill="currentColor"></path>
+    {% elif icon_key == "registration_workbench" %}
+    <path d="M4 5h16v4H4zM7 11h10v2H7zM9 15h6v4H9z" fill="currentColor"></path>
+    {% elif icon_key == "run_center" %}
+    <path d="M5 4h14v4H5zM4 10h16v10H4zM7 13h4v4H7zM13 13h4v4h-4z" fill="currentColor"></path>
+    {% elif icon_key == "accounts" %}
+    <path d="M12 4a4 4 0 110 8 4 4 0 010-8zM5 20a7 7 0 0114 0H5z" fill="currentColor"></path>
+    {% elif icon_key == "registration_experiments" %}
+    <path d="M9 3h6v3l3.5 6.5A5 5 0 0114 20h-4a5 5 0 01-4.5-7.5L9 6V3z" fill="currentColor"></path>
+    {% elif icon_key == "registration_batch_stats" %}
+    <path d="M5 20V9h3v11H5zM10.5 20V4h3v16h-3zM16 20v-7h3v7h-3z" fill="currentColor"></path>
+    {% elif icon_key == "scheduled_tasks" %}
+    <path d="M6 2h2v3H6zM16 2h2v3h-2zM4 6h16v14H4zM7 10h4v3H7zM13 10h4v3h-4z" fill="currentColor"></path>
+    {% elif icon_key == "email_services" %}
+    <path d="M3 6h18v12H3zM5 8l7 5 7-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+    {% elif icon_key == "settings" %}
+    <path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2.1.6a7.8 7.8 0 01-.6 1.5l1.2 1.8-1.4 1.4-1.8-1.2a7.8 7.8 0 01-1.5.6L14 21h-4l-.6-2.1a7.8 7.8 0 01-1.5-.6l-1.8 1.2-1.4-1.4 1.2-1.8a7.8 7.8 0 01-.6-1.5L3 12l2.1-.6a7.8 7.8 0 01.6-1.5L4.5 8.1l1.4-1.4 1.8 1.2a7.8 7.8 0 011.5-.6L10 3h4l.6 2.1a7.8 7.8 0 011.5.6l1.8-1.2 1.4 1.4-1.2 1.8a7.8 7.8 0 01.6 1.5L21 12z" fill="currentColor"></path>
+    {% elif icon_key == "payment" %}
+    <path d="M3 6h18v12H3zM3 10h18M7 15h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+    {% elif icon_key == "sidebar_toggle" %}
+    <path d="M5 7h14M5 12h14M5 17h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+    {% elif icon_key == "theme_dark" %}
+    <path d="M14 2a8 8 0 108 8 7 7 0 01-8-8z" fill="currentColor"></path>
+    {% elif icon_key == "theme_light" %}
+    <path d="M12 4V2M12 22v-2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4M12 7a5 5 0 100 10 5 5 0 000-10z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+    {% elif icon_key == "logout" %}
+    <path d="M10 4H5v16h5M14 8l5 4-5 4M19 12H9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+    {% else %}
+    <circle cx="12" cy="12" r="4" fill="currentColor"></circle>
+    {% endif %}
+</svg>
+{% endmacro %}

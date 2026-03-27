@@ -1,3 +1,4 @@
+{% from "_workspace_icons.html" import workspace_icon %}
 <aside class="workspace-sidebar" aria-label="工作区侧边栏">
     <div class="workspace-sidebar-brand">
         <a href="/" class="workspace-brand-link">Codex Console</a>
@@ -10,15 +11,7 @@
             class="workspace-sidebar-toggle"
             aria-label="切换侧边栏"
         >
-            ☰
-        </button>
-        <button
-            type="button"
-            id="workspace-theme-toggle"
-            class="theme-toggle workspace-theme-toggle"
-            aria-label="切换主题"
-        >
-            🌙
+            {{ workspace_icon("sidebar_toggle") }}
         </button>
     </div>
 
@@ -36,17 +29,7 @@
                         aria-label="{{ nav_item["label"] }}"
                     >
                         <span class="workspace-nav-icon" aria-hidden="true">
-                            {% if nav_item["key"] == "dashboard" %}🏠
-                            {% elif nav_item["key"] == "registration_workbench" %}🧪
-                            {% elif nav_item["key"] == "accounts" %}👤
-                            {% elif nav_item["key"] == "scheduled_tasks" %}🗓️
-                            {% elif nav_item["key"] == "payment" %}💳
-                            {% elif nav_item["key"] == "registration_experiments" %}📊
-                            {% elif nav_item["key"] == "registration_batch_stats" %}📈
-                            {% elif nav_item["key"] == "email_services" %}✉️
-                            {% elif nav_item["key"] == "settings" %}⚙️
-                            {% else %}•
-                            {% endif %}
+                            {{ workspace_icon(nav_item["icon"]) }}
                         </span>
                         <span class="workspace-nav-label">{{ nav_item["label"] }}</span>
                     </a>
@@ -56,4 +39,11 @@
         </section>
         {% endfor %}
     </nav>
+
+    <footer class="workspace-sidebar-footer">
+        <a href="/logout" class="workspace-shell-link workspace-sidebar-logout">
+            <span class="workspace-nav-icon" aria-hidden="true">{{ workspace_icon("logout") }}</span>
+            <span class="workspace-nav-label">退出登录</span>
+        </a>
+    </footer>
 </aside>

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -30,6 +31,17 @@ def test_dashboard_page_requires_auth_and_renders_dashboard_hooks():
         assert 'data-page-key="dashboard"' in response.text
         assert 'id="workspace-theme-toggle"' in response.text
         assert 'href="/logout"' in response.text
+        assert re.search(r'<header class="page-head">[\s\S]*id="workspace-theme-toggle"', response.text)
+        assert re.search(
+            r'<footer class="workspace-sidebar-footer">[\s\S]*href="/logout"',
+            response.text,
+        )
+        page_head_match = re.search(
+            r'<header class="page-head">(?P<body>[\s\S]*?)</header>',
+            response.text,
+        )
+        assert page_head_match is not None
+        assert 'href="/logout"' not in page_head_match.group("body")
         assert "/static/js/dashboard.js?v=" in response.text
 
 

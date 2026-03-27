@@ -33,6 +33,17 @@ def test_registration_workbench_page_requires_auth_and_renders_workspace_shell_h
         assert 'href="/registration-workbench"' in response.text
         assert 'href="/logout"' in response.text
         assert 'class="theme-toggle"' in response.text
+        assert re.search(r'<header class="page-head">[\s\S]*id="workspace-theme-toggle"', response.text)
+        assert re.search(
+            r'<footer class="workspace-sidebar-footer">[\s\S]*href="/logout"',
+            response.text,
+        )
+        page_head_match = re.search(
+            r'<header class="page-head">(?P<body>[\s\S]*?)</header>',
+            response.text,
+        )
+        assert page_head_match is not None
+        assert 'href="/logout"' not in page_head_match.group("body")
 
 
 def test_registration_template_contains_unlimited_mode_and_domain_stats_container():
