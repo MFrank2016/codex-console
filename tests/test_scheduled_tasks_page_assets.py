@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import re
 import subprocess
+import tempfile
 
 from src.config.settings import get_settings
 from src.web.app import create_app
@@ -2258,3 +2259,521 @@ main().catch((err) => {
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def run_scheduled_tasks_shared_console_scenario(name: str) -> dict:
+    scheduled_tasks_source = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
+    store_source = Path("static/js/realtime_log_store.js").read_text(encoding="utf-8")
+    client_source = Path("static/js/realtime_log_client.js").read_text(encoding="utf-8")
+    console_source = Path("static/js/realtime_log_console.js").read_text(encoding="utf-8")
+
+    node_script = rf"""
+const vm = require('vm');
+
+const scenarioName = {json.dumps(name)};
+const scheduledTasksSource = {json.dumps(scheduled_tasks_source)};
+const storeSource = {json.dumps(store_source)};
+const clientSource = {json.dumps(client_source)};
+const consoleSource = {json.dumps(console_source)};
+
+function createClassList() {{
+  const classes = new Set();
+  return {{
+    add(...tokens) {{ tokens.filter(Boolean).forEach((token) => classes.add(token)); }},
+    remove(...tokens) {{ tokens.filter(Boolean).forEach((token) => classes.delete(token)); }},
+    contains(token) {{ return classes.has(token); }},
+    toggle(token, force) {{
+      if (force === true) {{ classes.add(token); return true; }}
+      if (force === false) {{ classes.delete(token); return false; }}
+      if (classes.has(token)) {{
+        classes.delete(token);
+        return false;
+      }}
+      classes.add(token);
+      return true;
+    }},
+  }};
+}}
+
+function createMockElement(id = '') {{
+  let html = '';
+  let text = '';
+  const classes = createClassList();
+  return {{
+    id,
+    dataset: {{}},
+    style: {{}},
+    value: '',
+    checked: true,
+    disabled: false,
+    scrollTop: 0,
+    scrollHeight: 480,
+    clientHeight: 240,
+    _listeners: {{}},
+    classList: classes,
+    addEventListener(type, handler) {{ this._listeners[type] = handler; }},
+    removeEventListener() {{}},
+    setAttribute() {{}},
+    removeAttribute() {{}},
+    appendChild() {{}},
+    scrollIntoView() {{}},
+    reset() {{}},
+    click() {{
+      if (this._listeners.click) {{
+        return this._listeners.click({{ currentTarget: this, target: this, preventDefault() {{}} }});
+      }}
+      return undefined;
+    }},
+    querySelector() {{ return null; }},
+    querySelectorAll() {{ return []; }},
+    get innerHTML() {{ return html; }},
+    set innerHTML(next) {{
+      html = String(next ?? '');
+      text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    }},
+    get textContent() {{ return text; }},
+    set textContent(next) {{
+      text = String(next ?? '');
+      html = text;
+    }},
+  }};
+}}
+
+const elements = new Map();
+function getElement(id) {{
+  if (!elements.has(id)) {{
+    elements.set(id, createMockElement(id));
+  }}
+  return elements.get(id);
+}}
+
+[
+  'scheduled-plans-table-body',
+  'scheduled-runs-card',
+  'scheduled-runs-table-body',
+  'refresh-plans-btn',
+  'create-plan-btn',
+  'scheduled-run-filter-task-type',
+  'scheduled-run-filter-status',
+  'scheduled-run-filter-started-from',
+  'scheduled-run-filter-started-to',
+  'scheduled-run-filter-apply-btn',
+  'scheduled-run-filter-reset-btn',
+  'scheduled-run-pagination-summary',
+  'scheduled-run-prev-page',
+  'scheduled-run-next-page',
+  'scheduled-run-page-jump-input',
+  'scheduled-run-page-jump-btn',
+  'plan-form-modal',
+  'plan-form-title',
+  'plan-form',
+  'plan-id',
+  'plan-form-submit-btn',
+  'plan-name',
+  'plan-task-type',
+  'plan-cpa-service-select',
+  'plan-cpa-service-id',
+  'plan-trigger-type',
+  'plan-cron-group',
+  'plan-cron-expression',
+  'plan-interval-group',
+  'plan-interval-value',
+  'plan-interval-unit',
+  'plan-config-mode-table',
+  'plan-config-mode-json',
+  'plan-config-add-entry-btn',
+  'plan-config-editor-panel',
+  'plan-config-entries-body',
+  'plan-config-json-panel',
+  'plan-config-json',
+  'plan-enabled',
+  'plan-modal',
+  'plan-modal-body',
+  'run-detail-modal',
+  'run-detail-modal-body',
+  'run-log-modal',
+  'run-log-status-bar',
+  'run-log-refresh-btn',
+  'run-log-auto-scroll',
+  'run-log-stop-actions',
+  'run-log-stop-btn',
+  'run-log-modal-body',
+  'run-log-console',
+  'run-log-search-input',
+  'run-log-level-filter',
+  'run-log-copy-btn',
+  'run-log-clear-btn',
+  'run-log-wrap-input',
+].forEach((id) => getElement(id));
+
+getElement('run-log-wrap-input').checked = true;
+getElement('run-log-auto-scroll').checked = true;
+
+const domListeners = {{}};
+const document = {{
+  body: createMockElement('body'),
+  activeElement: null,
+  getElementById(id) {{ return getElement(id); }},
+  querySelectorAll(selector) {{
+    if (selector === '[data-close-modal]') {{
+      return [];
+    }}
+    return [];
+  }},
+  querySelector() {{ return null; }},
+  addEventListener(type, handler) {{ domListeners[type] = handler; }},
+  createElement() {{
+    return createMockElement('created');
+  }},
+}};
+
+let nextTimerId = 1;
+const timerCallbacks = new Map();
+const clearedTimers = [];
+let latestWs = null;
+const createdWsUrls = [];
+let fallbackTimerId = null;
+
+class MockWebSocket {{
+  constructor(url) {{
+    this.url = String(url);
+    this.readyState = 1;
+    this.sent = [];
+    this.closed = false;
+    this.closeCount = 0;
+    createdWsUrls.push(this.url);
+    latestWs = this;
+  }}
+
+  send(payload) {{
+    this.sent.push(payload);
+  }}
+
+  close() {{
+    this.closed = true;
+    this.closeCount += 1;
+    this.readyState = 3;
+    if (typeof this.onclose === 'function') {{
+      this.onclose({{ code: 1000 }});
+    }}
+  }}
+}}
+MockWebSocket.OPEN = 1;
+
+const apiRequests = [];
+const context = {{
+  console,
+  URLSearchParams,
+  setTimeout(callback) {{
+    const id = nextTimerId++;
+    timerCallbacks.set(id, callback);
+    fallbackTimerId = id;
+    return id;
+  }},
+  clearTimeout(id) {{
+    clearedTimers.push(id);
+    timerCallbacks.delete(id);
+  }},
+  setInterval() {{
+    throw new Error('expected no setInterval usage');
+  }},
+  clearInterval() {{}},
+  document,
+  window: {{
+    location: {{
+      protocol: 'http:',
+      host: 'localhost',
+    }},
+    navigator: {{
+      clipboard: {{
+        writeText: async () => {{}},
+      }},
+    }},
+    WebSocket: MockWebSocket,
+  }},
+  navigator: {{
+    clipboard: {{
+      writeText: async () => {{}},
+    }},
+  }},
+  WebSocket: MockWebSocket,
+  theme: {{ toggle() {{}} }},
+  format: {{ date(value) {{ return String(value ?? '-'); }} }},
+  toast: {{
+    warning() {{}},
+    error() {{}},
+    success() {{}},
+  }},
+  api: {{
+    async get(path) {{
+      apiRequests.push(path);
+      if (path === '/scheduled-plans') return {{ items: [] }};
+      if (path === '/cpa-services') return [];
+      if (path.startsWith('/scheduled-runs?')) return {{ items: [], total: 0, page: 1, page_size: 20 }};
+      if (path === '/scheduled-runs/123') {{
+        return {{
+          id: 123,
+          plan_id: 9,
+          plan_name: 'nightly cleanup',
+          task_type: 'cpa_cleanup',
+          trigger_source: 'manual',
+          started_at: '2026-03-27T09:00:00',
+          finished_at: null,
+          error_message: null,
+          summary: {{}},
+          status: 'running',
+          last_log_at: '2026-03-27T09:00:00',
+          is_running: true,
+          stop_requested_at: null,
+          can_stop: true,
+        }};
+      }}
+      if (path === '/scheduled-runs/123/logs?offset=0') {{
+        return {{
+          run_id: 123,
+          chunk: [
+            '2026-03-27 09:00:00.000 [INFO] warmup done',
+            '2026-03-27 09:00:00.100 [INFO] history only',
+          ].join('\n') + '\n',
+          next_offset: 87,
+          has_more: false,
+          is_running: true,
+          status: 'running',
+          stop_requested_at: null,
+          log_version: 2,
+          last_log_at: '2026-03-27T09:00:00',
+        }};
+      }}
+      if (path === '/api/realtime-streams/run/123/snapshot') {{
+        return {{
+          seq: 2,
+          stream: 'run:123',
+          kind: 'snapshot',
+          payload: {{
+            run: {{
+              id: 123,
+              plan_id: 9,
+              plan_name: 'nightly cleanup',
+              task_type: 'cpa_cleanup',
+              status: 'running',
+              is_running: true,
+              can_stop: true,
+              log_version: 2,
+              last_log_at: '2026-03-27T09:00:00',
+            }},
+            run_progress: null,
+            logs_tail: [
+              {{
+                seq: 1,
+                stream: 'run:123',
+                timestamp: '2026-03-27T09:00:00+08:00',
+                display_time: '09:00:00',
+                level: 'INFO',
+                message: 'warmup done',
+                raw: '2026-03-27 09:00:00.000 [INFO] warmup done',
+                source: 'scheduler',
+              }},
+              {{
+                seq: 2,
+                stream: 'run:123',
+                timestamp: '2026-03-27T09:00:00+08:00',
+                display_time: '09:00:00',
+                level: 'INFO',
+                message: 'snapshot steady',
+                raw: '2026-03-27 09:00:00.050 [INFO] snapshot steady',
+                source: 'scheduler',
+              }},
+            ],
+          }},
+        }};
+      }}
+      if (path.startsWith('/api/realtime-streams/run/123/events?after_seq=')) {{
+        return {{
+          stream: 'run:123',
+          events: [],
+        }};
+      }}
+      throw new Error('unexpected api path: ' + path);
+    }},
+    async post() {{ return {{}}; }},
+    async put() {{ return {{}}; }},
+  }},
+}};
+context.global = context;
+context.globalThis = context;
+context.window.window = context.window;
+context.window.document = document;
+context.window.navigator = context.navigator;
+
+vm.createContext(context);
+vm.runInContext(storeSource, context, {{ filename: 'realtime_log_store.js' }});
+vm.runInContext(clientSource, context, {{ filename: 'realtime_log_client.js' }});
+vm.runInContext(consoleSource, context, {{ filename: 'realtime_log_console.js' }});
+vm.runInContext(scheduledTasksSource, context, {{ filename: 'scheduled_tasks.js' }});
+
+async function flush() {{
+  await new Promise((resolve) => setImmediate(resolve));
+}}
+
+function trigger(type, element, event = {{}}) {{
+  const handler = element && element._listeners ? element._listeners[type] : null;
+  if (!handler) return;
+  return handler(event);
+}}
+
+async function runScenario() {{
+  if (typeof domListeners.DOMContentLoaded !== 'function') {{
+    throw new Error('DOMContentLoaded listener missing');
+  }}
+
+  domListeners.DOMContentLoaded();
+  await flush();
+  await flush();
+
+  await context.window.openScheduledRunLog(123);
+  await flush();
+
+  if (latestWs && typeof latestWs.onopen === 'function') {{
+    latestWs.onopen();
+  }}
+
+  if (latestWs && typeof latestWs.onmessage === 'function') {{
+    latestWs.onmessage({{
+      data: JSON.stringify({{
+        seq: 3,
+        stream: 'run:123',
+        kind: 'log_appended',
+        payload: {{
+          entry: {{
+            seq: 3,
+            stream: 'run:123',
+            timestamp: '2026-03-27T09:00:01+08:00',
+            display_time: '09:00:01',
+            level: 'ERROR',
+            message: 'fatal issue',
+            raw: '2026-03-27 09:00:01.000 [ERROR] fatal issue',
+            source: 'scheduler',
+          }},
+        }},
+      }}),
+    }});
+  }}
+  await flush();
+
+  if (scenarioName === 'shared_console_controls') {{
+    const logConsole = getElement('run-log-console');
+    const searchInput = getElement('run-log-search-input');
+    const levelFilter = getElement('run-log-level-filter');
+    const wrapInput = getElement('run-log-wrap-input');
+
+    searchInput.value = 'fatal';
+    let enterPrevented = false;
+    trigger('keydown', searchInput, {{
+      key: 'Enter',
+      preventDefault() {{
+        enterPrevented = true;
+      }},
+    }});
+    await flush();
+    const htmlAfterSearch = logConsole.innerHTML;
+
+    levelFilter.value = 'ERROR';
+    trigger('change', levelFilter, {{ target: levelFilter }});
+    await flush();
+    const htmlAfterLevelFilter = logConsole.innerHTML;
+
+    wrapInput.checked = false;
+    trigger('change', wrapInput, {{ target: wrapInput }});
+    await flush();
+
+    return {{
+      search_prevented_enter: enterPrevented,
+      search_filters_shared_console: htmlAfterSearch.includes('fatal issue')
+        && !htmlAfterSearch.includes('warmup done')
+        && htmlAfterSearch.includes('realtime-log-level-badge'),
+      level_filter_keeps_shared_markup: htmlAfterLevelFilter.includes('fatal issue')
+        && !htmlAfterLevelFilter.includes('scheduled-run-log-level-badge'),
+      wrap_toggle_keeps_shared_console: logConsole.classList.contains('realtime-log-console--nowrap')
+        && !logConsole.innerHTML.includes('scheduled-run-log-line'),
+    }};
+  }}
+
+  if (scenarioName !== 'run_ws_live_append') {{
+    throw new Error('unknown scenario: ' + scenarioName);
+  }}
+
+  if (latestWs && typeof latestWs.onerror === 'function') {{
+    latestWs.onerror(new Error('socket failed'));
+  }}
+  await flush();
+
+  const consoleHtmlBeforeClose = getElement('run-log-console').innerHTML;
+  const historyTailCount = (consoleHtmlBeforeClose.match(/warmup done/g) || []).length;
+  const sharedClassBeforeClose = getElement('run-log-console').classList.contains('realtime-log-console-shell');
+  const errorClassVisible = consoleHtmlBeforeClose.includes('realtime-log-level-error') ? 'realtime-log-level-error' : '';
+  const fallbackTimerBeforeClose = fallbackTimerId;
+
+  await context.window.handleRunLogAction({{
+    dataset: {{ action: 'back-to-runs' }},
+    disabled: false,
+    setAttribute() {{}},
+    removeAttribute() {{}},
+  }});
+  await flush();
+
+  return {{
+    ws_url: createdWsUrls[0] || '',
+    console_has_shared_class: sharedClassBeforeClose,
+    last_line_level_class: errorClassVisible,
+    history_tail_deduped: historyTailCount === 1,
+    teardown_closed_ws: !!(latestWs && latestWs.closed),
+    teardown_stopped_fallback: fallbackTimerBeforeClose !== null && clearedTimers.includes(fallbackTimerBeforeClose),
+    api_requests: apiRequests,
+  }};
+}}
+
+runScenario()
+  .then((result) => {{
+    process.stdout.write(JSON.stringify(result));
+  }})
+  .catch((error) => {{
+    console.error(error && error.stack ? error.stack : String(error));
+    process.exit(1);
+  }});
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as script_file:
+        script_file.write(node_script)
+        script_path = Path(script_file.name)
+
+    try:
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        script_path.unlink(missing_ok=True)
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout or "{}")
+
+
+def test_scheduled_tasks_run_log_modal_uses_shared_console_and_run_ws_contract():
+    result = run_scheduled_tasks_shared_console_scenario("run_ws_live_append")
+
+    assert result["ws_url"] == "ws://localhost/api/ws/run/123?after_seq=0"
+    assert result["console_has_shared_class"] is True
+    assert result["last_line_level_class"] == "realtime-log-level-error"
+    assert result["history_tail_deduped"] is True
+    assert result["teardown_closed_ws"] is True
+    assert result["teardown_stopped_fallback"] is True
+
+
+def test_scheduled_tasks_shared_console_controls_stay_on_shared_runtime():
+    result = run_scheduled_tasks_shared_console_scenario("shared_console_controls")
+
+    assert result["search_prevented_enter"] is True
+    assert result["search_filters_shared_console"] is True
+    assert result["level_filter_keeps_shared_markup"] is True
+    assert result["wrap_toggle_keeps_shared_console"] is True

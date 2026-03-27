@@ -37,33 +37,134 @@ let wsHeartbeatInterval = null;  // 心跳定时器
 let batchWsHeartbeatInterval = null;  // 批量任务心跳定时器
 let activeTaskUuid = null;   // 当前活跃的单任务 UUID（用于页面重新可见时重连）
 let activeBatchId = null;    // 当前活跃的批量任务 ID（用于页面重新可见时重连）
+let registrationSharedConsoleController = null;
+let registrationSharedStreamClient = null;
+let registrationSharedPendingEvent = null;
+let registrationLocalEventSeq = 0;
 
-// ============== Registration realtime store（最小接入） ==============
+// ============== Registration shared realtime console 主链路 ==============
 
-let registrationStreamState = {
-    cursors: {},
-    task: {},
-    taskProgress: null,
-    currentStep: null,
-    steps: [],
-    batch: {},
-    logs: [],
-    connection: { status: 'disconnected' },
-};
+function hasRegistrationSharedRuntime() {
+    return Boolean(
+        window?.realtimeLogStore?.createState
+        && window?.realtimeLogClient?.createStreamClient
+        && window?.realtimeLogConsole?.mountRealtimeLogConsole
+    );
+}
+
+function createRegistrationInitialStreamState() {
+    const seed = {
+        cursors: {},
+        task: {},
+        taskProgress: null,
+        currentStep: null,
+        steps: [],
+        batch: {},
+        logs: [],
+        connection: { status: 'disconnected' },
+    };
+    if (window?.realtimeLogStore?.createState) {
+        return window.realtimeLogStore.createState(seed);
+    }
+    return seed;
+}
+
+let registrationStreamState = createRegistrationInitialStreamState();
 let registrationStreamRenderedLogCount = 0;
 
-function reduceRegistrationStream(event) {
+function ensureRegistrationSharedConsoleMounted() {
+    if (!hasRegistrationSharedRuntime() || !elements.consoleLog) {
+        return null;
+    }
+    if (!registrationSharedConsoleController || registrationSharedConsoleController.root !== elements.consoleLog) {
+        registrationSharedConsoleController = window.realtimeLogConsole.mountRealtimeLogConsole(elements.consoleLog, {
+            state: registrationStreamState,
+        });
+    }
+    return registrationSharedConsoleController;
+}
+
+function applyRegistrationStreamState(nextState, event) {
+    const previous = registrationStreamState;
+    if (window?.realtimeLogStore?.createState) {
+        registrationStreamState = window.realtimeLogStore.createState(nextState || {});
+    } else {
+        registrationStreamState = nextState || createRegistrationInitialStreamState();
+    }
+    registrationStreamRenderedLogCount = Array.isArray(registrationStreamState?.logs)
+        ? registrationStreamState.logs.length
+        : 0;
+
+    const controller = ensureRegistrationSharedConsoleMounted();
+    if (controller) {
+        controller.setState(registrationStreamState);
+    }
+
+    syncRegistrationStreamPanels(previous, registrationStreamState, event);
+    return registrationStreamState;
+}
+
+function ensureRegistrationStreamClient() {
+    if (!hasRegistrationSharedRuntime()) {
+        return null;
+    }
+    if (registrationSharedStreamClient) {
+        return registrationSharedStreamClient;
+    }
+    ensureRegistrationSharedConsoleMounted();
+    registrationSharedStreamClient = window.realtimeLogClient.createStreamClient({
+        initialState: registrationStreamState,
+        onStateChange(nextState) {
+            applyRegistrationStreamState(nextState, registrationSharedPendingEvent);
+        },
+    });
+    applyRegistrationStreamState(registrationSharedStreamClient.getState(), null);
+    return registrationSharedStreamClient;
+}
+
+function dispatchRegistrationStreamEvent(event) {
+    const client = ensureRegistrationStreamClient();
+    if (client) {
+        registrationSharedPendingEvent = event;
+        try {
+            return client.dispatchEvent(event);
+        } finally {
+            registrationSharedPendingEvent = null;
+        }
+    }
+
     const reducer = window?.registrationStream?.reduce;
     if (typeof reducer !== 'function') {
-        return;
+        return registrationStreamState;
     }
-    const previous = registrationStreamState;
-    const next = reducer(previous, event);
-    if (next === previous) {
-        return;
+    const nextState = reducer(registrationStreamState, event);
+    if (nextState !== registrationStreamState) {
+        applyRegistrationStreamState(nextState, event);
     }
-    registrationStreamState = next;
-    syncRegistrationStreamDom(previous, next, event);
+    return nextState;
+}
+
+function applyRegistrationStreamSnapshot(snapshot) {
+    const client = ensureRegistrationStreamClient();
+    if (client) {
+        registrationSharedPendingEvent = snapshot;
+        try {
+            return client.applySnapshot(snapshot);
+        } finally {
+            registrationSharedPendingEvent = null;
+        }
+    }
+    return dispatchRegistrationStreamEvent(snapshot);
+}
+
+function reduceRegistrationStream(event) {
+    if (!event || typeof event.kind !== 'string') {
+        return registrationStreamState;
+    }
+    if (event.kind === 'snapshot') {
+        return applyRegistrationStreamSnapshot(event);
+    }
+    return dispatchRegistrationStreamEvent(event);
 }
 
 function emitConnectionStateChanged(status) {
@@ -87,26 +188,8 @@ function renderRegistrationStreamStatus() {
     panel.textContent = statusText;
 }
 
-function syncRegistrationStreamDom(previous, next, event) {
+function syncRegistrationStreamPanels(previous, next, event) {
     renderRegistrationStreamStatus();
-
-    // 日志渲染：以事件类型驱动，避免依赖 logs 数组长度差量（ring buffer 长度可能恒定）。
-    if (event?.kind === 'snapshot') {
-        resetConsoleLogDom();
-        const nextLogs = Array.isArray(next?.logs) ? next.logs : [];
-        for (const entry of nextLogs) {
-            const message = typeof entry === 'string' ? entry : (entry ? entry.message : '');
-            if (!message) continue;
-            appendLogLine(getLogType(message), message, { dedupeByMessage: false });
-        }
-        registrationStreamRenderedLogCount = nextLogs.length;
-    } else if (event?.kind === 'log_appended') {
-        const message = event?.payload?.message;
-        if (message) {
-            appendLogLine(getLogType(message), message, { dedupeByMessage: false });
-            registrationStreamRenderedLogCount = Array.isArray(next?.logs) ? next.logs.length : registrationStreamRenderedLogCount;
-        }
-    }
 
     // 步骤瀑布流：仅在相关事件时刷新
     if (event?.kind === 'snapshot' || event?.kind === 'task_step_updated') {
@@ -141,24 +224,29 @@ function syncRegistrationStreamDom(previous, next, event) {
 }
 
 function resetConsoleLogDom() {
-    if (!elements.consoleLog) return;
-    elements.consoleLog.innerHTML = '';
-    // 清空旧去重窗口，避免 DOM reset 后 addLog 被错误吞掉
+    const controller = ensureRegistrationSharedConsoleMounted();
+    if (controller) {
+        controller.setState(createRegistrationInitialStreamState());
+    } else if (elements.consoleLog) {
+        elements.consoleLog.innerHTML = '';
+    }
     displayedLogs.clear();
 }
 
 function resetRegistrationStreamViewState() {
-    registrationStreamState = {
-        ...registrationStreamState,
-        task: {},
-        taskProgress: null,
-        currentStep: null,
-        steps: [],
-        batch: {},
-        logs: [],
-    };
+    registrationSharedStreamClient = null;
+    registrationSharedPendingEvent = null;
+    registrationStreamState = createRegistrationInitialStreamState();
     registrationStreamRenderedLogCount = 0;
-    emitConnectionStateChanged('disconnected');
+    const controller = ensureRegistrationSharedConsoleMounted();
+    if (controller) {
+        controller.ui.viewCleared = false;
+        controller.ui.clearedAfterSeq = 0;
+        controller.setState(registrationStreamState);
+    } else if (elements.consoleLog) {
+        elements.consoleLog.innerHTML = '';
+    }
+    renderRegistrationStreamStatus();
 }
 
 // DOM 元素
@@ -246,6 +334,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     initEventListeners();
+    ensureRegistrationSharedConsoleMounted();
+    renderRegistrationStreamStatus();
     loadAvailableServices();
     loadRecentAccounts();
     startAccountsPolling();
@@ -348,8 +438,13 @@ function initEventListeners() {
 
     // 清空日志
     elements.clearLogBtn.addEventListener('click', () => {
+        displayedLogs.clear();
+        const controller = ensureRegistrationSharedConsoleMounted();
+        if (controller) {
+            controller.clearView();
+            return;
+        }
         elements.consoleLog.innerHTML = '<div class="log-line info">[系统] 日志已清空</div>';
-        displayedLogs.clear();  // 清空日志去重集合
         resetRegistrationStreamViewState();
     });
 
@@ -659,6 +754,9 @@ async function handleSingleRegistration(requestData) {
     taskFinalStatus = null;
     displayedLogs.clear();  // 清空日志去重集合
     toastShown = false;  // 重置 toast 标志
+    currentBatch = null;
+    activeBatchId = null;
+    resetRegistrationStreamViewState();
 
     addLog('info', '[系统] 正在启动注册任务...');
 
@@ -845,13 +943,14 @@ function connectWebSocket(taskUuid) {
             // 新协议：stream envelope
             if (data && typeof data.kind === 'string' && typeof data.stream === 'string') {
                 if (data.kind === 'snapshot_required') {
-                    // 兼容兜底：如果 realtime store 未加载（registration_stream.js 缺失/异常），
-                    // 则退回旧的 logs 轮询，以保证页面仍有基本反馈。
+                    // 最小兼容兜底：只有在 shared runtime / shim 都不可用时，
+                    // 才退回旧 logs 轮询，保证页面仍有基本反馈。
                     // 注意：这条链路不作为注册工作台的主实时来源。
-                    if (typeof window?.registrationStream?.reduce !== 'function') {
+                    if (!hasRegistrationSharedRuntime() && typeof window?.registrationStream?.reduce !== 'function') {
                         startLogPolling(taskUuid);
                         return;
                     }
+                    reduceRegistrationStream(data);
                     try {
                         const snapshot = await api.get(`/registration/streams/task/${taskUuid}/snapshot`);
                         reduceRegistrationStream(snapshot);
@@ -1016,6 +1115,9 @@ async function handleBatchRegistration(requestData) {
     batchFinalStatus = null;
     displayedLogs.clear();  // 清空日志去重集合
     toastShown = false;  // 重置 toast 标志
+    currentTask = null;
+    activeTaskUuid = null;
+    resetRegistrationStreamViewState();
 
     const count = isUnlimitedRegistrationMode()
         ? 0
@@ -1123,7 +1225,7 @@ async function handleCancelTask() {
     }
 }
 
-// ============== Legacy fallback：旧日志轮询（不作为工作台主实时来源） ==============
+// ============== Legacy fallback：最后兜底的旧日志轮询 ==============
 
 // 开始轮询日志
 function startLogPolling(taskUuid) {
@@ -1518,12 +1620,88 @@ function startAccountsPolling() {
     }, 30000);
 }
 
-// 添加日志
-function addLog(type, message) {
-    appendLogLine(type, message, { dedupeByMessage: true });
+function getRegistrationActiveStreamId() {
+    if (activeBatchId) {
+        return `ui:batch:${activeBatchId}`;
+    }
+    if (activeTaskUuid) {
+        return `ui:task:${activeTaskUuid}`;
+    }
+    return 'ui:task:local';
 }
 
-function appendLogLine(type, message, options = {}) {
+function nextRegistrationLocalEventSeq() {
+    registrationLocalEventSeq += 1;
+    return registrationLocalEventSeq;
+}
+
+function getRegistrationLogLevel(type, message) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    if (normalizedType === 'error') return 'ERROR';
+    if (normalizedType === 'warning' || normalizedType === 'warn') return 'WARN';
+    const normalizedMessage = String(message || '').toUpperCase();
+    if (normalizedMessage.includes('[ERROR]')) return 'ERROR';
+    if (normalizedMessage.includes('[WARN]')) return 'WARN';
+    return 'INFO';
+}
+
+function buildRegistrationLocalLogEntry(type, message, streamId, seq) {
+    const now = new Date();
+    const displayTime = now.toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    });
+    const timestamp = now.toISOString();
+    const level = getRegistrationLogLevel(type, message);
+    return {
+        seq,
+        stream: streamId,
+        timestamp,
+        display_time: displayTime,
+        level,
+        message,
+        raw: `[${displayTime}] ${message}`,
+        source: 'ui',
+    };
+}
+
+function addLog(type, message) {
+    const normalizedMessage = String(message || '').trim();
+    if (!normalizedMessage) {
+        return false;
+    }
+
+    if (!hasRegistrationSharedRuntime() && typeof window?.registrationStream?.reduce !== 'function') {
+        return appendLegacyLogLine(type, normalizedMessage, { dedupeByMessage: true });
+    }
+
+    const logKey = `${type}:${normalizedMessage}`;
+    if (displayedLogs.has(logKey)) {
+        return false;
+    }
+    displayedLogs.add(logKey);
+
+    if (displayedLogs.size > 1000) {
+        const keys = Array.from(displayedLogs);
+        keys.slice(0, 500).forEach(key => displayedLogs.delete(key));
+    }
+
+    const streamId = getRegistrationActiveStreamId();
+    const seq = nextRegistrationLocalEventSeq();
+    const entry = buildRegistrationLocalLogEntry(type, normalizedMessage, streamId, seq);
+
+    reduceRegistrationStream({
+        seq,
+        stream: streamId,
+        kind: 'log_appended',
+        payload: { entry },
+        meta: { local: true },
+    });
+    return true;
+}
+
+function appendLegacyLogLine(type, message, options = {}) {
     if (!elements.consoleLog) return false;
 
     const dedupeByMessage = options.dedupeByMessage === true;
@@ -1689,6 +1867,9 @@ async function handleOutlookBatchRegistration() {
     batchFinalStatus = null;
     displayedLogs.clear();  // 清空日志去重集合
     toastShown = false;  // 重置 toast 标志
+    currentTask = null;
+    activeTaskUuid = null;
+    resetRegistrationStreamViewState();
 
     // 获取选中的账户
     const selectedIds = [];
@@ -1796,6 +1977,7 @@ function connectBatchWebSocket(batchId) {
             // 新协议：stream envelope
             if (data && typeof data.kind === 'string' && typeof data.stream === 'string') {
                 if (data.kind === 'snapshot_required') {
+                    reduceRegistrationStream(data);
                     try {
                         const snapshot = await api.get(`/registration/streams/batch/${batchId}/snapshot`);
                         reduceRegistrationStream(snapshot);
@@ -2002,6 +2184,7 @@ async function restoreActiveTask() {
             taskFinalStatus = null;
             toastShown = false;
             displayedLogs.clear();
+            resetRegistrationStreamViewState();
             elements.startBtn.disabled = true;
             elements.cancelBtn.disabled = false;
             showTaskStatus(data);
@@ -2031,6 +2214,7 @@ async function restoreActiveTask() {
             batchFinalStatus = null;
             toastShown = false;
             displayedLogs.clear();
+            resetRegistrationStreamViewState();
             elements.startBtn.disabled = true;
             elements.cancelBtn.disabled = false;
             showBatchStatus({ count: total || data.total });

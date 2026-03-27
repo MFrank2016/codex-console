@@ -1,3 +1,13 @@
+"""
+registration stream 兼容别名路由。
+
+说明：
+- 该路由前缀保留为 `/api/registration/streams/*`
+- 供注册工作台与旧脚本平滑过渡使用
+- 实际 snapshot / events 查询统一委托给共享 helper，避免与
+  `/api/realtime-streams/*` 重复维护
+"""
+
 from fastapi import APIRouter, Query
 
 from ..stream_http_queries import (

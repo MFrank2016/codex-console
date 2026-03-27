@@ -213,6 +213,10 @@ let currentScheduledRunLogOffset = 0;
 let scheduledRunLogPollingTimer = null;
 let scheduledRunLogPollingInFlight = false;
 let scheduledRunLogLoadToken = 0;
+let scheduledRunSharedFallbackTimer = null;
+let scheduledRunSharedConsoleController = null;
+let scheduledRunSharedClient = null;
+let scheduledRunSharedWebSocket = null;
 let scheduledRunConsoleState = {
     lines: [],
     pendingLineText: '',
@@ -225,6 +229,15 @@ const SCHEDULED_RUN_LOG_LINE_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:
 
 function isScheduledRunLogRequestActive(runId, token) {
     return token === scheduledRunLogLoadToken && activeScheduledRunId === Number(runId);
+}
+
+function hasSharedScheduledRunLogRuntime() {
+    return Boolean(
+        window?.realtimeLogStore?.createState
+        && window?.realtimeLogStore?.reduceHistoryChunk
+        && window?.realtimeLogClient?.createStreamClient
+        && window?.realtimeLogConsole?.mountRealtimeLogConsole
+    );
 }
 
 function escapeHtml(text) {
@@ -1487,6 +1500,134 @@ async function openRunLogs(planId) {
     focusScheduledRunsCard();
 }
 
+function stopScheduledRunSharedFallback() {
+    if (scheduledRunSharedFallbackTimer) {
+        clearTimeout(scheduledRunSharedFallbackTimer);
+        scheduledRunSharedFallbackTimer = null;
+    }
+}
+
+function teardownScheduledRunSharedRealtime() {
+    const websocket = scheduledRunSharedWebSocket;
+    scheduledRunSharedWebSocket = null;
+    if (websocket) {
+        websocket.onopen = null;
+        websocket.onmessage = null;
+        websocket.onerror = null;
+        websocket.onclose = null;
+        if (typeof websocket.close === 'function') {
+            websocket.close();
+        }
+    }
+    scheduledRunSharedClient = null;
+    scheduledRunSharedConsoleController = null;
+}
+
+function ensureScheduledRunSharedConsoleMounted() {
+    if (!hasSharedScheduledRunLogRuntime()) return null;
+    const consoleElement = getScheduledRunConsoleElement();
+    if (!consoleElement) return null;
+    if (!scheduledRunSharedConsoleController || scheduledRunSharedConsoleController.root !== consoleElement) {
+        scheduledRunSharedConsoleController = window.realtimeLogConsole.mountRealtimeLogConsole(consoleElement, {
+            state: window.realtimeLogStore.createState(),
+        });
+    }
+    return scheduledRunSharedConsoleController;
+}
+
+function applyScheduledRunSharedState(nextState) {
+    const controller = ensureScheduledRunSharedConsoleMounted();
+    if (!controller) return null;
+    controller.setState(nextState);
+    return controller;
+}
+
+function createScheduledRunSharedClient() {
+    if (!hasSharedScheduledRunLogRuntime()) return null;
+    const controller = ensureScheduledRunSharedConsoleMounted();
+    if (!controller) return null;
+    return window.realtimeLogClient.createStreamClient({
+        initialState: window.realtimeLogStore.createState(),
+        onStateChange(nextState) {
+            applyScheduledRunSharedState(nextState);
+        },
+    });
+}
+
+function getScheduledRunSharedWsUrl(runId, afterSeq = 0) {
+    const protocol = window?.location?.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window?.location?.host || location.host;
+    return `${protocol}//${host}/api/ws/run/${Number(runId)}?after_seq=${Number(afterSeq) || 0}`;
+}
+
+function scheduleScheduledRunSharedFallback(runId, token) {
+    stopScheduledRunSharedFallback();
+    scheduledRunSharedFallbackTimer = setTimeout(async () => {
+        if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
+            stopScheduledRunSharedFallback();
+            return;
+        }
+        try {
+            const eventsResponse = await api.get(`/api/realtime-streams/run/${Number(runId)}/events?after_seq=0`);
+            if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
+                return;
+            }
+            const events = Array.isArray(eventsResponse?.events) ? eventsResponse.events : [];
+            for (const event of events) {
+                scheduledRunSharedClient.dispatchEvent(event);
+            }
+        } catch (error) {
+            stopScheduledRunSharedFallback();
+        }
+    }, 2000);
+}
+
+function connectScheduledRunSharedWebSocket(runId, token) {
+    if (!scheduledRunSharedClient || typeof WebSocket !== 'function') return null;
+    const websocket = new WebSocket(getScheduledRunSharedWsUrl(runId, 0));
+    scheduledRunSharedWebSocket = websocket;
+    websocket.onmessage = (messageEvent) => {
+        if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) return;
+        try {
+            const payload = JSON.parse(messageEvent.data || '{}');
+            scheduledRunSharedClient.dispatchEvent(payload);
+        } catch (error) {
+            toast.warning?.(`实时日志解析失败: ${error.message || error}`);
+        }
+    };
+    websocket.onerror = () => {
+        if (!isScheduledRunLogRequestActive(runId, token)) return;
+        scheduleScheduledRunSharedFallback(runId, token);
+    };
+    websocket.onclose = () => {
+        if (!isScheduledRunLogRequestActive(runId, token)) return;
+        scheduleScheduledRunSharedFallback(runId, token);
+    };
+    return websocket;
+}
+
+async function bootstrapScheduledRunSharedRealtime(runId, token) {
+    scheduledRunSharedClient = createScheduledRunSharedClient();
+    if (!scheduledRunSharedClient) return false;
+
+    const historyChunk = await api.get(`/scheduled-runs/${Number(runId)}/logs?offset=0`);
+    if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
+        return true;
+    }
+    scheduledRunSharedClient.applyHistoryChunk(historyChunk?.chunk || '');
+
+    const snapshot = await api.get(`/api/realtime-streams/run/${Number(runId)}/snapshot`);
+    if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
+        return true;
+    }
+    if (snapshot && snapshot.kind === 'snapshot') {
+        scheduledRunSharedClient.applySnapshot(snapshot);
+    }
+
+    connectScheduledRunSharedWebSocket(runId, token);
+    return true;
+}
+
 function resetScheduledRunModalState() {
     scheduledRunLogLoadToken += 1;
     scheduledRunLogPollingInFlight = false;
@@ -1494,6 +1635,8 @@ function resetScheduledRunModalState() {
     activeScheduledRunDetail = null;
     currentScheduledRunLogOffset = 0;
     stopScheduledRunLogPolling();
+    stopScheduledRunSharedFallback();
+    teardownScheduledRunSharedRealtime();
     scheduledRunConsoleState = {
         lines: [],
         pendingLineText: '',
@@ -1602,6 +1745,11 @@ function getScheduledRunConsoleElement() {
     return scheduledTaskElements.runLogConsole || document.getElementById('run-log-console');
 }
 
+function getScheduledRunSharedConsoleController() {
+    if (!hasSharedScheduledRunLogRuntime()) return null;
+    return scheduledRunSharedConsoleController;
+}
+
 function getScheduledRunRenderableLines() {
     const lines = [...scheduledRunConsoleState.lines];
     if (scheduledRunConsoleState.pendingLineText) {
@@ -1657,6 +1805,13 @@ function renderScheduledRunConsoleLine(line) {
 }
 
 function renderScheduledRunConsole() {
+    const sharedController = getScheduledRunSharedConsoleController();
+    if (sharedController) {
+        sharedController.toggleWrap(scheduledRunConsoleState.wrap);
+        sharedController.toggleAutoScroll(Boolean(scheduledTaskElements.runLogAutoScrollInput?.checked));
+        return;
+    }
+
     syncScheduledRunConsoleMountFallback();
     const consoleElement = updateScheduledRunConsoleShell();
     if (!consoleElement) return;
@@ -1684,6 +1839,13 @@ function renderScheduledRunConsole() {
 
 function applyScheduledRunLogFilters() {
     const searchTerm = scheduledRunConsoleState.searchTerm.trim().toLowerCase();
+    const sharedController = getScheduledRunSharedConsoleController();
+    if (sharedController) {
+        sharedController.setSearch(searchTerm);
+        sharedController.setLevelFilter(scheduledRunConsoleState.levelFilter);
+        return;
+    }
+
     scheduledRunConsoleState.visibleLines = getScheduledRunRenderableLines().filter((line) => {
         const matchesLevel = !scheduledRunConsoleState.levelFilter || line.level === scheduledRunConsoleState.levelFilter;
         const matchesSearch = !searchTerm || line.raw.toLowerCase().includes(searchTerm);
@@ -1728,10 +1890,21 @@ function handleScheduledRunLogLevelFilterChange() {
 
 function handleScheduledRunLogWrapChange() {
     scheduledRunConsoleState.wrap = Boolean(scheduledTaskElements.runLogWrapInput?.checked);
+    const sharedController = getScheduledRunSharedConsoleController();
+    if (sharedController) {
+        sharedController.toggleWrap(scheduledRunConsoleState.wrap);
+        return;
+    }
     renderScheduledRunConsole();
 }
 
 function handleScheduledRunLogAutoScrollChange() {
+    const sharedController = getScheduledRunSharedConsoleController();
+    if (sharedController) {
+        sharedController.toggleAutoScroll(Boolean(scheduledTaskElements.runLogAutoScrollInput?.checked));
+        return;
+    }
+
     if (!scheduledTaskElements.runLogAutoScrollInput?.checked) return;
     const consoleElement = getScheduledRunConsoleElement();
     if (!consoleElement) return;
@@ -1739,6 +1912,16 @@ function handleScheduledRunLogAutoScrollChange() {
 }
 
 async function copyScheduledRunVisibleLogs() {
+    if (hasSharedScheduledRunLogRuntime() && scheduledRunSharedConsoleController) {
+        const copiedText = await scheduledRunSharedConsoleController.copyVisibleText();
+        if (!copiedText) {
+            toast.warning('暂无可复制日志');
+            return;
+        }
+        toast.success('已复制当前日志');
+        return;
+    }
+
     const visibleText = scheduledRunConsoleState.visibleLines.map((line) => line.raw).join('\n');
     if (!visibleText) {
         toast.warning('暂无可复制日志');
@@ -1753,6 +1936,10 @@ async function copyScheduledRunVisibleLogs() {
 }
 
 function clearScheduledRunConsoleView() {
+    if (hasSharedScheduledRunLogRuntime() && scheduledRunSharedConsoleController) {
+        scheduledRunSharedConsoleController.clearView();
+        return;
+    }
     scheduledRunConsoleState.visibleLines = [];
     renderScheduledRunConsole();
 }
@@ -1930,8 +2117,17 @@ async function openScheduledRunLog(runId) {
         }
         activeScheduledRunDetail = detail;
         renderScheduledRunStatusBar(detail);
-        renderScheduledRunConsole();
         setScheduledRunStopButtonState(detail);
+        if (hasSharedScheduledRunLogRuntime()) {
+            const bootstrapped = await bootstrapScheduledRunSharedRealtime(runId, token);
+            if (!isScheduledRunLogRequestActive(runId, token)) {
+                return;
+            }
+            if (bootstrapped) {
+                return;
+            }
+        }
+        renderScheduledRunConsole();
         const logChunk = await loadScheduledRunLogChunk(runId, { reset: true, token });
         if (!isScheduledRunLogRequestActive(runId, token)) {
             return;

@@ -12,7 +12,7 @@ from src.database.models import Base
 from src.database.session import DatabaseSessionManager
 from src.scheduler import run_logger
 from src.scheduler.engine import SchedulerDispatchError, SchedulerEngine, SchedulerPlanConflictError
-from src.web.task_manager import reset_state_for_tests
+from src.web.task_manager import reset_state_for_tests, task_manager
 from src.web.routes import accounts as accounts_routes
 from src.web.routes import scheduled_tasks as scheduled_routes
 from src.web.routes import api_router
@@ -678,6 +678,73 @@ def test_stop_scheduled_run_route_emits_realtime_stopping_event(client, seeded_s
     assert event_payload["events"][0]["payload"]["is_running"] is True
     assert event_payload["events"][0]["payload"]["can_stop"] is False
     assert event_payload["events"][0]["payload"]["stop_requested_at"] is not None
+
+
+def test_existing_scheduled_run_realtime_snapshot_and_events_contract(client, seeded_scheduled_data):
+    run_id = seeded_scheduled_data["latest_run"].id
+
+    before_snapshot = client.get(f"/api/realtime-streams/run/{run_id}/snapshot")
+    before_events = client.get(f"/api/realtime-streams/run/{run_id}/events", params={"after_seq": 0})
+
+    assert before_snapshot.status_code == 404
+    assert before_events.status_code == 404
+
+    task_manager.update_run_status(
+        run_id,
+        status="running",
+        id=run_id,
+        plan_id=seeded_scheduled_data["plan"].id,
+        plan_name=seeded_scheduled_data["plan"].name,
+        task_type="cpa_cleanup",
+        started_at="2026-03-27T09:00:00",
+        finished_at=None,
+        stop_requested_at=None,
+        is_running=True,
+        can_stop=True,
+        last_log_at="2026-03-27T09:00:00",
+        log_version=1,
+        error_message=None,
+    )
+    task_manager.add_run_log(
+        run_id,
+        {
+            "timestamp": "2026-03-27T09:00:00+08:00",
+            "display_time": "09:00:00",
+            "level": "INFO",
+            "message": "seeded line",
+            "raw": "2026-03-27 09:00:00.000 [INFO] seeded line",
+            "source": "scheduler",
+        },
+    )
+
+    snapshot = client.get(f"/api/realtime-streams/run/{run_id}/snapshot")
+    events = client.get(f"/api/realtime-streams/run/{run_id}/events", params={"after_seq": 0})
+
+    assert snapshot.status_code == 200
+    snapshot_payload = snapshot.json()
+    assert snapshot_payload["stream"] == f"run:{run_id}"
+    assert snapshot_payload["kind"] == "snapshot"
+    assert snapshot_payload["seq"] == 2
+    assert snapshot_payload["payload"]["run"]["id"] == run_id
+    assert snapshot_payload["payload"]["run"]["plan_id"] == seeded_scheduled_data["plan"].id
+    assert snapshot_payload["payload"]["run"]["plan_name"] == seeded_scheduled_data["plan"].name
+    assert snapshot_payload["payload"]["run"]["task_type"] == "cpa_cleanup"
+    assert snapshot_payload["payload"]["run"]["status"] == "running"
+    assert snapshot_payload["payload"]["logs_tail"][-1]["message"] == "seeded line"
+    assert snapshot_payload["payload"]["logs_tail"][-1]["level"] == "INFO"
+
+    assert events.status_code == 200
+    events_payload = events.json()
+    assert events_payload["stream"] == f"run:{run_id}"
+    assert [event["kind"] for event in events_payload["events"]] == [
+        "run_status_changed",
+        "log_appended",
+    ]
+    assert [event["seq"] for event in events_payload["events"]] == [1, 2]
+    assert events_payload["events"][0]["payload"]["run_id"] == run_id
+    assert events_payload["events"][0]["payload"]["status"] == "running"
+    assert events_payload["events"][1]["payload"]["entry"]["message"] == "seeded line"
+    assert events_payload["events"][1]["payload"]["entry"]["stream"] == f"run:{run_id}"
 
 
 def test_stop_scheduled_run_route_rejects_when_stop_already_requested(client, seeded_scheduled_data):

@@ -192,6 +192,24 @@ def test_realtime_log_appended_event_updates_console_without_waiting_for_task_de
     assert result["last_rendered_contains_live_line"] is True
 
 
+def test_registration_workbench_uses_shared_console_for_single_task_live_append():
+    result = run_app_js_scenario("shared_console_single_task_live_append")
+
+    assert result["console_has_shared_class"] is True
+    assert result["rendered_log_count"] == 2
+    assert result["last_line_level_class"] == "realtime-log-level-info"
+    assert result["legacy_direct_append_path_used"] is False
+    assert result["teardown_closed_ws"] is True
+    assert result["teardown_stopped_fallback"] is True
+
+
+def test_app_js_uses_shared_realtime_log_client_without_legacy_dom_append_main_path():
+    script = Path("static/js/app.js").read_text(encoding="utf-8")
+
+    assert "window.realtimeLogClient.createStreamClient" in script
+    assert "appendLogLine(getLogType(message)" not in script
+
+
 def test_app_js_task_realtime_fallback_prefers_stream_events_over_legacy_logs_endpoint():
     script = Path("static/js/app.js").read_text(encoding="utf-8")
 

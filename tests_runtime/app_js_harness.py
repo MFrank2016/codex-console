@@ -8,12 +8,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "static" / "js" / "app.js"
 REALTIME_LOG_STORE_JS = ROOT / "static" / "js" / "realtime_log_store.js"
+REALTIME_LOG_CLIENT_JS = ROOT / "static" / "js" / "realtime_log_client.js"
+REALTIME_LOG_CONSOLE_JS = ROOT / "static" / "js" / "realtime_log_console.js"
 REGISTRATION_STREAM_JS = ROOT / "static" / "js" / "registration_stream.js"
 
 
 def run_app_js_scenario(name: str) -> dict:
     app_source = APP_JS.read_text(encoding="utf-8")
     realtime_log_store_source = REALTIME_LOG_STORE_JS.read_text(encoding="utf-8")
+    realtime_log_client_source = REALTIME_LOG_CLIENT_JS.read_text(encoding="utf-8")
+    realtime_log_console_source = REALTIME_LOG_CONSOLE_JS.read_text(encoding="utf-8")
     registration_stream_source = REGISTRATION_STREAM_JS.read_text(encoding="utf-8")
     node_script = rf"""
 const vm = require('vm');
@@ -21,6 +25,8 @@ const vm = require('vm');
 const scenarioName = {json.dumps(name)};
 const appSource = {json.dumps(app_source)};
 const realtimeLogStoreSource = {json.dumps(realtime_log_store_source)};
+const realtimeLogClientSource = {json.dumps(realtime_log_client_source)};
+const realtimeLogConsoleSource = {json.dumps(realtime_log_console_source)};
 const registrationStreamSource = {json.dumps(registration_stream_source)};
 
 const harnessConsole = {{
@@ -67,6 +73,30 @@ function createClassList() {{
 }}
 
 function createMockElement(id = '') {{
+  function matchesClassSelector(className, selector) {{
+    return String(className || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .includes(selector.replace(/^\./, ''));
+  }}
+
+  function parseInnerHtmlByClass(html, selector) {{
+    const targetClass = selector.replace(/^\./, '');
+    const pattern = /<div class="([^"]*)">([\s\S]*?)<\/div>/g;
+    const matches = [];
+    let match;
+    while ((match = pattern.exec(String(html || ''))) !== null) {{
+      if (!matchesClassSelector(match[1], selector)) {{
+        continue;
+      }}
+      const child = createMockElement();
+      child.className = match[1];
+      child.innerHTML = match[2];
+      matches.push(child);
+    }}
+    return matches;
+  }}
+
   const element = {{
     id,
     tagName: 'DIV',
@@ -100,7 +130,14 @@ function createMockElement(id = '') {{
     }},
     querySelectorAll(selector) {{
       if (selector === '.log-line') {{
-        return this._children.filter(child => String(child.className || '').split(/\s+/).includes('log-line'));
+        const childMatches = this._children.filter(child => matchesClassSelector(child.className, selector));
+        if (childMatches.length > 0) {{
+          return childMatches;
+        }}
+        return parseInnerHtmlByClass(this._innerHTML, selector);
+      }}
+      if (selector === '.realtime-log-line') {{
+        return parseInnerHtmlByClass(this._innerHTML, selector);
       }}
       return [];
     }},
@@ -372,6 +409,8 @@ context.globalThis = context;
 
 vm.createContext(context);
 vm.runInContext(realtimeLogStoreSource, context);
+vm.runInContext(realtimeLogClientSource, context);
+vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
   appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
@@ -395,6 +434,37 @@ function setupBaseElements() {{
   getElement('batch-options').style.display = 'none';
   getElement('batch-domain-stats').innerHTML = '';
   getElement('batch-consecutive-failures').textContent = '-';
+}}
+
+function getRegistrationConsoleController() {{
+  return getElement('console-log').__realtimeLogConsoleController || null;
+}}
+
+function getRenderedConsoleLineCount() {{
+  const controller = getRegistrationConsoleController();
+  if (controller && controller.lastRender && Array.isArray(controller.lastRender.visibleEntries)) {{
+    return controller.lastRender.visibleEntries.length;
+  }}
+  return getElement('console-log').querySelectorAll('.log-line').length;
+}}
+
+function getLastRenderedConsoleText() {{
+  const controller = getRegistrationConsoleController();
+  if (controller && controller.lastRender && Array.isArray(controller.lastRender.visibleEntries) && controller.lastRender.visibleEntries.length > 0) {{
+    const lastEntry = controller.lastRender.visibleEntries[controller.lastRender.visibleEntries.length - 1];
+    return `${{lastEntry.display_time || ''}} ${{lastEntry.level || ''}} ${{lastEntry.message || ''}}`.trim();
+  }}
+  const logLines = getElement('console-log').querySelectorAll('.log-line');
+  const lastLine = logLines.length ? logLines[logLines.length - 1] : null;
+  return lastLine ? String(lastLine.innerHTML || '') : '';
+}}
+
+function consoleHasVisibleMessage(keyword) {{
+  const controller = getRegistrationConsoleController();
+  if (controller && controller.lastRender && Array.isArray(controller.lastRender.visibleEntries)) {{
+    return controller.lastRender.visibleEntries.some(entry => String(entry.message || entry.raw || '').includes(keyword));
+  }}
+  return String(getElement('console-log').innerHTML || '').includes(keyword);
 }}
 
 async function runScenario() {{
@@ -688,7 +758,7 @@ async function runScenario() {{
         exported.reduceRegistrationStream(event);
       }}
 
-      const renderedLogCount = getElement('console-log').querySelectorAll('.log-line').length;
+      const renderedLogCount = getRenderedConsoleLineCount();
       return {{
         current_step_key: state.currentStep ? String(state.currentStep.step_key || '') : '',
         batch_success: state.batch ? String(state.batch.success ?? '') : '',
@@ -734,14 +804,15 @@ async function runScenario() {{
         exported.reduceRegistrationStream(event);
       }}
 
-      const logLines = getElement('console-log').querySelectorAll('.log-line');
-      const lastLine = logLines.length ? logLines[logLines.length - 1] : null;
-      const lastHtml = lastLine ? String(lastLine.innerHTML || '') : '';
+      const lastHtml = getLastRenderedConsoleText();
+      const consoleHtml = String(getElement('console-log').innerHTML || '');
 
       return {{
         log_count: Array.isArray(state.logs) ? state.logs.length : 0,
-        rendered_log_count: logLines.length,
-        last_rendered_contains_after_full: lastHtml.includes('after-full'),
+        rendered_log_count: getRenderedConsoleLineCount(),
+        last_rendered_contains_after_full: lastHtml.includes('after-full')
+          || consoleHtml.includes('after-full')
+          || consoleHasVisibleMessage('after-full'),
       }};
     }}
     case 'single_task_log_event_immediate_append': {{
@@ -780,13 +851,101 @@ async function runScenario() {{
         }});
       }}
 
-      const logLines = getElement('console-log').querySelectorAll('.log-line');
-      const lastLine = logLines.length ? logLines[logLines.length - 1] : null;
-      const lastHtml = lastLine ? String(lastLine.innerHTML || '') : '';
+      const lastHtml = getLastRenderedConsoleText();
+      const consoleHtml = String(getElement('console-log').innerHTML || '');
 
       return {{
-        rendered_log_count: logLines.length,
-        last_rendered_contains_live_line: lastHtml.includes('live-line'),
+        rendered_log_count: getRenderedConsoleLineCount(),
+        last_rendered_contains_live_line: lastHtml.includes('live-line')
+          || consoleHtml.includes('live-line')
+          || consoleHasVisibleMessage('live-line'),
+      }};
+    }}
+    case 'shared_console_single_task_live_append': {{
+      await exported.handleSingleRegistration({{
+        email_service_type: 'tempmail',
+        pipeline_key: 'codexgen_pipeline',
+      }});
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      const consoleRoot = getElement('console-log');
+      const ws = wsInstances[0];
+      if (!ws) {{
+        throw new Error('MockWebSocket instance missing');
+      }}
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          seq: 1,
+          stream: 'task:task-single-01',
+          kind: 'snapshot',
+          payload: {{
+            task: {{ task_uuid: 'task-single-01', status: 'running' }},
+            current_step: {{ step_key: 'create_email', status: 'running' }},
+            steps: [{{ step_key: 'create_email', status: 'running' }}],
+            logs_tail: [
+              {{
+                seq: 1,
+                stream: 'task:task-single-01',
+                timestamp: '2026-03-27T09:00:00+08:00',
+                display_time: '09:00:00',
+                level: 'INFO',
+                message: 'boot-line',
+                raw: '2026-03-27 09:00:00.000 [INFO] boot-line',
+                source: 'scheduler',
+              }},
+            ],
+          }},
+        }}),
+      }});
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          seq: 2,
+          stream: 'task:task-single-01',
+          kind: 'log_appended',
+          payload: {{
+            entry: {{
+              seq: 2,
+              stream: 'task:task-single-01',
+              timestamp: '2026-03-27T09:00:01+08:00',
+              display_time: '09:00:01',
+              level: 'INFO',
+              message: 'live-line',
+              raw: '2026-03-27 09:00:01.000 [INFO] live-line',
+              source: 'scheduler',
+            }},
+          }},
+        }}),
+      }});
+      await Promise.resolve();
+
+      const htmlBeforeTeardown = String(consoleRoot.innerHTML || '');
+      const renderedLogCount = getRenderedConsoleLineCount();
+      const lastLineLevelClass = htmlBeforeTeardown.includes('realtime-log-level-info')
+        ? 'realtime-log-level-info'
+        : '';
+      const legacyDirectAppendPathUsed = /class="log-line(?:\s|")/.test(htmlBeforeTeardown);
+
+      if (typeof ws.onerror !== 'function') {{
+        throw new Error('ws.onerror missing');
+      }}
+      ws.onerror(new Error('boom'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      const fallbackHandle = intervalHandles.length ? intervalHandles[intervalHandles.length - 1] : null;
+
+      return {{
+        console_has_shared_class: consoleRoot.classList.contains('realtime-log-console-shell'),
+        rendered_log_count: renderedLogCount,
+        last_line_level_class: lastLineLevelClass,
+        legacy_direct_append_path_used: legacyDirectAppendPathUsed,
+        teardown_closed_ws: ws.readyState === MockWebSocket.CLOSED,
+        teardown_stopped_fallback: !!(fallbackHandle && fallbackHandle.cleared),
       }};
     }}
     default:

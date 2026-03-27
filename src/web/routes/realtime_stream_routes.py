@@ -1,3 +1,13 @@
+"""
+统一 realtime stream HTTP 路由。
+
+说明：
+- 提供 task / batch / run 三类 stream 的 snapshot / events 查询
+- 作为共享 realtime contract 的 canonical HTTP 入口
+- registration alias 路由会复用相同的 helper，而不是直接复用本文件中的
+  route handler，以保持协议边界清晰
+"""
+
 from fastapi import APIRouter, Query
 
 from ..stream_http_queries import (
