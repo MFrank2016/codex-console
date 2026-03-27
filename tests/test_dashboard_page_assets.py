@@ -50,6 +50,13 @@ def test_dashboard_template_contains_new_hero_and_activity_sections():
     assert "/static/css/dashboard_page.css" in template
 
 
+def test_dashboard_stylesheet_defines_dark_mode_polish_selectors():
+    stylesheet = Path("static/css/dashboard_page.css").read_text(encoding="utf-8")
+    assert '[data-theme="dark"] .dashboard-hero-primary' in stylesheet
+    assert '[data-theme="dark"] .dashboard-metric-card' in stylesheet
+    assert '[data-theme="dark"] .dashboard-quick-action--secondary' in stylesheet
+
+
 def test_dashboard_script_loads_summary_endpoint_and_render_helpers():
     script = Path("static/js/dashboard.js").read_text(encoding="utf-8")
     assert "/dashboard/summary" in script

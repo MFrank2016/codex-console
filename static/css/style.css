@@ -92,6 +92,10 @@
     --surface-hover: #334155;
     --border: #334155;
     --border-light: #1e293b;
+    --warm-background: #111827;
+    --warm-surface: #172033;
+    --warm-surface-strong: #1f2a3d;
+    --warm-border: rgba(148, 163, 184, 0.24);
 
     --text-primary: #f1f5f9;
     --text-secondary: #94a3b8;
@@ -535,6 +539,7 @@ body {
 [data-theme="dark"] .page-head {
     border-color: rgba(148, 163, 184, 0.2);
     background: linear-gradient(180deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.96));
+    box-shadow: 0 18px 40px rgba(2, 6, 23, 0.32);
 }
 
 [data-theme="dark"] .workspace-shell-link,
@@ -542,6 +547,8 @@ body {
 [data-theme="dark"] .workspace-theme-toggle,
 [data-theme="dark"] .workspace-nav-link:hover {
     background: rgba(51, 65, 85, 0.85);
+    border-color: rgba(148, 163, 184, 0.22);
+    color: var(--text-primary);
 }
 
 [data-theme="dark"] .workspace-nav-link.is-active {

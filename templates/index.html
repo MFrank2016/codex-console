@@ -403,8 +403,8 @@
                             <span id="single-progress-step-text">第 0 / 0 步</span>
                         </div>
                         <div class="single-progress-meta">
-                            <span>整体耗时</span>
-                            <strong id="single-progress-elapsed">00:00</strong>
+                            <span>任务耗时</span>
+                            <strong id="single-progress-elapsed">00:00:00</strong>
                         </div>
                         <div class="progress-bar-container single-progress-track">
                             <div id="single-progress-bar" class="progress-bar" style="width: 0%;"></div>
@@ -436,6 +436,10 @@
                             <span>⏳ <strong id="batch-remaining">0</strong></span>
                             <span>🚨 <strong id="batch-consecutive-failures">0/0</strong></span>
                         </div>
+                        <div class="batch-runtime-meta">
+                            <span>总耗时：<strong id="batch-progress-elapsed">00:00:00</strong></span>
+                            <span>平均耗时：<strong id="batch-progress-avg-elapsed">—</strong></span>
+                        </div>
                         <div id="batch-domain-stats" style="display: none;"></div>
                     </div>
                 </div>
@@ -446,8 +450,12 @@
             <div class="card" id="console-card">
                 <div class="card-header">
                     <h3>💻 实时日志</h3>
-                    <div style="display: flex; gap: var(--spacing-sm); align-items: center;">
+                    <div class="registration-log-toolbar">
                         <span id="registration-stream-status" style="font-size: 0.8125rem; color: var(--text-secondary);">disconnected</span>
+                        <label class="registration-log-auto-scroll-toggle" for="registration-log-auto-scroll">
+                            <input type="checkbox" id="registration-log-auto-scroll" checked>
+                            自动滚动
+                        </label>
                         <button class="btn btn-ghost btn-sm" id="clear-log-btn">清空</button>
                     </div>
                 </div>

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from jinja2 import Environment, FileSystemLoader
 from src.web.page_shell import WORKSPACE_NAV, build_page_shell
@@ -32,6 +33,17 @@ def test_workspace_script_defines_sidebar_and_theme_helpers():
     assert "toggleWorkspaceSidebar" in script
     assert "WORKSPACE_THEME_STORAGE_KEY" in script
     assert "toggleWorkspaceTheme" in script
+
+
+def test_dark_theme_defines_warm_surface_tokens_for_workspace_cards():
+    stylesheet = Path("static/css/style.css").read_text(encoding="utf-8")
+    match = re.search(r'\[data-theme="dark"]\s*\{(?P<body>.*?)\n\}', stylesheet, re.S)
+    assert match is not None
+    dark_block = match.group("body")
+    assert "--warm-background:" in dark_block
+    assert "--warm-surface:" in dark_block
+    assert "--warm-surface-strong:" in dark_block
+    assert "--warm-border:" in dark_block
 
 
 def test_workspace_base_template_wires_sidebar_shell_actions_and_rendered_workspace_script_version():

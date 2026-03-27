@@ -1,4 +1,5 @@
 from tests_runtime.realtime_log_harness import run_realtime_log_scenario
+from pathlib import Path
 
 
 def test_snapshot_required_resync_contract():
@@ -43,3 +44,9 @@ def test_connection_empty_error_states_contract():
     assert result["connection_text"] == "重连中"
     assert result["empty_state_visible"] is True
     assert result["error_state_visible"] is True
+
+
+def test_realtime_log_console_stylesheet_resets_legacy_console_mask_and_shadow():
+    stylesheet = Path("static/css/realtime_log_console.css").read_text(encoding="utf-8")
+    assert ".console-log.realtime-log-console-shell::before" in stylesheet
+    assert "content: none;" in stylesheet

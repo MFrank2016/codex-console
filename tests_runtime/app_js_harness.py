@@ -111,6 +111,9 @@ function createMockElement(id = '') {{
     _innerHTML: '',
     _children: [],
     _listeners: {{}},
+    scrollTop: 0,
+    scrollHeight: 1200,
+    clientHeight: 240,
     addEventListener(type, handler) {{
       this._listeners[type] = handler;
     }},
@@ -216,6 +219,33 @@ const logs = {{
 }};
 const wsInstances = [];
 const intervalHandles = [];
+const timeoutHandles = [];
+const nativeSetTimeout = setTimeout;
+const nativeClearTimeout = clearTimeout;
+const NativeDate = Date;
+let currentNowMs = NativeDate.parse('2026-03-27T09:01:01Z');
+
+class MockDate extends NativeDate {{
+  constructor(...args) {{
+    if (args.length === 0) {{
+      super(currentNowMs);
+      return;
+    }}
+    super(...args);
+  }}
+
+  static now() {{
+    return currentNowMs;
+  }}
+
+  static parse(value) {{
+    return NativeDate.parse(value);
+  }}
+
+  static UTC(...args) {{
+    return NativeDate.UTC(...args);
+  }}
+}}
 
 class MockWebSocket {{
   static OPEN = 1;
@@ -243,6 +273,7 @@ class MockWebSocket {{
 
 const context = {{
   console: harnessConsole,
+  Date: MockDate,
   URLSearchParams,
   document,
   window: {{ location: {{ protocol: 'http:', host: 'localhost' }} }},
@@ -259,8 +290,27 @@ const context = {{
       sessionStore.delete(key);
     }},
   }},
-  setTimeout,
-  clearTimeout,
+  setTimeout(fn, ms, ...args) {{
+    if ((ms ?? 0) <= 0) {{
+      return nativeSetTimeout(fn, ms, ...args);
+    }}
+    const handle = {{
+      id: timeoutHandles.length + 1,
+      fn: () => fn(...args),
+      ms,
+      cleared: false,
+    }};
+    timeoutHandles.push(handle);
+    return handle;
+  }},
+  clearTimeout(handle) {{
+    if (!handle) return;
+    if (typeof handle === 'object' && 'fn' in handle) {{
+      handle.cleared = true;
+      return;
+    }}
+    nativeClearTimeout(handle);
+  }},
   setInterval(fn, ms) {{
     const handle = {{
       id: intervalHandles.length + 1,
@@ -360,6 +410,19 @@ const context = {{
         }};
       }}
       if (path === '/registration/streams/task/task-single-01/snapshot') {{
+        if (scenarioName === 'single_task_ws_handshake_timeout_falls_back_to_polling') {{
+          return {{
+            seq: 10,
+            stream: 'task:task-single-01',
+            kind: 'snapshot',
+            payload: {{
+              task: {{ task_uuid: 'task-single-01', status: 'running' }},
+              current_step: {{ step_key: 'create_email', status: 'running' }},
+              steps: [{{ step_key: 'create_email', status: 'running' }}],
+              logs_tail: [],
+            }},
+          }};
+        }}
         return {{
           seq: 10,
           stream: 'task:task-single-01',
@@ -413,7 +476,7 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  elements,\n}};`,
   context,
 );
 
@@ -434,6 +497,7 @@ function setupBaseElements() {{
   getElement('batch-options').style.display = 'none';
   getElement('batch-domain-stats').innerHTML = '';
   getElement('batch-consecutive-failures').textContent = '-';
+  getElement('registration-log-auto-scroll').checked = true;
 }}
 
 function getRegistrationConsoleController() {{
@@ -532,7 +596,7 @@ async function runScenario() {{
         stream: 'task:task-single-01',
         kind: 'snapshot',
         payload: {{
-          task: {{ task_uuid: 'task-single-01', status: 'running' }},
+          task: {{ task_uuid: 'task-single-01', status: 'running', started_at: '2026-03-27T09:00:49Z' }},
           current_step: {{ step_key: 'submit_login_email', status: 'running' }},
           steps: [
             {{ step_key: 'create_email', status: 'completed', duration_ms: 100 }},
@@ -553,6 +617,35 @@ async function runScenario() {{
         progress_current_step: getElement('single-progress-current-step').textContent,
         progress_elapsed_text: getElement('single-progress-elapsed').textContent,
         progress_bar_width: getElement('single-progress-bar').style.width || '',
+      }};
+    }}
+    case 'single_task_runtime_timer': {{
+      currentNowMs = NativeDate.parse('2026-03-27T09:01:01Z');
+      exported.showTaskStatus({{
+        task_uuid: 'task-single-01',
+        status: 'running',
+        email: 'tester@example.com',
+        email_service: 'tempmail',
+        started_at: '2026-03-27T08:00:00Z',
+        task_progress: {{
+          step_index: 2,
+          total_steps: 5,
+          progress_percent: 40,
+          elapsed_ms: 12000,
+        }},
+        steps: [],
+      }});
+
+      const progressElapsedText = getElement('single-progress-elapsed').textContent;
+      const runtimeHandle = intervalHandles.find(handle => handle && handle.ms === 1000 && handle.cleared !== true);
+      if (!runtimeHandle) {{
+        throw new Error('runtime interval handle missing');
+      }}
+      currentNowMs += 1000;
+      await runtimeHandle.fn();
+      return {{
+        progress_elapsed_text: progressElapsedText,
+        progress_elapsed_after_tick: getElement('single-progress-elapsed').textContent,
       }};
     }}
     case 'single_task_snapshot_required_terminal_snapshot_should_finalize': {{
@@ -645,8 +738,10 @@ async function runScenario() {{
       }};
     }}
     case 'unlimited_progress_running': {{
+      currentNowMs = NativeDate.parse('2026-03-27T09:01:01Z');
       exported.showBatchStatus({{ count: 0 }});
       exported.updateBatchProgress({{
+        started_at: '2026-03-27T08:00:00Z',
         is_unlimited: true,
         completed: 5,
         total: 0,
@@ -667,6 +762,23 @@ async function runScenario() {{
         consecutive_failures_text: getElement('batch-consecutive-failures').textContent,
         domain_stats_display: getElement('batch-domain-stats').style.display || '',
         domain_stats_html: getElement('batch-domain-stats').innerHTML,
+        batch_elapsed_text: getElement('batch-progress-elapsed').textContent,
+        batch_avg_elapsed_text: getElement('batch-progress-avg-elapsed').textContent,
+        batch_avg_elapsed_zero_success_text: (() => {{
+          exported.updateBatchProgress({{
+            started_at: '2026-03-27T08:00:00Z',
+            is_unlimited: true,
+            completed: 1,
+            total: 0,
+            finished: false,
+            success: 0,
+            failed: 1,
+            consecutive_failures: 1,
+            max_consecutive_failures: 10,
+            domain_stats: [],
+          }});
+          return getElement('batch-progress-avg-elapsed').textContent;
+        }})(),
       }};
     }}
     case 'unlimited_progress_finished': {{
@@ -868,7 +980,7 @@ async function runScenario() {{
       }});
       await Promise.resolve();
       await Promise.resolve();
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise(resolve => nativeSetTimeout(resolve, 0));
 
       const consoleRoot = getElement('console-log');
       const ws = wsInstances[0];
@@ -935,7 +1047,7 @@ async function runScenario() {{
       ws.onerror(new Error('boom'));
       await Promise.resolve();
       await Promise.resolve();
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise(resolve => nativeSetTimeout(resolve, 0));
 
       const fallbackHandle = intervalHandles.length ? intervalHandles[intervalHandles.length - 1] : null;
 
@@ -946,6 +1058,197 @@ async function runScenario() {{
         legacy_direct_append_path_used: legacyDirectAppendPathUsed,
         teardown_closed_ws: ws.readyState === MockWebSocket.CLOSED,
         teardown_stopped_fallback: !!(fallbackHandle && fallbackHandle.cleared),
+      }};
+    }}
+    case 'shared_console_manual_scroll_preserved': {{
+      await exported.handleSingleRegistration({{
+        email_service_type: 'tempmail',
+        pipeline_key: 'codexgen_pipeline',
+      }});
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise(resolve => nativeSetTimeout(resolve, 0));
+
+      const consoleRoot = getElement('console-log');
+      const ws = wsInstances[0];
+      if (!ws) {{
+        throw new Error('MockWebSocket instance missing');
+      }}
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          seq: 1,
+          stream: 'task:task-single-01',
+          kind: 'snapshot',
+          payload: {{
+            task: {{ task_uuid: 'task-single-01', status: 'running' }},
+            current_step: {{ step_key: 'create_email', status: 'running' }},
+            steps: [{{ step_key: 'create_email', status: 'running' }}],
+            logs_tail: [
+              {{
+                seq: 1,
+                stream: 'task:task-single-01',
+                timestamp: '2026-03-27T09:00:00+08:00',
+                display_time: '09:00:00',
+                level: 'INFO',
+                message: 'boot-line',
+                raw: '2026-03-27 09:00:00.000 [INFO] boot-line',
+                source: 'scheduler',
+              }},
+            ],
+          }},
+        }}),
+      }});
+
+      consoleRoot.scrollTop = 120;
+      consoleRoot.scrollHeight = 1200;
+      consoleRoot.clientHeight = 240;
+      consoleRoot.dispatchEvent('scroll');
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          seq: 2,
+          stream: 'task:task-single-01',
+          kind: 'log_appended',
+          payload: {{
+            entry: {{
+              seq: 2,
+              stream: 'task:task-single-01',
+              timestamp: '2026-03-27T09:00:01+08:00',
+              display_time: '09:00:01',
+              level: 'INFO',
+              message: 'live-line',
+              raw: '2026-03-27 09:00:01.000 [INFO] live-line',
+              source: 'scheduler',
+            }},
+          }},
+        }}),
+      }});
+
+      const controller = getRegistrationConsoleController();
+      return {{
+        auto_scroll_disabled_after_manual_scroll: controller ? controller.ui.autoScroll === false : false,
+        scroll_top_after_live_append: Number(consoleRoot.scrollTop || 0),
+        last_rendered_contains_live_line: consoleHasVisibleMessage('live-line'),
+      }};
+    }}
+    case 'shared_console_auto_scroll_toggle_ui': {{
+      await exported.handleSingleRegistration({{
+        email_service_type: 'tempmail',
+        pipeline_key: 'codexgen_pipeline',
+      }});
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise(resolve => nativeSetTimeout(resolve, 0));
+
+      const consoleRoot = getElement('console-log');
+      const autoScrollInput = getElement('registration-log-auto-scroll');
+      const ws = wsInstances[0];
+      if (!ws) {{
+        throw new Error('MockWebSocket instance missing');
+      }}
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          seq: 1,
+          stream: 'task:task-single-01',
+          kind: 'snapshot',
+          payload: {{
+            task: {{ task_uuid: 'task-single-01', status: 'running' }},
+            current_step: {{ step_key: 'create_email', status: 'running' }},
+            steps: [{{ step_key: 'create_email', status: 'running' }}],
+            logs_tail: [
+              {{
+                seq: 1,
+                stream: 'task:task-single-01',
+                timestamp: '2026-03-27T09:00:00+08:00',
+                display_time: '09:00:00',
+                level: 'INFO',
+                message: 'boot-line',
+                raw: '2026-03-27 09:00:00.000 [INFO] boot-line',
+                source: 'scheduler',
+              }},
+            ],
+          }},
+        }}),
+      }});
+
+      consoleRoot.scrollTop = 120;
+      autoScrollInput.checked = false;
+      exported.handleRegistrationLogAutoScrollChange();
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          seq: 2,
+          stream: 'task:task-single-01',
+          kind: 'log_appended',
+          payload: {{
+            entry: {{
+              seq: 2,
+              stream: 'task:task-single-01',
+              timestamp: '2026-03-27T09:00:01+08:00',
+              display_time: '09:00:01',
+              level: 'INFO',
+              message: 'live-line-1',
+              raw: '2026-03-27 09:00:01.000 [INFO] live-line-1',
+              source: 'scheduler',
+            }},
+          }},
+        }}),
+      }});
+
+      const scrollTopAfterDisableAndAppend = Number(consoleRoot.scrollTop || 0);
+
+      autoScrollInput.checked = true;
+      exported.handleRegistrationLogAutoScrollChange();
+
+      await ws.onmessage({{
+        data: JSON.stringify({{
+          seq: 3,
+          stream: 'task:task-single-01',
+          kind: 'log_appended',
+          payload: {{
+            entry: {{
+              seq: 3,
+              stream: 'task:task-single-01',
+              timestamp: '2026-03-27T09:00:02+08:00',
+              display_time: '09:00:02',
+              level: 'INFO',
+              message: 'live-line-2',
+              raw: '2026-03-27 09:00:02.000 [INFO] live-line-2',
+              source: 'scheduler',
+            }},
+          }},
+        }}),
+      }});
+
+      return {{
+        scroll_top_after_disable_and_append: scrollTopAfterDisableAndAppend,
+        scroll_top_after_reenable_and_append: Number(consoleRoot.scrollTop || 0),
+        checkbox_checked_after_reenable: autoScrollInput.checked === true,
+      }};
+    }}
+    case 'single_task_ws_handshake_timeout_falls_back_to_polling': {{
+      await exported.handleSingleRegistration({{
+        email_service_type: 'tempmail',
+        pipeline_key: 'current_pipeline',
+      }});
+
+      const timeoutHandle = timeoutHandles.find(handle => handle && handle.cleared !== true);
+      if (!timeoutHandle) {{
+        throw new Error('timeout handle missing');
+      }}
+
+      await timeoutHandle.fn();
+      await Promise.resolve();
+      await new Promise(resolve => nativeSetTimeout(resolve, 0));
+
+      const pollingHandle = intervalHandles.find(handle => handle && handle.cleared !== true);
+
+      return {{
+        connection_status: String(getElement('registration-stream-status').textContent || ''),
+        api_get_paths: logs.apiGetPaths.slice(),
+        polling_interval_started: !!pollingHandle,
       }};
     }}
     default:

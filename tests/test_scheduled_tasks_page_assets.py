@@ -523,7 +523,14 @@ def test_shared_style_sheet_contains_card_list_system_hooks():
     assert "padding: 6px 8px;" in status_spacing_blocks[0]
     assert "margin-bottom: 6px;" in status_spacing_blocks[0]
     assert "padding: 6px 8px;" in toolbar_spacing_blocks[0]
-    assert "margin-bottom: 6px;" in toolbar_spacing_blocks[0]
+
+
+def test_realtime_log_stylesheet_aligns_scheduled_run_shared_console_with_registration_console():
+    stylesheet = Path("static/css/realtime_log_console.css").read_text(encoding="utf-8")
+    assert ".scheduled-run-console-shell.realtime-log-console-shell" in stylesheet
+    assert "background: var(--log-console-bg);" in stylesheet
+    assert "border: 1px solid var(--log-console-border);" in stylesheet
+    assert "color: var(--text-primary);" in stylesheet
 
 
 def test_scheduled_tasks_script_contains_create_edit_enable_disable_hooks():

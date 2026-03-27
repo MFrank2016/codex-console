@@ -242,6 +242,43 @@
   color: rgba(255, 255, 255, 0.9);
 }
 
+[data-theme="dark"] .dashboard-hero-primary,
+[data-theme="dark"] .dashboard-metric-card,
+[data-theme="dark"] .dashboard-quick-action--secondary {
+  background: linear-gradient(180deg, rgba(23, 32, 51, 0.96), rgba(30, 41, 59, 0.94));
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+[data-theme="dark"] .dashboard-metric-card--registration {
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.16) 0%, rgba(255, 255, 255, 0) 65%), linear-gradient(180deg, rgba(23, 32, 51, 0.96), rgba(30, 41, 59, 0.94));
+}
+
+[data-theme="dark"] .dashboard-metric-card--success-rate {
+  background: linear-gradient(135deg, rgba(74, 222, 128, 0.16) 0%, rgba(255, 255, 255, 0) 65%), linear-gradient(180deg, rgba(23, 32, 51, 0.96), rgba(30, 41, 59, 0.94));
+}
+
+[data-theme="dark"] .dashboard-metric-card--accounts {
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.16) 0%, rgba(255, 255, 255, 0) 65%), linear-gradient(180deg, rgba(23, 32, 51, 0.96), rgba(30, 41, 59, 0.94));
+}
+
+[data-theme="dark"] .dashboard-metric-card--scheduled {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.14) 0%, rgba(255, 255, 255, 0) 65%), linear-gradient(180deg, rgba(23, 32, 51, 0.96), rgba(30, 41, 59, 0.94));
+}
+
+[data-theme="dark"] .dashboard-metric-value-badge {
+  background: rgba(15, 23, 42, 0.78);
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+[data-theme="dark"] .dashboard-quick-action:hover {
+  background: rgba(51, 65, 85, 0.9);
+  border-color: rgba(148, 163, 184, 0.26);
+}
+
+[data-theme="dark"] .dashboard-quick-action-desc {
+  color: var(--text-secondary);
+}
+
 @media (max-width: 960px) {
   .dashboard-page-grid {
     grid-template-columns: 1fr;

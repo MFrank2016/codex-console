@@ -64,6 +64,22 @@ def test_registration_template_contains_stream_status_panel_hook():
     assert 'id="registration-stream-status"' in template
 
 
+def test_registration_template_contains_log_auto_scroll_toggle():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    assert 'id="registration-log-auto-scroll"' in template
+    assert "自动滚动" in template
+
+
+def test_registration_template_contains_runtime_timer_fields():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    assert 'id="single-progress-elapsed"' in template
+    assert 'id="batch-progress-elapsed"' in template
+    assert 'id="batch-progress-avg-elapsed"' in template
+    assert "任务耗时" in template
+    assert "总耗时" in template
+    assert "平均耗时" in template
+
+
 def test_registration_template_contains_realtime_feedback_panels():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     assert 'id="registration-config-panel"' in template
@@ -97,6 +113,19 @@ def test_registration_workbench_stylesheet_stretches_console_log_for_taller_log_
     assert "height: 420px" in stylesheet
 
 
+def test_registration_workbench_template_uses_task_elapsed_label_without_overall_elapsed_copy():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    assert "整体耗时" not in template
+    assert 'id="single-progress-elapsed"' in template
+    assert "任务耗时" in template
+
+
+def test_registration_workbench_stylesheet_uses_theme_neutral_log_panel_surface():
+    stylesheet = Path("static/css/registration_workbench.css").read_text(encoding="utf-8")
+    assert "background: var(--surface);" in stylesheet
+    assert "background: #0f172a;" not in stylesheet
+
+
 def test_app_js_posts_count_zero_for_unlimited_mode():
     result = run_app_js_scenario("unlimited_mode_request")
     assert result["batch_count_display"] == "none"
@@ -120,26 +149,33 @@ def test_app_js_builds_use_proxy_request_matrix_from_config_controls():
 def test_app_js_renders_task_step_waterfall_html():
     result = run_app_js_scenario("render_task_steps")
     assert "create_email" in result["waterfall_html"]
-    assert "123ms" in result["waterfall_html"]
     assert "completed" in result["waterfall_html"]
     assert "submit_login_email" in result["waterfall_html"]
     assert "timeout" in result["waterfall_html"]
+    assert "123ms" not in result["waterfall_html"]
+    assert "456ms" not in result["waterfall_html"]
 
 
 def test_app_js_single_task_flow_fetches_task_detail_and_renders_steps():
     result = run_app_js_scenario("single_task_step_refresh")
     assert "/registration/tasks/task-single-01" in result["api_get_paths"]
     assert "create_email" in result["waterfall_html"]
-    assert "88ms" in result["waterfall_html"]
     assert "running" in result["waterfall_html"]
+    assert "88ms" not in result["waterfall_html"]
 
 
 def test_app_js_renders_single_task_progress_summary_instead_of_waterfall_primary_view():
     result = run_app_js_scenario("single_task_progress_summary")
     assert result["progress_step_text"] == "第 2 / 5 步"
     assert result["progress_current_step"] == "submit_login_email"
-    assert result["progress_elapsed_text"] == "00:12"
     assert result["progress_bar_width"] == "40%"
+    assert result["progress_elapsed_text"] == "00:00:12"
+
+
+def test_app_js_renders_single_task_runtime_timer_from_started_at():
+    result = run_app_js_scenario("single_task_runtime_timer")
+    assert result["progress_elapsed_text"] == "01:01:01"
+    assert result["progress_elapsed_after_tick"] == "01:01:02"
 
 
 def test_app_js_renders_unlimited_progress_without_domain_stats_until_finished():
@@ -150,6 +186,9 @@ def test_app_js_renders_unlimited_progress_without_domain_stats_until_finished()
     assert result["consecutive_failures_text"] == "3/10"
     assert result["domain_stats_display"] == "none"
     assert result["domain_stats_html"] == ""
+    assert result["batch_elapsed_text"] == "01:01:01"
+    assert result["batch_avg_elapsed_text"] == "00:30:30"
+    assert result["batch_avg_elapsed_zero_success_text"] == "—"
 
 
 def test_app_js_renders_unlimited_final_domain_stats_with_rate_columns():
@@ -201,6 +240,30 @@ def test_registration_workbench_uses_shared_console_for_single_task_live_append(
     assert result["legacy_direct_append_path_used"] is False
     assert result["teardown_closed_ws"] is True
     assert result["teardown_stopped_fallback"] is True
+
+
+def test_registration_workbench_preserves_manual_scroll_when_shared_console_receives_new_logs():
+    result = run_app_js_scenario("shared_console_manual_scroll_preserved")
+
+    assert result["auto_scroll_disabled_after_manual_scroll"] is True
+    assert result["scroll_top_after_live_append"] == 120
+    assert result["last_rendered_contains_live_line"] is True
+
+
+def test_registration_workbench_log_auto_scroll_toggle_controls_shared_console_behavior():
+    result = run_app_js_scenario("shared_console_auto_scroll_toggle_ui")
+
+    assert result["scroll_top_after_disable_and_append"] == 120
+    assert result["scroll_top_after_reenable_and_append"] == 1200
+    assert result["checkbox_checked_after_reenable"] is True
+
+
+def test_registration_workbench_falls_back_to_stream_polling_when_websocket_handshake_stalls():
+    result = run_app_js_scenario("single_task_ws_handshake_timeout_falls_back_to_polling")
+
+    assert result["connection_status"] == "轮询中"
+    assert "/registration/streams/task/task-single-01/snapshot" in result["api_get_paths"]
+    assert result["polling_interval_started"] is True
 
 
 def test_app_js_uses_shared_realtime_log_client_without_legacy_dom_append_main_path():

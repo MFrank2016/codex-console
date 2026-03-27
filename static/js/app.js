@@ -18,6 +18,9 @@ let taskCompleted = false;  // 标记任务是否已完成
 let batchCompleted = false;  // 标记批量任务是否已完成
 let taskFinalStatus = null;  // 保存任务的最终状态
 let batchFinalStatus = null;  // 保存批量任务的最终状态
+let singleTaskStartedAtMs = null;
+let batchTaskStartedAtMs = null;
+let registrationRuntimeTicker = null;
 let displayedLogs = new Set();  // 用于日志去重
 let toastShown = false;  // 标记是否已显示过 toast
 let availableServices = {
@@ -35,12 +38,117 @@ let batchWebSocket = null;  // 批量任务 WebSocket
 let useWebSocket = true;  // 是否使用 WebSocket
 let wsHeartbeatInterval = null;  // 心跳定时器
 let batchWsHeartbeatInterval = null;  // 批量任务心跳定时器
+let wsHandshakeTimeout = null;  // 单任务 WebSocket 握手超时
+let batchWsHandshakeTimeout = null;  // 批量任务 WebSocket 握手超时
 let activeTaskUuid = null;   // 当前活跃的单任务 UUID（用于页面重新可见时重连）
 let activeBatchId = null;    // 当前活跃的批量任务 ID（用于页面重新可见时重连）
 let registrationSharedConsoleController = null;
 let registrationSharedStreamClient = null;
 let registrationSharedPendingEvent = null;
 let registrationLocalEventSeq = 0;
+const REGISTRATION_WS_HANDSHAKE_TIMEOUT_MS = 2500;
+
+function parseRegistrationTimestampMs(value) {
+    if (!value) return null;
+    const timestamp = Date.parse(String(value));
+    return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function formatElapsedMsToClock(elapsedMs) {
+    const safeMs = Number.isFinite(Number(elapsedMs)) ? Math.max(0, Number(elapsedMs)) : 0;
+    const totalSeconds = Math.floor(safeMs / 1000);
+    const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+    const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+    const seconds = String(totalSeconds % 60).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+}
+
+function setSingleTaskElapsedText(value) {
+    if (elements.singleProgressElapsed) {
+        elements.singleProgressElapsed.textContent = value;
+    }
+}
+
+function setBatchElapsedTexts(totalText, averageText) {
+    if (elements.batchProgressElapsed) {
+        elements.batchProgressElapsed.textContent = totalText;
+    }
+    if (elements.batchProgressAvgElapsed) {
+        elements.batchProgressAvgElapsed.textContent = averageText;
+    }
+}
+
+function rememberSingleTaskStart(task, taskProgress) {
+    const startedAtMs = parseRegistrationTimestampMs(task?.started_at || registrationStreamState?.task?.started_at);
+    if (startedAtMs !== null) {
+        singleTaskStartedAtMs = startedAtMs;
+        return;
+    }
+    const elapsedMs = Number(taskProgress?.elapsed_ms);
+    if (Number.isFinite(elapsedMs) && elapsedMs >= 0) {
+        singleTaskStartedAtMs = Date.now() - elapsedMs;
+    }
+}
+
+function rememberBatchTaskStart(batch) {
+    const startedAtMs = parseRegistrationTimestampMs(batch?.started_at);
+    if (startedAtMs !== null) {
+        batchTaskStartedAtMs = startedAtMs;
+    }
+}
+
+function renderSingleTaskElapsedClock() {
+    const isVisible = elements.singleProgressCard && elements.singleProgressCard.style.display !== 'none';
+    if (!isVisible) {
+        return;
+    }
+    if (!Number.isFinite(singleTaskStartedAtMs)) {
+        setSingleTaskElapsedText('00:00:00');
+        return;
+    }
+    setSingleTaskElapsedText(formatElapsedMsToClock(Date.now() - singleTaskStartedAtMs));
+}
+
+function renderBatchRuntimeMetrics() {
+    const isVisible = elements.batchProgressSection && elements.batchProgressSection.style.display !== 'none';
+    if (!isVisible) {
+        return;
+    }
+    if (!Number.isFinite(batchTaskStartedAtMs)) {
+        setBatchElapsedTexts('00:00:00', '—');
+        return;
+    }
+    const elapsedMs = Math.max(0, Date.now() - batchTaskStartedAtMs);
+    const successCount = Number(currentBatch?.success);
+    const averageText = Number.isFinite(successCount) && successCount > 0
+        ? formatElapsedMsToClock(elapsedMs / successCount)
+        : '—';
+    setBatchElapsedTexts(formatElapsedMsToClock(elapsedMs), averageText);
+}
+
+function renderRegistrationRuntimeMetrics() {
+    renderSingleTaskElapsedClock();
+    renderBatchRuntimeMetrics();
+}
+
+function ensureRegistrationRuntimeTicker() {
+    if (registrationRuntimeTicker) {
+        renderRegistrationRuntimeMetrics();
+        return registrationRuntimeTicker;
+    }
+    registrationRuntimeTicker = setInterval(() => {
+        renderRegistrationRuntimeMetrics();
+    }, 1000);
+    renderRegistrationRuntimeMetrics();
+    return registrationRuntimeTicker;
+}
+
+function stopRegistrationRuntimeTicker() {
+    if (registrationRuntimeTicker) {
+        clearInterval(registrationRuntimeTicker);
+        registrationRuntimeTicker = null;
+    }
+}
 
 // ============== Registration shared realtime console 主链路 ==============
 
@@ -72,6 +180,75 @@ function createRegistrationInitialStreamState() {
 let registrationStreamState = createRegistrationInitialStreamState();
 let registrationStreamRenderedLogCount = 0;
 
+function getRegistrationConsoleDistanceFromBottom(root) {
+    if (!root) return 0;
+    const scrollHeight = Number(root.scrollHeight || 0);
+    const scrollTop = Number(root.scrollTop || 0);
+    const clientHeight = Number(root.clientHeight || 0);
+    return Math.max(0, scrollHeight - (scrollTop + clientHeight));
+}
+
+function handleRegistrationConsoleScroll() {
+    const controller = registrationSharedConsoleController;
+    if (!controller || controller.root !== elements.consoleLog) {
+        return;
+    }
+
+    const currentScrollTop = Number(controller.root.scrollTop || 0);
+    controller.rememberManualScroll(currentScrollTop);
+
+    if (controller.ui.autoScrollPinned === false) {
+        syncRegistrationLogAutoScrollInput(controller);
+        return;
+    }
+
+    const nearBottom = getRegistrationConsoleDistanceFromBottom(controller.root) <= 24;
+    if (nearBottom) {
+        if (controller.ui.autoScroll === false) {
+            controller.toggleAutoScroll(true);
+        }
+        syncRegistrationLogAutoScrollInput(controller);
+        return;
+    }
+
+    if (controller.ui.autoScroll !== false) {
+        controller.toggleAutoScroll(false);
+    }
+    syncRegistrationLogAutoScrollInput(controller);
+}
+
+function syncRegistrationLogAutoScrollInput(controller = registrationSharedConsoleController) {
+    if (!elements.registrationLogAutoScrollInput) {
+        return;
+    }
+    elements.registrationLogAutoScrollInput.checked = controller
+        ? controller.ui.autoScroll !== false
+        : true;
+}
+
+function handleRegistrationLogAutoScrollChange() {
+    const enabled = Boolean(elements.registrationLogAutoScrollInput?.checked);
+    const controller = ensureRegistrationSharedConsoleMounted();
+    if (!controller) {
+        if (enabled && elements.consoleLog) {
+            elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight || 0;
+        }
+        syncRegistrationLogAutoScrollInput(null);
+        return;
+    }
+
+    controller.ui.autoScrollPinned = enabled;
+    if (enabled) {
+        controller.rememberManualScroll(controller.root.scrollHeight || 0);
+        controller.toggleAutoScroll(true);
+        controller.root.scrollTop = controller.root.scrollHeight || 0;
+    } else {
+        controller.rememberManualScroll(controller.root.scrollTop || 0);
+        controller.toggleAutoScroll(false);
+    }
+    syncRegistrationLogAutoScrollInput(controller);
+}
+
 function ensureRegistrationSharedConsoleMounted() {
     if (!hasRegistrationSharedRuntime() || !elements.consoleLog) {
         return null;
@@ -80,7 +257,13 @@ function ensureRegistrationSharedConsoleMounted() {
         registrationSharedConsoleController = window.realtimeLogConsole.mountRealtimeLogConsole(elements.consoleLog, {
             state: registrationStreamState,
         });
+        registrationSharedConsoleController.ui.autoScrollPinned = true;
+        if (!elements.consoleLog.dataset.registrationScrollBound) {
+            elements.consoleLog.addEventListener('scroll', handleRegistrationConsoleScroll);
+            elements.consoleLog.dataset.registrationScrollBound = 'true';
+        }
     }
+    syncRegistrationLogAutoScrollInput(registrationSharedConsoleController);
     return registrationSharedConsoleController;
 }
 
@@ -98,6 +281,7 @@ function applyRegistrationStreamState(nextState, event) {
     const controller = ensureRegistrationSharedConsoleMounted();
     if (controller) {
         controller.setState(registrationStreamState);
+        syncRegistrationLogAutoScrollInput(controller);
     }
 
     syncRegistrationStreamPanels(previous, registrationStreamState, event);
@@ -193,6 +377,7 @@ function syncRegistrationStreamPanels(previous, next, event) {
 
     // 步骤瀑布流：仅在相关事件时刷新
     if (event?.kind === 'snapshot' || event?.kind === 'task_step_updated') {
+        rememberSingleTaskStart(next?.task, next?.taskProgress);
         renderSingleTaskProgressSummary(next?.taskProgress, next?.currentStep);
         renderTaskSteps(Array.isArray(next?.steps) ? next.steps : []);
     }
@@ -200,6 +385,7 @@ function syncRegistrationStreamPanels(previous, next, event) {
     // 任务状态：仅在相关事件时刷新（保持最小侵入，避免影响旧逻辑）
     if (event?.kind === 'snapshot' || event?.kind === 'task_status_changed') {
         const status = next?.task?.status;
+        rememberSingleTaskStart(next?.task, next?.taskProgress);
         if (status) {
             updateTaskStatus(status);
         }
@@ -214,6 +400,7 @@ function syncRegistrationStreamPanels(previous, next, event) {
     // 批量进度：仅在相关事件时刷新
     if (event?.kind === 'snapshot' || event?.kind === 'batch_progress_updated' || event?.kind === 'stream_closed') {
         const batch = next?.batch;
+        rememberBatchTaskStart(batch);
         const hasUnlimited = !!(batch && batch.is_unlimited);
         const hasFiniteTotal = Number.isFinite(batch?.total) && batch.total > 0;
         const hasCompleted = Number.isFinite(batch?.completed);
@@ -221,6 +408,8 @@ function syncRegistrationStreamPanels(previous, next, event) {
             updateBatchProgress(batch);
         }
     }
+
+    renderRegistrationRuntimeMetrics();
 }
 
 function resetConsoleLogDom() {
@@ -238,15 +427,25 @@ function resetRegistrationStreamViewState() {
     registrationSharedPendingEvent = null;
     registrationStreamState = createRegistrationInitialStreamState();
     registrationStreamRenderedLogCount = 0;
+    singleTaskStartedAtMs = null;
+    batchTaskStartedAtMs = null;
     const controller = ensureRegistrationSharedConsoleMounted();
     if (controller) {
         controller.ui.viewCleared = false;
         controller.ui.clearedAfterSeq = 0;
+        controller.ui.autoScrollPinned = true;
+        controller.ui.autoScroll = true;
+        controller.ui.manualScrollTop = 0;
         controller.setState(registrationStreamState);
+        syncRegistrationLogAutoScrollInput(controller);
     } else if (elements.consoleLog) {
         elements.consoleLog.innerHTML = '';
     }
     renderRegistrationStreamStatus();
+    syncRegistrationLogAutoScrollInput(null);
+    setSingleTaskElapsedText('00:00:00');
+    setBatchElapsedTexts('00:00:00', '—');
+    stopRegistrationRuntimeTicker();
 }
 
 // DOM 元素
@@ -279,7 +478,10 @@ const elements = {
     singleProgressBar: document.getElementById('single-progress-bar'),
     taskStepWaterfall: document.getElementById('task-step-waterfall'),
     batchProgressSection: document.getElementById('batch-progress-section'),
+    batchProgressElapsed: document.getElementById('batch-progress-elapsed'),
+    batchProgressAvgElapsed: document.getElementById('batch-progress-avg-elapsed'),
     consoleLog: document.getElementById('console-log'),
+    registrationLogAutoScrollInput: document.getElementById('registration-log-auto-scroll'),
     clearLogBtn: document.getElementById('clear-log-btn'),
     // 任务状态
     taskId: document.getElementById('task-id'),
@@ -447,6 +649,10 @@ function initEventListeners() {
         elements.consoleLog.innerHTML = '<div class="log-line info">[系统] 日志已清空</div>';
         resetRegistrationStreamViewState();
     });
+
+    if (elements.registrationLogAutoScrollInput) {
+        elements.registrationLogAutoScrollInput.addEventListener('change', handleRegistrationLogAutoScrollChange);
+    }
 
     // 刷新账号列表
     elements.refreshAccountsBtn.addEventListener('click', () => {
@@ -765,8 +971,13 @@ async function handleSingleRegistration(requestData) {
 
         currentTask = data;
         activeTaskUuid = data.task_uuid;  // 保存用于重连
+        singleTaskStartedAtMs = Date.now();
         // 持久化到 sessionStorage，跨页面导航后可恢复
-        sessionStorage.setItem('activeTask', JSON.stringify({ task_uuid: data.task_uuid, mode: 'single' }));
+        sessionStorage.setItem('activeTask', JSON.stringify({
+            task_uuid: data.task_uuid,
+            mode: 'single',
+            started_at: new Date(singleTaskStartedAtMs).toISOString(),
+        }));
         addLog('info', `[系统] 任务已创建: ${data.task_uuid}`);
         showTaskStatus(data);
         updateTaskStatus('running');
@@ -909,9 +1120,77 @@ function startBatchFallbackPolling(batchId) {
     startBatchPolling(batchId);
 }
 
+function stopWebSocketHandshakeTimeout() {
+    if (wsHandshakeTimeout) {
+        clearTimeout(wsHandshakeTimeout);
+        wsHandshakeTimeout = null;
+    }
+}
+
+function stopBatchWebSocketHandshakeTimeout() {
+    if (batchWsHandshakeTimeout) {
+        clearTimeout(batchWsHandshakeTimeout);
+        batchWsHandshakeTimeout = null;
+    }
+}
+
+function handoverSingleTaskToPolling(taskUuid, socket) {
+    stopWebSocketHandshakeTimeout();
+    stopWebSocketHeartbeat();
+
+    if (socket && webSocket === socket) {
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        try {
+            socket.close();
+        } catch (error) {
+            console.warn('关闭单任务 WebSocket 失败:', error);
+        }
+        webSocket = null;
+    }
+
+    if (taskCompleted || taskFinalStatus !== null) {
+        emitConnectionStateChanged('disconnected');
+        return;
+    }
+
+    useWebSocket = false;
+    emitConnectionStateChanged('polling');
+    startTaskStreamPolling(taskUuid);
+}
+
+function handoverBatchTaskToPolling(batchId, socket) {
+    stopBatchWebSocketHandshakeTimeout();
+    stopBatchWebSocketHeartbeat();
+
+    if (socket && batchWebSocket === socket) {
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        try {
+            socket.close();
+        } catch (error) {
+            console.warn('关闭批量任务 WebSocket 失败:', error);
+        }
+        batchWebSocket = null;
+    }
+
+    if (batchCompleted || batchFinalStatus !== null) {
+        emitConnectionStateChanged('disconnected');
+        return;
+    }
+
+    emitConnectionStateChanged('polling');
+    startBatchFallbackPolling(batchId);
+}
+
 // 连接 WebSocket
 function connectWebSocket(taskUuid) {
     emitConnectionStateChanged('reconnecting');
+    stopWebSocketHandshakeTimeout();
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const streamId = `task:${taskUuid}`;
     const afterSeq = registrationStreamState?.cursors?.[streamId] || 0;
@@ -919,9 +1198,24 @@ function connectWebSocket(taskUuid) {
 
     try {
         webSocket = new WebSocket(wsUrl);
+        const currentSocket = webSocket;
+        currentSocket.__handshakeCompleted = false;
+
+        wsHandshakeTimeout = setTimeout(() => {
+            if (webSocket !== currentSocket || taskCompleted || taskFinalStatus !== null) {
+                return;
+            }
+            if (currentSocket.__handshakeCompleted === true) {
+                return;
+            }
+            console.warn('WebSocket 握手超时，切换到 stream polling');
+            handoverSingleTaskToPolling(taskUuid, currentSocket);
+        }, REGISTRATION_WS_HANDSHAKE_TIMEOUT_MS);
 
         webSocket.onopen = () => {
             console.log('WebSocket 连接成功');
+            currentSocket.__handshakeCompleted = true;
+            stopWebSocketHandshakeTimeout();
             useWebSocket = true;
             emitConnectionStateChanged('connected');
             // 停止轮询（如果有）
@@ -932,6 +1226,8 @@ function connectWebSocket(taskUuid) {
         };
 
         webSocket.onmessage = async (event) => {
+            currentSocket.__handshakeCompleted = true;
+            stopWebSocketHandshakeTimeout();
             const data = JSON.parse(event.data);
 
             // 控制消息（旧协议）
@@ -991,6 +1287,7 @@ function connectWebSocket(taskUuid) {
 
         webSocket.onclose = (event) => {
             console.log('WebSocket 连接关闭:', event.code);
+            stopWebSocketHandshakeTimeout();
             stopWebSocketHeartbeat();
 
             // 只有在任务未完成且最终状态不是完成状态时才切换到轮询
@@ -1010,23 +1307,19 @@ function connectWebSocket(taskUuid) {
 
         webSocket.onerror = (error) => {
             console.error('WebSocket 错误:', error);
-            // 切换到轮询
-            useWebSocket = false;
-            stopWebSocketHeartbeat();
-            emitConnectionStateChanged('polling');
-            startTaskStreamPolling(taskUuid);
+            handoverSingleTaskToPolling(taskUuid, currentSocket);
         };
 
     } catch (error) {
         console.error('WebSocket 连接失败:', error);
-        useWebSocket = false;
-        emitConnectionStateChanged('polling');
-        startTaskStreamPolling(taskUuid);
+        stopWebSocketHandshakeTimeout();
+        handoverSingleTaskToPolling(taskUuid, webSocket);
     }
 }
 
 // 断开 WebSocket
 function disconnectWebSocket() {
+    stopWebSocketHandshakeTimeout();
     stopWebSocketHeartbeat();
     if (webSocket) {
         webSocket.close();
@@ -1070,6 +1363,7 @@ function startTaskStreamPolling(taskUuid) {
         try {
             const snapshot = await api.get(`/registration/streams/task/${taskUuid}/snapshot`);
             reduceRegistrationStream(snapshot);
+            emitConnectionStateChanged('polling');
             finalizeSingleTaskIfTerminal(taskUuid, snapshot?.payload?.task?.status);
         } catch (error) {
             console.error('轮询模式获取 task snapshot 失败:', error);
@@ -1089,6 +1383,7 @@ function startTaskStreamPolling(taskUuid) {
             for (const event of events) {
                 reduceRegistrationStream(event);
             }
+            emitConnectionStateChanged('polling');
 
             const status = registrationStreamState?.task?.status;
             finalizeSingleTaskIfTerminal(taskUuid, status);
@@ -1145,11 +1440,13 @@ async function handleBatchRegistration(requestData) {
 
         currentBatch = data;
         activeBatchId = data.batch_id;  // 保存用于重连
+        batchTaskStartedAtMs = Date.now();
         // 持久化到 sessionStorage，跨页面导航后可恢复
         sessionStorage.setItem('activeTask', JSON.stringify({
             batch_id: data.batch_id,
             mode: isUnlimitedRegistrationMode() ? 'unlimited' : 'batch',
-            total: data.count
+            total: data.count,
+            started_at: new Date(batchTaskStartedAtMs).toISOString(),
         }));
         addLog('info', `[系统] 批量任务已创建: ${data.batch_id}`);
         addLog('info', count === 0
@@ -1325,8 +1622,10 @@ function showTaskStatus(task) {
     elements.taskId.textContent = task.task_uuid.substring(0, 8) + '...';
     elements.taskEmail.textContent = task.email || task.email_address || '-';
     elements.taskService.textContent = task.email_service ? getServiceTypeText(task.email_service) : '-';
+    rememberSingleTaskStart(task, task.task_progress || registrationStreamState.taskProgress);
     renderSingleTaskProgressSummary(task.task_progress || registrationStreamState.taskProgress, registrationStreamState.currentStep);
     renderTaskSteps(task.steps || []);
+    ensureRegistrationRuntimeTicker();
 }
 
 // 更新任务状态
@@ -1375,7 +1674,6 @@ function renderTaskSteps(steps) {
     elements.taskStepWaterfall.innerHTML = rows.map((step, index) => {
         const stepKey = escapeHtml(step.step_key || `step_${index + 1}`);
         const status = escapeHtml(step.status || 'pending');
-        const duration = step.duration_ms != null ? `${step.duration_ms}ms` : '-';
         const errorHtml = step.error_message
             ? `<div class="task-step-error">${escapeHtml(step.error_message)}</div>`
             : '';
@@ -1387,21 +1685,12 @@ function renderTaskSteps(steps) {
                 </div>
                 <div class="task-step-meta">
                     <span class="task-step-status">${status}</span>
-                    <span class="task-step-duration">${duration}</span>
                 </div>
                 ${errorHtml}
             </div>
         `;
     }).join('');
     elements.taskStepWaterfall.style.display = 'grid';
-}
-
-function formatElapsedMsToClock(elapsedMs) {
-    const safe = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
-    const seconds = Math.floor(safe / 1000);
-    const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
-    const ss = String(seconds % 60).padStart(2, '0');
-    return `${mm}:${ss}`;
 }
 
 function normalizeProgressPercent(value) {
@@ -1419,22 +1708,21 @@ function renderSingleTaskProgressSummary(taskProgress, currentStep) {
         elements.singleProgressCard.style.display = 'none';
         if (elements.singleProgressCurrentStep) elements.singleProgressCurrentStep.textContent = '-';
         if (elements.singleProgressStepText) elements.singleProgressStepText.textContent = '第 0 / 0 步';
-        if (elements.singleProgressElapsed) elements.singleProgressElapsed.textContent = '00:00';
         if (elements.singleProgressBar) elements.singleProgressBar.style.width = '0%';
+        setSingleTaskElapsedText('00:00:00');
         return;
     }
 
     const stepIndex = Number.isFinite(taskProgress.step_index) ? taskProgress.step_index : 0;
     const totalSteps = Number.isFinite(taskProgress.total_steps) ? taskProgress.total_steps : 0;
-    const elapsedText = formatElapsedMsToClock(taskProgress.elapsed_ms);
     const percent = normalizeProgressPercent(taskProgress.progress_percent);
     const currentStepKey = currentStep?.step_key || taskProgress.step_key || '-';
 
     elements.singleProgressCard.style.display = 'block';
     if (elements.singleProgressCurrentStep) elements.singleProgressCurrentStep.textContent = currentStepKey;
     if (elements.singleProgressStepText) elements.singleProgressStepText.textContent = `第 ${stepIndex} / ${totalSteps} 步`;
-    if (elements.singleProgressElapsed) elements.singleProgressElapsed.textContent = elapsedText;
     if (elements.singleProgressBar) elements.singleProgressBar.style.width = `${percent}%`;
+    renderSingleTaskElapsedClock();
 }
 
 // 显示批量状态
@@ -1444,6 +1732,7 @@ function showBatchStatus(batch) {
     elements.batchProgressSection.style.display = 'block';
     elements.taskStatusRow.style.display = 'none';
     elements.taskStatusBadge.style.display = 'none';
+    rememberBatchTaskStart(batch);
     renderSingleTaskProgressSummary(null, null);
     renderTaskSteps([]);
     elements.batchProgressText.textContent = isUnlimited ? '0/∞' : `0/${batch.count}`;
@@ -1454,7 +1743,9 @@ function showBatchStatus(batch) {
     elements.batchFailed.textContent = '0';
     elements.batchRemaining.textContent = isUnlimited ? '不限' : batch.count;
     elements.batchConsecutiveFailures.textContent = '0/0';
+    setBatchElapsedTexts('00:00:00', '—');
     renderBatchDomainStats([]);
+    ensureRegistrationRuntimeTicker();
 
     // 重置计数器
     elements.batchSuccess.dataset.last = '0';
@@ -1463,6 +1754,8 @@ function showBatchStatus(batch) {
 
 // 更新批量进度
 function updateBatchProgress(data) {
+    currentBatch = { ...(currentBatch || {}), ...(data || {}) };
+    rememberBatchTaskStart(currentBatch);
     if (data.is_unlimited) {
         elements.batchProgressText.textContent = `${data.completed}/∞`;
         elements.batchProgressPercent.textContent = data.finished ? '已结束' : '运行中';
@@ -1473,6 +1766,7 @@ function updateBatchProgress(data) {
         elements.batchRemaining.textContent = '不限';
         elements.batchConsecutiveFailures.textContent = `${data.consecutive_failures || 0}/${data.max_consecutive_failures || 0}`;
         renderBatchDomainStats(data.finished ? (data.domain_stats || []) : []);
+        renderBatchRuntimeMetrics();
         return;
     }
 
@@ -1490,6 +1784,7 @@ function updateBatchProgress(data) {
         elements.batchConsecutiveFailures.textContent = '-';
     }
     renderBatchDomainStats(data.finished ? (data.domain_stats || []) : []);
+    renderBatchRuntimeMetrics();
 
     // 记录日志（避免重复）
     if (data.completed > 0) {
@@ -1762,6 +2057,9 @@ function getLogType(log) {
 function resetButtons() {
     elements.startBtn.disabled = false;
     elements.cancelBtn.disabled = true;
+    stopRegistrationRuntimeTicker();
+    singleTaskStartedAtMs = null;
+    batchTaskStartedAtMs = null;
     currentTask = null;
     currentBatch = null;
     isBatchMode = false;
@@ -1926,8 +2224,14 @@ async function handleOutlookBatchRegistration() {
 
         currentBatch = { batch_id: data.batch_id, ...data };
         activeBatchId = data.batch_id;  // 保存用于重连
+        batchTaskStartedAtMs = Date.now();
         // 持久化到 sessionStorage，跨页面导航后可恢复
-        sessionStorage.setItem('activeTask', JSON.stringify({ batch_id: data.batch_id, mode: isOutlookBatchMode ? 'outlook_batch' : 'batch', total: data.to_register }));
+        sessionStorage.setItem('activeTask', JSON.stringify({
+            batch_id: data.batch_id,
+            mode: isOutlookBatchMode ? 'outlook_batch' : 'batch',
+            total: data.to_register,
+            started_at: new Date(batchTaskStartedAtMs).toISOString(),
+        }));
         addLog('info', `[系统] 批量任务已创建: ${data.batch_id}`);
         addLog('info', `[系统] 总数: ${data.total}, 跳过已注册: ${data.skipped}, 待注册: ${data.to_register}`);
 
@@ -1949,6 +2253,7 @@ async function handleOutlookBatchRegistration() {
 // 连接批量任务 WebSocket
 function connectBatchWebSocket(batchId) {
     emitConnectionStateChanged('reconnecting');
+    stopBatchWebSocketHandshakeTimeout();
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const streamId = `batch:${batchId}`;
     const afterSeq = registrationStreamState?.cursors?.[streamId] || 0;
@@ -1956,9 +2261,24 @@ function connectBatchWebSocket(batchId) {
 
     try {
         batchWebSocket = new WebSocket(wsUrl);
+        const currentSocket = batchWebSocket;
+        currentSocket.__handshakeCompleted = false;
+
+        batchWsHandshakeTimeout = setTimeout(() => {
+            if (batchWebSocket !== currentSocket || batchCompleted || batchFinalStatus !== null) {
+                return;
+            }
+            if (currentSocket.__handshakeCompleted === true) {
+                return;
+            }
+            console.warn('批量任务 WebSocket 握手超时，切换到 polling');
+            handoverBatchTaskToPolling(batchId, currentSocket);
+        }, REGISTRATION_WS_HANDSHAKE_TIMEOUT_MS);
 
         batchWebSocket.onopen = () => {
             console.log('批量任务 WebSocket 连接成功');
+            currentSocket.__handshakeCompleted = true;
+            stopBatchWebSocketHandshakeTimeout();
             emitConnectionStateChanged('connected');
             // 停止轮询（如果有）
             stopBatchPolling();
@@ -1967,6 +2287,8 @@ function connectBatchWebSocket(batchId) {
         };
 
         batchWebSocket.onmessage = async (event) => {
+            currentSocket.__handshakeCompleted = true;
+            stopBatchWebSocketHandshakeTimeout();
             const data = JSON.parse(event.data);
 
             if (data.type === 'pong') {
@@ -2025,6 +2347,7 @@ function connectBatchWebSocket(batchId) {
 
         batchWebSocket.onclose = (event) => {
             console.log('批量任务 WebSocket 连接关闭:', event.code);
+            stopBatchWebSocketHandshakeTimeout();
             stopBatchWebSocketHeartbeat();
 
             // 只有在任务未完成且最终状态不是完成状态时才切换到轮询
@@ -2043,21 +2366,19 @@ function connectBatchWebSocket(batchId) {
 
         batchWebSocket.onerror = (error) => {
             console.error('批量任务 WebSocket 错误:', error);
-            stopBatchWebSocketHeartbeat();
-            // 切换到轮询
-            emitConnectionStateChanged('polling');
-            startBatchFallbackPolling(batchId);
+            handoverBatchTaskToPolling(batchId, currentSocket);
         };
 
     } catch (error) {
         console.error('批量任务 WebSocket 连接失败:', error);
-        emitConnectionStateChanged('polling');
-        startBatchFallbackPolling(batchId);
+        stopBatchWebSocketHandshakeTimeout();
+        handoverBatchTaskToPolling(batchId, batchWebSocket);
     }
 }
 
 // 断开批量任务 WebSocket
 function disconnectBatchWebSocket() {
+    stopBatchWebSocketHandshakeTimeout();
     stopBatchWebSocketHeartbeat();
     if (batchWebSocket) {
         batchWebSocket.close();
@@ -2167,7 +2488,7 @@ async function restoreActiveTask() {
         return;
     }
 
-    const { mode, task_uuid, batch_id, total } = state;
+    const { mode, task_uuid, batch_id, total, started_at } = state;
 
     if (mode === 'single' && task_uuid) {
         // 查询任务是否仍在运行
@@ -2180,6 +2501,7 @@ async function restoreActiveTask() {
             // 任务仍在运行，恢复状态
             currentTask = data;
             activeTaskUuid = task_uuid;
+            singleTaskStartedAtMs = parseRegistrationTimestampMs(data.started_at) ?? parseRegistrationTimestampMs(started_at);
             taskCompleted = false;
             taskFinalStatus = null;
             toastShown = false;
@@ -2208,6 +2530,7 @@ async function restoreActiveTask() {
             // 批量任务仍在运行，恢复状态
             currentBatch = { batch_id, ...data };
             activeBatchId = batch_id;
+            batchTaskStartedAtMs = parseRegistrationTimestampMs(data.started_at) ?? parseRegistrationTimestampMs(started_at);
             isOutlookBatchMode = (mode === 'outlook_batch');
             isBatchMode = (mode === 'batch' || mode === 'unlimited');
             batchCompleted = false;

@@ -221,6 +221,7 @@ class FakeTaskManager:
         batch_id,
         total,
         *,
+        started_at=None,
         is_unlimited=False,
         consecutive_failures=0,
         max_consecutive_failures=10,
@@ -230,6 +231,7 @@ class FakeTaskManager:
         self._status[batch_id] = {
             "status": "running",
             "total": total,
+            "started_at": started_at,
             "is_unlimited": is_unlimited,
             "consecutive_failures": consecutive_failures,
             "max_consecutive_failures": max_consecutive_failures,
@@ -475,6 +477,7 @@ def test_get_batch_status_includes_unlimited_metadata(batch_state):
     assert result["max_consecutive_failures"] == 10
     assert result["stop_reason"] is None
     assert result["domain_stats"] == []
+    assert result["started_at"] is not None
 
 
 def test_run_sync_registration_task_persists_email_address_even_on_failure(route_db, fake_task_manager, monkeypatch):

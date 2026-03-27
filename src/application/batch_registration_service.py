@@ -130,6 +130,7 @@ class BatchRegistrationService:
         statistics_context: dict | None = None,
     ) -> None:
         computed_total = 0 if is_unlimited else (total if total is not None else len(task_uuids))
+        started_at = self.utc_now_provider().isoformat()
         self.task_manager.init_batch(
             batch_id,
             computed_total,
@@ -138,9 +139,11 @@ class BatchRegistrationService:
             max_consecutive_failures=10,
             stop_reason=None,
             domain_stats=[],
+            started_at=started_at,
         )
         self.batch_tasks[batch_id] = {
             "status": "running",
+            "started_at": started_at,
             "total": computed_total,
             "completed": 0,
             "success": 0,

@@ -24,6 +24,25 @@
   overflow: auto;
 }
 
+.console-log.realtime-log-console-shell {
+  background: var(--log-console-bg);
+  color: var(--text-primary);
+  line-height: 1.5;
+  position: relative;
+}
+
+.scheduled-run-console-shell.realtime-log-console-shell {
+  background: var(--log-console-bg);
+  border: 1px solid var(--log-console-border);
+  color: var(--text-primary);
+  padding: 12px;
+  line-height: 1.5;
+}
+
+.console-log.realtime-log-console-shell::before {
+  content: none;
+}
+
 .realtime-log-toolbar {
   display: flex;
   align-items: center;
