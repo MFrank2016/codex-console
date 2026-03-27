@@ -7,11 +7,13 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc, func
 
+from ..core.email_suffix_blacklist import normalize_email_suffix
 from ..core.time import utc_now_naive
 from .models import (
     Account,
     AccountSurvivalCheck,
     ExperimentBatch,
+    EmailSuffixBlacklist,
     EmailService,
     PipelineStepRun,
     ProxyCheckResult,
@@ -394,6 +396,135 @@ def delete_email_service(db: Session, service_id: int) -> bool:
     db.delete(db_service)
     db.commit()
     return True
+
+
+# ============================================================================
+# 邮箱后缀黑名单 CRUD
+# ============================================================================
+
+def create_email_suffix_blacklist(
+    db: Session,
+    *,
+    suffix: str,
+    enabled: bool = True,
+    source: str = "manual",
+    reason: Optional[str] = None,
+) -> EmailSuffixBlacklist:
+    """创建邮箱后缀黑名单记录。"""
+    row = EmailSuffixBlacklist(
+        suffix=normalize_email_suffix(suffix),
+        enabled=enabled,
+        source=source,
+        reason=reason,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_email_suffix_blacklist(
+    db: Session,
+    *,
+    keyword: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    source: Optional[str] = None,
+) -> List[EmailSuffixBlacklist]:
+    """查询邮箱后缀黑名单列表。"""
+    query = db.query(EmailSuffixBlacklist)
+
+    if keyword:
+        query = query.filter(EmailSuffixBlacklist.suffix.ilike(f"%{keyword.strip()}%"))
+    if enabled is not None:
+        query = query.filter(EmailSuffixBlacklist.enabled == enabled)
+    if source:
+        query = query.filter(EmailSuffixBlacklist.source == source)
+
+    return query.order_by(desc(EmailSuffixBlacklist.id)).all()
+
+
+def update_email_suffix_blacklist(
+    db: Session,
+    row_id: int,
+    **kwargs,
+) -> Optional[EmailSuffixBlacklist]:
+    """更新邮箱后缀黑名单记录。"""
+    row = db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.id == row_id).first()
+    if not row:
+        return None
+
+    for key, value in kwargs.items():
+        if not hasattr(row, key):
+            continue
+        if key == "suffix":
+            setattr(row, key, normalize_email_suffix(value))
+            continue
+        setattr(row, key, value)
+
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_email_suffix_blacklist(db: Session, row_id: int) -> bool:
+    """删除邮箱后缀黑名单记录。"""
+    row = db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.id == row_id).first()
+    if not row:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
+
+
+def is_email_suffix_blacklisted(db: Session, suffix: str) -> bool:
+    """检查邮箱后缀是否已启用黑名单。"""
+    normalized = normalize_email_suffix(suffix)
+    if not normalized:
+        return False
+    row = (
+        db.query(EmailSuffixBlacklist.id)
+        .filter(EmailSuffixBlacklist.suffix == normalized)
+        .filter(EmailSuffixBlacklist.enabled.is_(True))
+        .first()
+    )
+    return row is not None
+
+
+def upsert_auto_blacklist_suffix(
+    db: Session,
+    suffix: str,
+    *,
+    reason: str,
+    source: str = "auto_registration_disallowed",
+) -> EmailSuffixBlacklist:
+    """自动命中时 upsert 后缀黑名单。"""
+    normalized = normalize_email_suffix(suffix)
+    if not normalized:
+        raise ValueError("suffix is empty")
+
+    now = utc_now_naive()
+    row = db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.suffix == normalized).first()
+    if row:
+        row.enabled = True
+        row.source = source
+        row.reason = reason
+        row.hit_count = int(row.hit_count or 0) + 1
+        row.last_hit_at = now
+        row.updated_at = now
+    else:
+        row = EmailSuffixBlacklist(
+            suffix=normalized,
+            enabled=True,
+            source=source,
+            reason=reason,
+            hit_count=1,
+            last_hit_at=now,
+        )
+        db.add(row)
+
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 # ============================================================================

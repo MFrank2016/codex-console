@@ -111,6 +111,21 @@ class EmailService(Base):
     updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
 
+class EmailSuffixBlacklist(Base):
+    """邮箱后缀黑名单表"""
+    __tablename__ = "email_suffix_blacklist"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    suffix = Column(String(255), nullable=False, unique=True, index=True)
+    enabled = Column(Boolean, default=True, nullable=False)
+    source = Column(String(64), default="manual", nullable=False)
+    reason = Column(Text)
+    hit_count = Column(Integer, default=0, nullable=False)
+    last_hit_at = Column(DateTime)
+    created_at = Column(DateTime, default=_utc_now_naive)
+    updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
+
+
 class RegistrationTask(Base):
     """注册任务表"""
     __tablename__ = 'registration_tasks'
