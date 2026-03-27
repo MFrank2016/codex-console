@@ -115,6 +115,8 @@ def _normalize_blacklist_suffix_or_400(raw_suffix: str | None) -> str:
     normalized = normalize_email_suffix(text)
     if not normalized:
         raise HTTPException(status_code=400, detail="邮箱后缀不能为空")
+    if "@" in normalized:
+        raise HTTPException(status_code=400, detail="请输入邮箱后缀，不要填写完整邮箱")
     return normalized
 
 @router.get("")
@@ -1009,6 +1011,8 @@ async def patch_email_suffix_blacklist(
     request: EmailSuffixBlacklistUpdateRequest,
 ):
     update_data = request.model_dump(exclude_unset=True)
+    if "enabled" in update_data and update_data["enabled"] is None:
+        raise HTTPException(status_code=400, detail="enabled 不能为空")
     if "suffix" in update_data:
         update_data["suffix"] = _normalize_blacklist_suffix_or_400(update_data["suffix"])
 

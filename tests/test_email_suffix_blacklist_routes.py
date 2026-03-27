@@ -86,6 +86,14 @@ def test_email_suffix_blacklist_rejects_full_email_value(client):
     assert response.status_code == 400
 
 
+def test_email_suffix_blacklist_rejects_multi_at_value(client):
+    response = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json={"suffix": "@foo@bar.com"},
+    )
+    assert response.status_code == 400
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -99,5 +107,82 @@ def test_email_suffix_blacklist_rejects_empty_suffix_as_400(client, payload):
     response = client.post(
         "/api/settings/email-suffix-blacklist",
         json=payload,
+    )
+    assert response.status_code == 400
+
+
+def test_email_suffix_blacklist_duplicate_create_returns_409(client):
+    first = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json={"suffix": "badmail.com"},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json={"suffix": "@BadMail.COM"},
+    )
+    assert second.status_code == 409
+
+
+def test_email_suffix_blacklist_patch_duplicate_suffix_returns_409(client):
+    first = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json={"suffix": "first.com"},
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json={"suffix": "second.com"},
+    )
+    assert second.status_code == 200
+
+    second_id = second.json()["item"]["id"]
+    response = client.patch(
+        f"/api/settings/email-suffix-blacklist/{second_id}",
+        json={"suffix": "FIRST.com"},
+    )
+    assert response.status_code == 409
+
+
+def test_email_suffix_blacklist_patch_missing_row_returns_404(client):
+    response = client.patch(
+        "/api/settings/email-suffix-blacklist/999999",
+        json={"reason": "missing"},
+    )
+    assert response.status_code == 404
+
+
+def test_email_suffix_blacklist_delete_missing_row_returns_404(client):
+    response = client.delete("/api/settings/email-suffix-blacklist/999999")
+    assert response.status_code == 404
+
+
+def test_email_suffix_blacklist_patch_suffix_none_returns_400(client):
+    created = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json={"suffix": "seed.com"},
+    )
+    assert created.status_code == 200
+    row_id = created.json()["item"]["id"]
+
+    response = client.patch(
+        f"/api/settings/email-suffix-blacklist/{row_id}",
+        json={"suffix": None},
+    )
+    assert response.status_code == 400
+
+
+def test_email_suffix_blacklist_patch_enabled_none_returns_400(client):
+    created = client.post(
+        "/api/settings/email-suffix-blacklist",
+        json={"suffix": "seed-enabled.com"},
+    )
+    assert created.status_code == 200
+    row_id = created.json()["item"]["id"]
+
+    response = client.patch(
+        f"/api/settings/email-suffix-blacklist/{row_id}",
+        json={"enabled": None},
     )
     assert response.status_code == 400
