@@ -59,11 +59,6 @@ def test_registration_template_loads_registration_stream_before_app_js():
     assert template.index(stream_src) < template.index(app_src)
 
 
-def test_app_js_uses_beijing_time_zone_for_local_console_timestamps():
-    script = Path("static/js/app.js").read_text(encoding="utf-8")
-    assert script.count("timeZone: 'Asia/Shanghai'") >= 2
-
-
 def test_registration_template_contains_stream_status_panel_hook():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     assert 'id="registration-stream-status"' in template

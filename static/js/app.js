@@ -1977,7 +1977,6 @@ function buildRegistrationLocalLogEntry(type, message, streamId, seq) {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
-        timeZone: 'Asia/Shanghai',
     });
     const timestamp = now.toISOString();
     const level = getRegistrationLogLevel(type, message);
@@ -2052,8 +2051,7 @@ function appendLegacyLogLine(type, message, options = {}) {
     const timestamp = new Date().toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
-        timeZone: 'Asia/Shanghai',
+        second: '2-digit'
     });
 
     line.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}`;

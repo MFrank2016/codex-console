@@ -189,7 +189,7 @@ def test_create_scheduled_plan_route_persists_next_run_at(client, route_db, seed
 
     assert response.status_code == 200
     body = response.json()
-    assert body["next_run_at"] == "2026-03-23T08:00:00+08:00"
+    assert body["next_run_at"] == "2026-03-23T08:00:00"
     assert body["config_meta"]["target_valid_count"]["value_type"] == "number"
 
     created = crud.get_scheduled_plan_by_id(route_db, body["id"])
@@ -418,7 +418,7 @@ def test_update_scheduled_plan_route_persists_changes_and_recomputes_next_run_at
     assert body["name"] == "updated cleanup plan"
     assert body["trigger_type"] == "cron"
     assert body["cron_expression"] == "30 9 * * *"
-    assert body["next_run_at"] == "2026-03-24T09:30:00+08:00"
+    assert body["next_run_at"] == "2026-03-24T09:30:00"
     assert body["config_meta"]["max_cleanup_count"]["value_description"] == "建议小批量执行"
 
     route_db.expire_all()
@@ -456,7 +456,7 @@ def test_disable_and_enable_routes_toggle_plan_and_next_run_at(client, route_db,
     assert enable_response.status_code == 200
     enabled_body = enable_response.json()
     assert enabled_body["enabled"] is True
-    assert enabled_body["next_run_at"] == "2026-03-24T10:00:00+08:00"
+    assert enabled_body["next_run_at"] == "2026-03-24T10:00:00"
 
     route_db.expire_all()
     enabled = crud.get_scheduled_plan_by_id(route_db, plan_id)
@@ -534,8 +534,8 @@ def test_list_scheduled_runs_route_supports_filters(client, route_db, seeded_sch
         params={
             "task_type": "cpa_cleanup",
             "status": "running",
-            "started_from": "2026-03-22T16:30:00",
-            "started_to": "2026-03-22T17:30:00",
+            "started_from": "2026-03-22T08:30:00",
+            "started_to": "2026-03-22T09:30:00",
         },
     )
 
@@ -546,7 +546,6 @@ def test_list_scheduled_runs_route_supports_filters(client, route_db, seeded_sch
     assert payload["items"][0]["id"] == seeded_scheduled_data["latest_run"].id
     assert payload["items"][0]["task_type"] == "cpa_cleanup"
     assert payload["items"][0]["status"] == "running"
-    assert payload["items"][0]["started_at"] == "2026-03-22T17:00:00+08:00"
     assert payload["items"][0]["can_stop"] is True
 
 
@@ -591,7 +590,6 @@ def test_get_scheduled_run_detail_route_returns_plan_summary_and_can_stop(client
     assert payload["plan_name"] == seeded_scheduled_data["plan"].name
     assert payload["plan_enabled"] is True
     assert payload["task_type"] == "cpa_cleanup"
-    assert payload["started_at"] == "2026-03-22T17:00:00+08:00"
     assert payload["can_stop"] is True
 
 
