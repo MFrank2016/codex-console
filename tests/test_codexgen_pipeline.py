@@ -1,6 +1,7 @@
 import pytest
 
 from src.config.constants import EmailServiceType
+from src.core.email_suffix_blacklist import RegistrationDisallowedSuffixError
 from src.core.pipeline import PipelineContext, PipelineRunner
 from src.core.pipeline.registry import PIPELINE_REGISTRY, get_pipeline
 from src.core.pipeline.steps import common as common_steps
@@ -312,3 +313,79 @@ def test_get_proxy_ip_step_allows_no_proxy_preflight_noop():
     )
     payload = common_steps.get_proxy_ip_step(ctx)
     assert payload == {}
+
+
+class _DummyFallbackResponse:
+    def __init__(self, status_code: int, payload: dict):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+
+class _DummyCookieJar:
+    def __init__(self, did: str | None):
+        self._did = did
+
+    def get(self, key: str, default=None):
+        if key == "oai-did":
+            return self._did
+        return default
+
+
+class _DummyFallbackSession:
+    def __init__(self, responses: list[_DummyFallbackResponse], did: str | None = None):
+        self._responses = responses
+        self.cookies = _DummyCookieJar(did)
+        self.post_calls = 0
+
+    def post(self, *_args, **_kwargs):
+        self.post_calls += 1
+        return self._responses.pop(0)
+
+
+def test_codexgen_fallback_raises_disallowed_error_when_first_post_blocked():
+    runtime = CodexgenPipelineRuntime(email_service=FakeSharedEmailService(), proxy_url=None, callback_logger=None, task_uuid=None)
+    runtime._engine.email = "tester@blocked.test"  # noqa: SLF001
+    runtime._engine._check_sentinel = lambda _did: "sen-1"  # noqa: SLF001
+    runtime._engine.session = _DummyFallbackSession(  # noqa: SLF001
+        [
+            _DummyFallbackResponse(
+                status_code=400,
+                payload={"error": {"code": "registration_disallowed", "message": "blocked first"}},
+            )
+        ],
+        did="did-1",
+    )
+
+    with pytest.raises(RegistrationDisallowedSuffixError) as exc_info:
+        runtime._run_create_account_fallback()  # noqa: SLF001
+
+    assert exc_info.value.suffix == "blocked.test"
+    assert runtime._engine.session.post_calls == 1  # noqa: SLF001
+
+
+def test_codexgen_fallback_raises_disallowed_error_when_second_post_blocked():
+    runtime = CodexgenPipelineRuntime(email_service=FakeSharedEmailService(), proxy_url=None, callback_logger=None, task_uuid=None)
+    runtime._engine.email = "tester@blocked.test"  # noqa: SLF001
+    runtime._engine.session = _DummyFallbackSession(  # noqa: SLF001
+        [
+            _DummyFallbackResponse(
+                status_code=400,
+                payload={"error": {"code": "other_error", "message": "retry"}},
+            ),
+            _DummyFallbackResponse(
+                status_code=400,
+                payload={"error": {"code": "registration_disallowed", "message": "blocked second"}},
+            ),
+        ],
+        did=None,
+    )
+
+    with pytest.raises(RegistrationDisallowedSuffixError) as exc_info:
+        runtime._run_create_account_fallback()  # noqa: SLF001
+
+    assert exc_info.value.suffix == "blocked.test"
+    assert runtime._engine.session.post_calls == 2  # noqa: SLF001

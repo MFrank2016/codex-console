@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable
 
 from src.config.constants import OPENAI_API_ENDPOINTS, OPENAI_PAGE_TYPES, generate_random_user_info
+from src.core.email_suffix_blacklist import RegistrationDisallowedSuffixError
 from src.core.pipeline.context import PipelineContext
 from src.core.pipeline.definitions import PipelineDefinition, StepDefinition
 from src.core.pipeline.registry import PIPELINE_REGISTRY, register_pipeline
@@ -246,7 +247,10 @@ class CodexgenPipelineRuntime:
             )
             if response.status_code == 200:
                 return True
-        except Exception:
+            self._engine._raise_if_registration_disallowed(response)  # noqa: SLF001
+        except Exception as exc:
+            if isinstance(exc, RegistrationDisallowedSuffixError):
+                raise
             pass
 
         try:
@@ -259,8 +263,12 @@ class CodexgenPipelineRuntime:
                 },
                 data=body,
             )
+            if response.status_code != 200:
+                self._engine._raise_if_registration_disallowed(response)  # noqa: SLF001
             return response.status_code == 200
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, RegistrationDisallowedSuffixError):
+                raise
             return False
 
     def run_prepare_token_acquisition_step(self) -> dict[str, Any]:

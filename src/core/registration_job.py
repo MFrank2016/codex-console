@@ -8,6 +8,7 @@ from typing import Any, Callable
 from ..config.constants import EmailServiceType
 from ..config.settings import get_settings
 from .time import utc_now_naive
+from .email_suffix_blacklist import RegistrationDisallowedSuffixError
 from .pipeline import PipelineContext, PipelineRunner
 from .pipeline.registry import get_pipeline
 from .pipeline.steps.codexgen import build_codexgen_runtime
@@ -202,125 +203,163 @@ def run_registration_job(
     known_email: str | None = None
     known_service_id: int | None = email_service_id
     known_result_payload: dict[str, Any] | None = None
-    engine: RegistrationEngine | None = None
-    try:
-        service_type, config, resolved_service_id = _resolve_email_service(
-            db=db,
-            email_service_type=email_service_type,
-            email_service_id=email_service_id,
-            proxy=proxy,
-            email_service_config=email_service_config,
-        )
-        known_service_id = resolved_service_id if resolved_service_id is not None else known_service_id
+    max_retries = max(int(get_settings().registration_max_retries or 0), 0)
 
-        email_service = EmailServiceFactory.create(service_type, config)
-        if pipeline_key == "codexgen_pipeline":
-            account, result_payload = _run_pipeline_registration(
+    for attempt in range(max_retries + 1):
+        engine: RegistrationEngine | None = None
+        try:
+            service_type, config, resolved_service_id = _resolve_email_service(
                 db=db,
-                pipeline_key=pipeline_key,
-                email_service=email_service,
+                email_service_type=email_service_type,
+                email_service_id=email_service_id,
                 proxy=proxy,
-                callback_logger=callback_logger,
-                task_step_callback=task_step_callback,
-                task_uuid=task_uuid,
-                resolved_service_id=resolved_service_id,
+                email_service_config=email_service_config,
             )
-            known_email = (result_payload or {}).get("email") or known_email
-            known_result_payload = result_payload
-            if not account:
-                _update_registration_task_failure(
+            known_service_id = resolved_service_id if resolved_service_id is not None else known_service_id
+
+            email_service = EmailServiceFactory.create(service_type, config)
+            if pipeline_key == "codexgen_pipeline":
+                account, result_payload = _run_pipeline_registration(
+                    db=db,
+                    pipeline_key=pipeline_key,
+                    email_service=email_service,
+                    proxy=proxy,
+                    callback_logger=callback_logger,
+                    task_step_callback=task_step_callback,
+                    task_uuid=task_uuid,
+                    resolved_service_id=resolved_service_id,
+                )
+                known_email = (result_payload or {}).get("email") or known_email
+                known_result_payload = result_payload
+                if not account:
+                    _update_registration_task_failure(
+                        db,
+                        task_uuid=task_uuid,
+                        error_message=(result_payload or {}).get("error_message") or "注册失败",
+                        email=(result_payload or {}).get("email"),
+                        result_payload=result_payload,
+                        email_service_id=resolved_service_id,
+                    )
+                    return RegistrationJobResult(
+                        success=False,
+                        email=(result_payload or {}).get("email"),
+                        error_message=(result_payload or {}).get("error_message") or "注册失败",
+                        email_service_id=resolved_service_id,
+                        result_payload=result_payload,
+                    )
+                _update_registration_task_success(
                     db,
                     task_uuid=task_uuid,
-                    error_message=(result_payload or {}).get("error_message") or "注册失败",
-                    email=(result_payload or {}).get("email"),
+                    email=account.email,
                     result_payload=result_payload,
                     email_service_id=resolved_service_id,
                 )
-                return RegistrationJobResult(
-                    success=False,
-                    email=(result_payload or {}).get("email"),
-                    error_message=(result_payload or {}).get("error_message") or "注册失败",
-                    email_service_id=resolved_service_id,
-                    result_payload=result_payload,
+            else:
+                engine = RegistrationEngine(
+                    email_service=email_service,
+                    proxy_url=proxy,
+                    callback_logger=callback_logger,
+                    task_uuid=task_uuid,
                 )
-            _update_registration_task_success(
+                result = engine.run()
+                result_payload = result.to_dict()
+                known_email = result.email or known_email
+                known_result_payload = result_payload
+
+                if not result.success:
+                    engine.flush_task_logs()
+                    return RegistrationJobResult(
+                        success=False,
+                        email=result.email or None,
+                        error_message=result.error_message or "注册失败",
+                        email_service_id=resolved_service_id,
+                        result_payload=result_payload,
+                    )
+
+                if not engine.save_to_database(result):
+                    return RegistrationJobResult(
+                        success=False,
+                        email=result.email or None,
+                        error_message="保存注册账号到数据库失败",
+                        email_service_id=resolved_service_id,
+                        result_payload=result_payload,
+                    )
+
+                db.expire_all()
+                account = db.query(Account).filter(Account.email == result.email).first()
+                if not account:
+                    return RegistrationJobResult(
+                        success=False,
+                        email=result.email or None,
+                        error_message="注册成功但未找到已保存账号",
+                        email_service_id=resolved_service_id,
+                        result_payload=result_payload,
+                    )
+
+            if auto_upload:
+                logger.info("auto_upload is enabled but handled by caller")
+
+            return RegistrationJobResult(
+                success=True,
+                account_id=account.id,
+                email=account.email,
+                email_service_id=resolved_service_id,
+                result_payload=result_payload,
+            )
+        except RegistrationDisallowedSuffixError as exc:
+            if engine is not None:
+                engine.flush_task_logs()
+            known_email = exc.email or known_email
+            error_message = str(exc.detail or exc) or "注册异常"
+
+            if exc.suffix:
+                crud.upsert_auto_blacklist_suffix(
+                    db,
+                    exc.suffix,
+                    reason=error_message,
+                )
+                if callback_logger:
+                    callback_logger(f"已将邮箱后缀加入黑名单: {exc.suffix}")
+
+            if attempt < max_retries:
+                if callback_logger:
+                    callback_logger("当前任务将使用新邮箱重新尝试注册")
+                continue
+
+            _update_registration_task_failure(
                 db,
                 task_uuid=task_uuid,
-                email=account.email,
-                result_payload=result_payload,
-                email_service_id=resolved_service_id,
+                error_message=error_message,
+                email=known_email,
+                result_payload=known_result_payload,
+                email_service_id=known_service_id,
             )
-        else:
-            engine = RegistrationEngine(
-                email_service=email_service,
-                proxy_url=proxy,
-                callback_logger=callback_logger,
-                task_uuid=task_uuid,
+            return RegistrationJobResult(
+                success=False,
+                email=known_email,
+                email_service_id=known_service_id,
+                error_message=error_message,
+                result_payload=known_result_payload,
             )
-            result = engine.run()
-            result_payload = result.to_dict()
-            known_email = result.email or known_email
-            known_result_payload = result_payload
-
-            if not result.success:
+        except Exception as exc:
+            logger.error("run_registration_job failed: %s", exc)
+            if engine is not None:
                 engine.flush_task_logs()
-                return RegistrationJobResult(
-                    success=False,
-                    email=result.email or None,
-                    error_message=result.error_message or "注册失败",
-                    email_service_id=resolved_service_id,
-                    result_payload=result_payload,
-                )
-
-            if not engine.save_to_database(result):
-                return RegistrationJobResult(
-                    success=False,
-                    email=result.email or None,
-                    error_message="保存注册账号到数据库失败",
-                    email_service_id=resolved_service_id,
-                    result_payload=result_payload,
-                )
-
-            db.expire_all()
-            account = db.query(Account).filter(Account.email == result.email).first()
-            if not account:
-                return RegistrationJobResult(
-                    success=False,
-                    email=result.email or None,
-                    error_message="注册成功但未找到已保存账号",
-                    email_service_id=resolved_service_id,
-                    result_payload=result_payload,
-                )
-
-        if auto_upload:
-            logger.info("auto_upload is enabled but handled by caller")
-
-        return RegistrationJobResult(
-            success=True,
-            account_id=account.id,
-            email=account.email,
-            email_service_id=resolved_service_id,
-            result_payload=result_payload,
-        )
-    except Exception as exc:
-        logger.error("run_registration_job failed: %s", exc)
-        if engine is not None:
-            engine.flush_task_logs()
-        _update_registration_task_failure(
-            db,
-            task_uuid=task_uuid,
-            error_message=str(exc) or "注册异常",
-            email=known_email,
-            result_payload=known_result_payload,
-            email_service_id=known_service_id,
-        )
-        return RegistrationJobResult(
-            success=False,
-            email=known_email,
-            email_service_id=known_service_id,
-            error_message=str(exc) or "注册异常",
-            result_payload=known_result_payload,
-        )
+            _update_registration_task_failure(
+                db,
+                task_uuid=task_uuid,
+                error_message=str(exc) or "注册异常",
+                email=known_email,
+                result_payload=known_result_payload,
+                email_service_id=known_service_id,
+            )
+            return RegistrationJobResult(
+                success=False,
+                email=known_email,
+                email_service_id=known_service_id,
+                error_message=str(exc) or "注册异常",
+                result_payload=known_result_payload,
+            )
 
 
 def _run_pipeline_registration(
