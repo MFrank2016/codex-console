@@ -181,6 +181,25 @@ function initEventListeners() {
     if (elements.registrationForm) {
         elements.registrationForm.addEventListener('submit', handleSaveRegistration);
     }
+    if (elements.addEmailSuffixBlacklistBtn) {
+        elements.addEmailSuffixBlacklistBtn.addEventListener('click', () => openEmailSuffixBlacklistModal());
+    }
+    if (elements.closeEmailSuffixBlacklistModal) {
+        elements.closeEmailSuffixBlacklistModal.addEventListener('click', closeEmailSuffixBlacklistModal);
+    }
+    if (elements.cancelEmailSuffixBlacklistBtn) {
+        elements.cancelEmailSuffixBlacklistBtn.addEventListener('click', closeEmailSuffixBlacklistModal);
+    }
+    if (elements.emailSuffixBlacklistModal) {
+        elements.emailSuffixBlacklistModal.addEventListener('click', (e) => {
+            if (e.target === elements.emailSuffixBlacklistModal) {
+                closeEmailSuffixBlacklistModal();
+            }
+        });
+    }
+    if (elements.emailSuffixBlacklistForm) {
+        elements.emailSuffixBlacklistForm.addEventListener('submit', handleSaveEmailSuffixBlacklist);
+    }
 
     // 备份数据库
     if (elements.backupBtn) {
@@ -609,6 +628,133 @@ async function handleSaveRegistration(e) {
         toast.success('注册配置已保存');
     } catch (error) {
         toast.error('保存失败: ' + error.message);
+    }
+}
+
+function normalizeEmailSuffixInput(value) {
+    if (typeof value !== 'string') return '';
+    return value.trim().toLowerCase().replace(/^@+/, '');
+}
+
+async function loadEmailSuffixBlacklist() {
+    if (!elements.emailSuffixBlacklistTable) return;
+    try {
+        const result = await api.get('/settings/email-suffix-blacklist');
+        const items = Array.isArray(result) ? result : (result.items || []);
+        renderEmailSuffixBlacklist(items);
+    } catch (error) {
+        elements.emailSuffixBlacklistTable.innerHTML = `
+            <tr>
+                <td colspan="5" style="text-align:center;color:var(--danger-color);padding:20px;">加载失败: ${escapeHtml(error.message || '未知错误')}</td>
+            </tr>
+        `;
+    }
+}
+
+function renderEmailSuffixBlacklist(items) {
+    if (!elements.emailSuffixBlacklistTable) return;
+    emailSuffixBlacklistItems = Array.isArray(items) ? items : [];
+    if (emailSuffixBlacklistItems.length === 0) {
+        elements.emailSuffixBlacklistTable.innerHTML = `
+            <tr>
+                <td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">暂无黑名单后缀，点击「添加后缀」新增</td>
+            </tr>
+        `;
+        return;
+    }
+    elements.emailSuffixBlacklistTable.innerHTML = emailSuffixBlacklistItems.map(item => `
+        <tr>
+            <td>${item.id ?? '-'}</td>
+            <td>${escapeHtml(item.suffix || '')}</td>
+            <td>${item.enabled ? '✅ 已启用' : '⭕ 已禁用'}</td>
+            <td>${escapeHtml(item.reason || '-')}</td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-secondary btn-sm" onclick="openEmailSuffixBlacklistModalById(${item.id})">编辑</button>
+                <button class="btn btn-secondary btn-sm" onclick="toggleEmailSuffixBlacklistItem(${item.id}, ${!item.enabled})">${item.enabled ? '禁用' : '启用'}</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteEmailSuffixBlacklistItem(${item.id})">删除</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function closeEmailSuffixBlacklistModal() {
+    if (!elements.emailSuffixBlacklistModal) return;
+    elements.emailSuffixBlacklistModal.classList.remove('active');
+}
+
+function openEmailSuffixBlacklistModal(item = null) {
+    if (!elements.emailSuffixBlacklistModal) return;
+    const record = item || null;
+    if (elements.emailSuffixBlacklistId) {
+        elements.emailSuffixBlacklistId.value = record?.id ? String(record.id) : '';
+    }
+    if (elements.emailSuffixBlacklistSuffix) {
+        elements.emailSuffixBlacklistSuffix.value = record?.suffix || '';
+    }
+    if (elements.emailSuffixBlacklistEnabled) {
+        elements.emailSuffixBlacklistEnabled.checked = record ? record.enabled !== false : true;
+    }
+    if (elements.emailSuffixBlacklistReason) {
+        elements.emailSuffixBlacklistReason.value = record?.reason || '';
+    }
+    if (elements.emailSuffixBlacklistModalTitle) {
+        elements.emailSuffixBlacklistModalTitle.textContent = record ? '编辑邮箱后缀黑名单' : '添加邮箱后缀黑名单';
+    }
+    elements.emailSuffixBlacklistModal.classList.add('active');
+}
+
+function openEmailSuffixBlacklistModalById(id) {
+    const target = emailSuffixBlacklistItems.find(item => String(item.id) === String(id));
+    openEmailSuffixBlacklistModal(target || null);
+}
+
+async function handleSaveEmailSuffixBlacklist(e) {
+    e.preventDefault();
+    const id = elements.emailSuffixBlacklistId?.value.trim() || '';
+    const suffix = normalizeEmailSuffixInput(elements.emailSuffixBlacklistSuffix?.value || '');
+    if (!suffix) {
+        toast.error('邮箱后缀不能为空');
+        return;
+    }
+    const payload = {
+        suffix,
+        enabled: !!elements.emailSuffixBlacklistEnabled?.checked,
+        reason: (elements.emailSuffixBlacklistReason?.value || '').trim(),
+    };
+    try {
+        if (id) {
+            await api.patch(`/settings/email-suffix-blacklist/${id}`, payload);
+            toast.success('黑名单项已更新');
+        } else {
+            await api.post('/settings/email-suffix-blacklist', payload);
+            toast.success('黑名单项已添加');
+        }
+        closeEmailSuffixBlacklistModal();
+        loadEmailSuffixBlacklist();
+    } catch (error) {
+        toast.error('保存失败: ' + error.message);
+    }
+}
+
+async function toggleEmailSuffixBlacklistItem(id, enabled) {
+    try {
+        await api.patch(`/settings/email-suffix-blacklist/${id}`, { enabled: !!enabled });
+        toast.success(enabled ? '已启用' : '已禁用');
+        loadEmailSuffixBlacklist();
+    } catch (error) {
+        toast.error('操作失败: ' + error.message);
+    }
+}
+
+async function deleteEmailSuffixBlacklistItem(id) {
+    const confirmed = await confirm('确定删除该黑名单后缀吗？');
+    if (!confirmed) return;
+    try {
+        await api.delete(`/settings/email-suffix-blacklist/${id}`);
+        toast.success('已删除');
+        loadEmailSuffixBlacklist();
+    } catch (error) {
+        toast.error('删除失败: ' + error.message);
     }
 }
 
