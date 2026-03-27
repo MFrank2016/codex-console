@@ -17,6 +17,11 @@ from curl_cffi import requests as cffi_requests
 
 from .openai.oauth import OAuthManager, OAuthStart
 from .http_client import OpenAIHTTPClient, HTTPClientError
+from .email_suffix_blacklist import (
+    RegistrationDisallowedSuffixError,
+    extract_email_suffix,
+    should_apply_email_suffix_blacklist,
+)
 from ..services import EmailServiceFactory, BaseEmailService, EmailServiceType
 from ..database import crud
 from ..database.session import get_db
@@ -195,23 +200,82 @@ class RegistrationEngine:
             self._log(f"检查 IP 地理位置失败: {e}", "error")
             return False, None
 
+    def _current_email_suffix(self) -> Optional[str]:
+        """获取当前邮箱后缀。"""
+        return extract_email_suffix(self.email or "")
+
+    def _should_apply_email_suffix_blacklist(self) -> bool:
+        """当前邮箱服务是否启用后缀黑名单拦截。"""
+        service_type = getattr(self.email_service, "service_type", None)
+        return should_apply_email_suffix_blacklist(service_type)
+
     def _create_email(self) -> bool:
         """创建邮箱"""
         try:
             self._log(f"正在创建 {self.email_service.service_type.value} 邮箱，先给新账号整个收件箱...")
-            self.email_info = self.email_service.create_email()
+            max_attempts = 10
+            should_apply_blacklist = self._should_apply_email_suffix_blacklist()
 
-            if not self.email_info or "email" not in self.email_info:
-                self._log("创建邮箱失败: 返回信息不完整", "error")
-                return False
+            for attempt in range(1, max_attempts + 1):
+                self.email_info = self.email_service.create_email()
 
-            self.email = self.email_info["email"]
-            self._log(f"邮箱已就位，地址新鲜出炉: {self.email}")
-            return True
+                if not self.email_info or "email" not in self.email_info:
+                    self._log("创建邮箱失败: 返回信息不完整", "error")
+                    return False
+
+                self.email = self.email_info["email"]
+                suffix = self._current_email_suffix()
+
+                if should_apply_blacklist and suffix:
+                    try:
+                        with get_db() as db:
+                            is_blacklisted = crud.is_email_suffix_blacklisted(db, suffix)
+                    except Exception as e:
+                        self._log(f"邮箱后缀黑名单检查失败，跳过拦截: {e}", "warning")
+                        is_blacklisted = False
+
+                    if is_blacklisted:
+                        self._log(
+                            f"邮箱后缀命中黑名单，丢弃并重试: {suffix} (第 {attempt}/{max_attempts} 次)",
+                            "warning",
+                        )
+                        self.email = None
+                        self.email_info = None
+                        continue
+
+                self._log(f"邮箱已就位，地址新鲜出炉: {self.email}")
+                return True
+
+            self._log("创建邮箱失败: 连续 10 次命中邮箱后缀黑名单", "error")
+            return False
 
         except Exception as e:
             self._log(f"创建邮箱失败: {e}", "error")
             return False
+
+    def _raise_if_registration_disallowed(self, response) -> None:
+        """若命中 registration_disallowed，抛出带后缀信息的异常。"""
+        try:
+            payload = response.json()
+        except Exception:
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            return
+
+        if error.get("code") != "registration_disallowed":
+            return
+
+        detail = str(error.get("message") or response.text or "registration disallowed")
+        raise RegistrationDisallowedSuffixError(
+            email=self.email,
+            suffix=self._current_email_suffix(),
+            detail=detail,
+        )
 
     def _start_oauth(self) -> bool:
         """开始 OAuth 流程"""
@@ -712,11 +776,14 @@ class RegistrationEngine:
             self._log(f"账户创建状态: {response.status_code}")
 
             if response.status_code != 200:
+                self._raise_if_registration_disallowed(response)
                 self._log(f"账户创建失败: {response.text[:200]}", "warning")
                 return False
 
             return True
 
+        except RegistrationDisallowedSuffixError:
+            raise
         except Exception as e:
             self._log(f"创建账户失败: {e}", "error")
             return False
