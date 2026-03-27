@@ -147,6 +147,7 @@ def test_scheduled_tasks_run_center_filter_panel_uses_shared_shell_classes():
     assert "scheduled-filter-toolbar" in template
     assert "scheduled-filter-title-group" in template
     assert "scheduled-filter-caption" in template
+    assert "北京时间" in template
     assert "filter-panel-grid" in template
     assert "filter-panel-grid--dense" in template
     assert template.count("scheduled-filter-field") >= 4

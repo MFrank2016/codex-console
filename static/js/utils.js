@@ -280,28 +280,66 @@ function throttle(func, limit) {
 // 格式化工具
 // ============================================
 
+const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';
+
+function parseDateInput(dateInput) {
+    if (!dateInput) return null;
+    if (dateInput instanceof Date) {
+        return Number.isNaN(dateInput.getTime()) ? null : dateInput;
+    }
+
+    const normalized = String(dateInput).trim();
+    if (!normalized) return null;
+
+    const hasExplicitTimeZone = /([zZ]|[+-]\d{2}:\d{2})$/.test(normalized);
+    const looksLikeDateTime = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(normalized);
+    const candidate = !hasExplicitTimeZone && looksLikeDateTime
+        ? `${normalized.replace(' ', 'T')}Z`
+        : normalized;
+
+    const date = new Date(candidate);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
 const format = {
     date(dateStr) {
         if (!dateStr) return '-';
-        const date = new Date(dateStr);
+        const date = parseDateInput(dateStr);
+        if (!date) return '-';
         return date.toLocaleString('zh-CN', {
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
             hour: '2-digit',
-            minute: '2-digit'
+            minute: '2-digit',
+            timeZone: SHANGHAI_TIME_ZONE,
         });
     },
 
     dateShort(dateStr) {
         if (!dateStr) return '-';
-        const date = new Date(dateStr);
-        return date.toLocaleDateString('zh-CN');
+        const date = parseDateInput(dateStr);
+        if (!date) return '-';
+        return date.toLocaleDateString('zh-CN', {
+            timeZone: SHANGHAI_TIME_ZONE,
+        });
+    },
+
+    time(dateStr = new Date()) {
+        const date = parseDateInput(dateStr);
+        if (!date) return '-';
+        return date.toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            timeZone: SHANGHAI_TIME_ZONE,
+        });
     },
 
     relativeTime(dateStr) {
         if (!dateStr) return '-';
-        const date = new Date(dateStr);
+        const date = parseDateInput(dateStr);
+        if (!date) return '-';
         const now = new Date();
         const diff = now - date;
         const seconds = Math.floor(diff / 1000);

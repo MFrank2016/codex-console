@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -62,6 +62,69 @@ def _compute_duration_seconds(run: ScheduledRun) -> float | None:
     return float((end_time - run.started_at).total_seconds())
 
 
+def _to_scheduler_display_time_from_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(SCHEDULER_TZ)
+
+
+def _to_scheduler_display_time_from_scheduler(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=SCHEDULER_TZ)
+    return value.astimezone(SCHEDULER_TZ)
+
+
+def _to_utc_naive_filter_time(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=SCHEDULER_TZ)
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _build_scheduled_plan_response(plan) -> ScheduledPlanResponse:
+    return ScheduledPlanResponse(
+        id=plan.id,
+        name=plan.name,
+        task_type=plan.task_type,
+        cpa_service_id=plan.cpa_service_id,
+        trigger_type=plan.trigger_type,
+        cron_expression=plan.cron_expression,
+        interval_value=plan.interval_value,
+        interval_unit=plan.interval_unit,
+        config=plan.config,
+        config_meta=plan.config_meta,
+        enabled=plan.enabled,
+        next_run_at=_to_scheduler_display_time_from_scheduler(plan.next_run_at),
+        last_run_started_at=_to_scheduler_display_time_from_utc(plan.last_run_started_at),
+        last_run_finished_at=_to_scheduler_display_time_from_utc(plan.last_run_finished_at),
+        last_run_status=plan.last_run_status,
+        last_success_at=_to_scheduler_display_time_from_utc(plan.last_success_at),
+        auto_disabled_reason=plan.auto_disabled_reason,
+        created_at=_to_scheduler_display_time_from_utc(plan.created_at),
+        updated_at=_to_scheduler_display_time_from_utc(plan.updated_at),
+    )
+
+
+def _build_scheduled_run_response(run: ScheduledRun) -> ScheduledRunResponse:
+    return ScheduledRunResponse(
+        id=run.id,
+        plan_id=run.plan_id,
+        trigger_source=run.trigger_source,
+        status=run.status,
+        started_at=_to_scheduler_display_time_from_utc(run.started_at),
+        finished_at=_to_scheduler_display_time_from_utc(run.finished_at),
+        summary=run.summary,
+        error_message=run.error_message,
+        logs=run.logs,
+        created_at=_to_scheduler_display_time_from_utc(run.created_at),
+    )
+
+
 def _build_scheduled_run_list_item(run: ScheduledRun) -> ScheduledRunListItemResponse:
     plan_name = run.plan.name if run.plan is not None else None
     task_type = run.task_type or (run.plan.task_type if run.plan is not None else "cpa_cleanup")
@@ -72,11 +135,11 @@ def _build_scheduled_run_list_item(run: ScheduledRun) -> ScheduledRunListItemRes
         task_type=task_type,
         trigger_source=run.trigger_source,
         status=run.status,
-        started_at=run.started_at,
-        finished_at=run.finished_at,
+        started_at=_to_scheduler_display_time_from_utc(run.started_at),
+        finished_at=_to_scheduler_display_time_from_utc(run.finished_at),
         duration_seconds=_compute_duration_seconds(run),
-        stop_requested_at=run.stop_requested_at,
-        last_log_at=run.last_log_at,
+        stop_requested_at=_to_scheduler_display_time_from_utc(run.stop_requested_at),
+        last_log_at=_to_scheduler_display_time_from_utc(run.last_log_at),
         summary=run.summary,
         error_message=run.error_message,
         can_stop=_can_stop_run(run),
@@ -124,14 +187,16 @@ async def list_all_scheduled_runs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
 ):
+    started_after = _to_utc_naive_filter_time(started_from)
+    started_before = _to_utc_naive_filter_time(started_to)
     with get_db() as db:
         total = crud.count_scheduled_runs(
             db,
             plan_id=plan_id,
             task_type=task_type,
             status=status,
-            started_after=started_from,
-            started_before=started_to,
+            started_after=started_after,
+            started_before=started_before,
         )
         total_pages = max(1, (total + page_size - 1) // page_size)
         normalized_page = min(page, total_pages)
@@ -141,8 +206,8 @@ async def list_all_scheduled_runs(
             plan_id=plan_id,
             task_type=task_type,
             status=status,
-            started_after=started_from,
-            started_before=started_to,
+            started_after=started_after,
+            started_before=started_before,
             skip=skip,
             limit=page_size,
         )
@@ -174,16 +239,16 @@ async def get_scheduled_run_detail(run_id: int):
             task_type=task_type,
             trigger_source=run.trigger_source,
             status=run.status,
-            started_at=run.started_at,
-            finished_at=run.finished_at,
+            started_at=_to_scheduler_display_time_from_utc(run.started_at),
+            finished_at=_to_scheduler_display_time_from_utc(run.finished_at),
             duration_seconds=_compute_duration_seconds(run),
             summary=run.summary,
             error_message=run.error_message,
-            stop_requested_at=run.stop_requested_at,
+            stop_requested_at=_to_scheduler_display_time_from_utc(run.stop_requested_at),
             stop_requested_by=run.stop_requested_by,
             stop_reason=run.stop_reason,
             log_version=int(run.log_version or 0),
-            last_log_at=run.last_log_at,
+            last_log_at=_to_scheduler_display_time_from_utc(run.last_log_at),
             is_running=_is_run_running(run),
             can_stop=_can_stop_run(run),
         )
@@ -212,9 +277,9 @@ async def get_scheduled_run_logs_chunk(
             chunk=str(chunk["content"]),
             has_more=bool(chunk["has_more"]),
             is_running=_is_run_running(run),
-            stop_requested_at=run.stop_requested_at,
+            stop_requested_at=_to_scheduler_display_time_from_utc(run.stop_requested_at),
             log_version=int(chunk["log_version"]),
-            last_log_at=chunk["last_log_at"],
+            last_log_at=_to_scheduler_display_time_from_utc(chunk["last_log_at"]),
         )
 
 
@@ -289,7 +354,7 @@ async def create_scheduled_plan(request: ScheduledPlanCreate):
                 enabled=request.enabled,
                 next_run_at=next_run_at,
             )
-            return ScheduledPlanResponse.model_validate(plan)
+            return _build_scheduled_plan_response(plan)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -340,7 +405,7 @@ async def update_scheduled_plan(plan_id: int, request: ScheduledPlanUpdate):
         updated = crud.update_scheduled_plan(db, plan_id, **update_values)
         if updated is None:
             raise HTTPException(status_code=404, detail="定时计划不存在")
-        return ScheduledPlanResponse.model_validate(updated)
+        return _build_scheduled_plan_response(updated)
 
 
 @router.get("", response_model=ScheduledPlanListResponse)
@@ -355,7 +420,7 @@ async def list_scheduled_plans(
             cpa_service_id=cpa_service_id,
         )
         return ScheduledPlanListResponse(
-            items=[ScheduledPlanResponse.model_validate(plan) for plan in plans],
+            items=[_build_scheduled_plan_response(plan) for plan in plans],
             total=len(plans),
         )
 
@@ -374,7 +439,7 @@ async def list_scheduled_runs(plan_id: int, limit: int = Query(20, ge=1, le=200)
             .limit(limit)
             .all()
         )
-        return ScheduledRunListResponse(runs=[ScheduledRunResponse.model_validate(run) for run in runs])
+        return ScheduledRunListResponse(runs=[_build_scheduled_run_response(run) for run in runs])
 
 
 @router.get("/runs/{run_id}/logs", response_model=ScheduledRunLogsResponse)
@@ -408,7 +473,7 @@ async def enable_scheduled_plan(plan_id: int):
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="定时计划不存在")
-        return ScheduledPlanResponse.model_validate(updated)
+        return _build_scheduled_plan_response(updated)
 
 
 @router.post("/{plan_id}/disable", response_model=ScheduledPlanResponse)
@@ -427,7 +492,7 @@ async def disable_scheduled_plan(plan_id: int):
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="定时计划不存在")
-        return ScheduledPlanResponse.model_validate(updated)
+        return _build_scheduled_plan_response(updated)
 
 
 @router.post("/{plan_id}/run")

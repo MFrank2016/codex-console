@@ -587,6 +587,65 @@
                             </form>
                         </div>
                     </div>
+
+                    <div class="card" style="margin-top: var(--spacing-lg);">
+                        <div class="card-header">
+                            <h3>邮箱后缀黑名单</h3>
+                            <button type="button" class="btn btn-primary btn-sm" id="add-email-suffix-blacklist-btn">+ 添加后缀</button>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <div class="table-container table-shell">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 80px;">ID</th>
+                                            <th>邮箱后缀</th>
+                                            <th style="width: 120px;">状态</th>
+                                            <th>原因</th>
+                                            <th style="width: 220px;">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="email-suffix-blacklist-table">
+                                        <tr>
+                                            <td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal" id="email-suffix-blacklist-modal">
+                        <div class="modal-content" style="max-width: 520px;">
+                            <div class="modal-header">
+                                <h3 id="email-suffix-blacklist-modal-title">添加邮箱后缀黑名单</h3>
+                                <button type="button" class="modal-close" id="close-email-suffix-blacklist-modal">×</button>
+                            </div>
+                            <div class="modal-body">
+                                <form id="email-suffix-blacklist-form">
+                                    <input type="hidden" id="email-suffix-blacklist-id">
+                                    <div class="form-group">
+                                        <label for="email-suffix-blacklist-suffix">邮箱后缀</label>
+                                        <input type="text" id="email-suffix-blacklist-suffix" placeholder="@example.com 或 example.com" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="email-suffix-blacklist-reason">原因</label>
+                                        <textarea id="email-suffix-blacklist-reason" rows="3" placeholder="例如：高风险域名"></textarea>
+                                    </div>
+                                    <div class="form-group">
+                                        <label style="display:flex;align-items:center;gap:8px;">
+                                            <input type="checkbox" id="email-suffix-blacklist-enabled" checked>
+                                            启用
+                                        </label>
+                                    </div>
+                                    <div class="form-actions">
+                                        <button type="button" class="btn btn-secondary" id="cancel-email-suffix-blacklist-btn">取消</button>
+                                        <button type="submit" class="btn btn-primary">💾 保存</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="tab-content" id="email-code-tab">

@@ -100,12 +100,25 @@ const elements = {
     // Outlook 设置
     outlookSettingsForm: document.getElementById('outlook-settings-form'),
     // Web UI 访问控制
-    webuiSettingsForm: document.getElementById('webui-settings-form')
+    webuiSettingsForm: document.getElementById('webui-settings-form'),
+    // 邮箱后缀黑名单
+    addEmailSuffixBlacklistBtn: document.getElementById('add-email-suffix-blacklist-btn'),
+    emailSuffixBlacklistTable: document.getElementById('email-suffix-blacklist-table'),
+    emailSuffixBlacklistModal: document.getElementById('email-suffix-blacklist-modal'),
+    closeEmailSuffixBlacklistModal: document.getElementById('close-email-suffix-blacklist-modal'),
+    cancelEmailSuffixBlacklistBtn: document.getElementById('cancel-email-suffix-blacklist-btn'),
+    emailSuffixBlacklistModalTitle: document.getElementById('email-suffix-blacklist-modal-title'),
+    emailSuffixBlacklistForm: document.getElementById('email-suffix-blacklist-form'),
+    emailSuffixBlacklistId: document.getElementById('email-suffix-blacklist-id'),
+    emailSuffixBlacklistSuffix: document.getElementById('email-suffix-blacklist-suffix'),
+    emailSuffixBlacklistEnabled: document.getElementById('email-suffix-blacklist-enabled'),
+    emailSuffixBlacklistReason: document.getElementById('email-suffix-blacklist-reason')
 };
 
 // 选中的服务 ID
 let selectedServiceIds = new Set();
 let selectedProxyIds = new Set();
+let emailSuffixBlacklistItems = [];
 
 function getDefaultProxyFilters() {
     return {
@@ -133,6 +146,7 @@ let dynamicProxyAdvancedConfigLoaded = false;
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     loadSettings();
+    loadEmailSuffixBlacklist();
     loadEmailServices();
     loadDatabaseInfo();
     loadProxies();
