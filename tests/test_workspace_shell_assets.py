@@ -40,6 +40,11 @@ def test_workspace_components_stylesheet_defines_shared_foundation_selectors():
     assert ".drawer" in stylesheet
 
 
+def test_workspace_components_stylesheet_stays_shared_without_scheduled_page_specific_selectors():
+    stylesheet = Path("static/css/workspace_components.css").read_text(encoding="utf-8")
+    assert "scheduled-" not in stylesheet
+
+
 def test_workspace_script_defines_sidebar_and_theme_helpers():
     script = Path("static/js/workspace.js").read_text(encoding="utf-8")
     assert "WORKSPACE_SIDEBAR_STORAGE_KEY" in script
