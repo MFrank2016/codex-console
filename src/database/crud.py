@@ -447,13 +447,18 @@ def list_email_suffix_blacklist(
     return query.order_by(desc(EmailSuffixBlacklist.id)).all()
 
 
+def get_email_suffix_blacklist_by_id(db: Session, row_id: int) -> Optional[EmailSuffixBlacklist]:
+    """按 ID 获取邮箱后缀黑名单记录。"""
+    return db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.id == row_id).first()
+
+
 def update_email_suffix_blacklist(
     db: Session,
     row_id: int,
     **kwargs,
 ) -> Optional[EmailSuffixBlacklist]:
     """更新邮箱后缀黑名单记录。"""
-    row = db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.id == row_id).first()
+    row = get_email_suffix_blacklist_by_id(db, row_id)
     if not row:
         return None
 
@@ -476,7 +481,7 @@ def update_email_suffix_blacklist(
 
 def delete_email_suffix_blacklist(db: Session, row_id: int) -> bool:
     """删除邮箱后缀黑名单记录。"""
-    row = db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.id == row_id).first()
+    row = get_email_suffix_blacklist_by_id(db, row_id)
     if not row:
         return False
     db.delete(row)

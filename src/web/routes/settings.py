@@ -9,9 +9,11 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 
 from ...application import SettingsService
 from ...config.settings import get_settings
+from ...core.email_suffix_blacklist import normalize_email_suffix
 from ...core.dynamic_proxy import (
     build_dynamic_proxy_request,
     fetch_dynamic_proxy,
@@ -88,7 +90,32 @@ class AllSettings(BaseModel):
     webui: WebUISettings
 
 
+class EmailSuffixBlacklistCreateRequest(BaseModel):
+    suffix: str
+    enabled: bool = True
+    reason: str | None = None
+
+
+class EmailSuffixBlacklistUpdateRequest(BaseModel):
+    suffix: str | None = None
+    enabled: bool | None = None
+    reason: str | None = None
+
+
 # ============== API Endpoints ==============
+
+
+def _normalize_blacklist_suffix_or_400(raw_suffix: str) -> str:
+    text = str(raw_suffix or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="邮箱后缀不能为空")
+    if "@" in text and not text.startswith("@"):
+        raise HTTPException(status_code=400, detail="请输入邮箱后缀，不要填写完整邮箱")
+
+    normalized = normalize_email_suffix(text)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="邮箱后缀不能为空")
+    return normalized
 
 @router.get("")
 async def get_all_settings():
@@ -934,6 +961,77 @@ async def disable_proxy(proxy_id: int):
         if not proxy:
             raise HTTPException(status_code=404, detail="代理不存在")
         return {"success": True, "message": "代理已禁用"}
+
+
+# ============== 邮箱后缀黑名单设置 ==============
+
+
+@router.get("/email-suffix-blacklist")
+async def get_email_suffix_blacklist(
+    keyword: str | None = None,
+    enabled: bool | None = None,
+):
+    with get_db() as db:
+        rows = crud.list_email_suffix_blacklist(
+            db,
+            keyword=keyword,
+            enabled=enabled,
+        )
+    items = [row.to_dict() for row in rows]
+    return {
+        "total": len(items),
+        "items": items,
+    }
+
+
+@router.post("/email-suffix-blacklist")
+async def create_email_suffix_blacklist(request: EmailSuffixBlacklistCreateRequest):
+    normalized_suffix = _normalize_blacklist_suffix_or_400(request.suffix)
+
+    with get_db() as db:
+        try:
+            row = crud.create_email_suffix_blacklist(
+                db,
+                suffix=normalized_suffix,
+                enabled=request.enabled,
+                reason=request.reason,
+            )
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="邮箱后缀已存在")
+
+    return {"success": True, "item": row.to_dict()}
+
+
+@router.patch("/email-suffix-blacklist/{row_id}")
+async def patch_email_suffix_blacklist(
+    row_id: int,
+    request: EmailSuffixBlacklistUpdateRequest,
+):
+    update_data = request.model_dump(exclude_unset=True)
+    if "suffix" in update_data:
+        update_data["suffix"] = _normalize_blacklist_suffix_or_400(update_data["suffix"])
+
+    with get_db() as db:
+        try:
+            row = crud.update_email_suffix_blacklist(db, row_id, **update_data)
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="邮箱后缀已存在")
+
+        if not row:
+            raise HTTPException(status_code=404, detail="记录不存在")
+
+    return {"success": True, "item": row.to_dict()}
+
+
+@router.delete("/email-suffix-blacklist/{row_id}")
+async def remove_email_suffix_blacklist(row_id: int):
+    with get_db() as db:
+        deleted = crud.delete_email_suffix_blacklist(db, row_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"success": True}
 
 
 # ============== Outlook 设置 ==============

@@ -125,6 +125,20 @@ class EmailSuffixBlacklist(Base):
     created_at = Column(DateTime, default=_utc_now_naive)
     updated_at = Column(DateTime, default=_utc_now_naive, onupdate=_utc_now_naive)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典。"""
+        return {
+            "id": self.id,
+            "suffix": self.suffix,
+            "enabled": self.enabled,
+            "source": self.source,
+            "reason": self.reason,
+            "hit_count": self.hit_count,
+            "last_hit_at": self.last_hit_at.isoformat() if self.last_hit_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 
 class RegistrationTask(Base):
     """注册任务表"""
