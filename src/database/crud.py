@@ -411,8 +411,12 @@ def create_email_suffix_blacklist(
     reason: Optional[str] = None,
 ) -> EmailSuffixBlacklist:
     """创建邮箱后缀黑名单记录。"""
+    normalized_suffix = normalize_email_suffix(suffix)
+    if not normalized_suffix:
+        raise ValueError("suffix is empty")
+
     row = EmailSuffixBlacklist(
-        suffix=normalize_email_suffix(suffix),
+        suffix=normalized_suffix,
         enabled=enabled,
         source=source,
         reason=reason,
@@ -453,11 +457,15 @@ def update_email_suffix_blacklist(
     if not row:
         return None
 
+    allowed_fields = {"suffix", "enabled", "source", "reason"}
     for key, value in kwargs.items():
-        if not hasattr(row, key):
+        if key not in allowed_fields:
             continue
         if key == "suffix":
-            setattr(row, key, normalize_email_suffix(value))
+            normalized_suffix = normalize_email_suffix(value)
+            if not normalized_suffix:
+                raise ValueError("suffix is empty")
+            setattr(row, key, normalized_suffix)
             continue
         setattr(row, key, value)
 

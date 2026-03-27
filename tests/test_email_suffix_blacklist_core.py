@@ -4,6 +4,7 @@ from src.core.email_suffix_blacklist import extract_email_suffix, normalize_emai
 from src.database.crud import (
     create_email_suffix_blacklist,
     is_email_suffix_blacklisted,
+    update_email_suffix_blacklist,
     upsert_auto_blacklist_suffix,
 )
 from src.database.models import Base
@@ -61,3 +62,34 @@ def test_is_email_suffix_blacklisted_only_matches_enabled_record(temp_db):
 
     assert is_email_suffix_blacklisted(temp_db, "blocked.com") is True
     assert is_email_suffix_blacklisted(temp_db, "disabled.com") is False
+
+
+def test_create_email_suffix_blacklist_rejects_empty_normalized_suffix(temp_db):
+    with pytest.raises(ValueError, match="suffix is empty"):
+        create_email_suffix_blacklist(temp_db, suffix="   ")
+
+
+def test_update_email_suffix_blacklist_ignores_non_whitelist_field_and_rejects_empty_suffix(temp_db):
+    row = create_email_suffix_blacklist(
+        temp_db,
+        suffix="blocked.com",
+        enabled=True,
+        source="manual",
+        reason="seed",
+    )
+    row.hit_count = 3
+    temp_db.commit()
+    temp_db.refresh(row)
+
+    updated = update_email_suffix_blacklist(
+        temp_db,
+        row.id,
+        hit_count=99,
+        reason="updated",
+    )
+    assert updated is not None
+    assert updated.hit_count == 3
+    assert updated.reason == "updated"
+
+    with pytest.raises(ValueError, match="suffix is empty"):
+        update_email_suffix_blacklist(temp_db, row.id, suffix="   ")
