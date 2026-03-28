@@ -33,6 +33,49 @@ def test_registration_runs_service_creates_run_and_appends_events(temp_db):
     assert events[0].message == "queued"
 
 
+def test_registration_runs_service_supports_service_owned_commit_boundaries(temp_db):
+    service = RegistrationRunsService(temp_db)
+
+    transient = service.create_run(
+        task_uuid="task-boundary-transient",
+        batch_id="batch-x",
+        trigger_source="manual",
+        commit=False,
+    )
+    temp_db.rollback()
+
+    assert service.get_run(transient.id) is None
+
+    persisted = service.create_run(
+        task_uuid="task-boundary-persisted",
+        batch_id="batch-y",
+        trigger_source="manual",
+        commit=True,
+    )
+    service.append_event(
+        persisted.id,
+        level="info",
+        message="uncommitted-event",
+        commit=False,
+    )
+    temp_db.rollback()
+
+    assert service.get_run(persisted.id) is not None
+    assert service.get_events(persisted.id) == []
+
+    service.append_event(
+        persisted.id,
+        level="info",
+        message="committed-event",
+        commit=True,
+    )
+    temp_db.rollback()
+
+    events = service.get_events(persisted.id)
+    assert len(events) == 1
+    assert events[0].message == "committed-event"
+
+
 def test_registration_runs_service_marks_running_and_completed(temp_db):
     service = RegistrationRunsService(temp_db)
 
@@ -45,14 +88,34 @@ def test_registration_runs_service_marks_running_and_completed(temp_db):
     assert updated.completed_at is not None
 
 
+def test_registration_runs_service_mark_started_is_idempotent(temp_db):
+    service = RegistrationRunsService(temp_db)
+
+    run = service.create_run(task_uuid="task-started-1", batch_id=None, trigger_source="manual", commit=True)
+    first = service.mark_started(run.id, commit=True)
+    second = service.mark_started(run.id, commit=True)
+
+    assert first is not None
+    assert first.status == "pending"
+    assert first.started_at is not None
+    assert second.started_at == first.started_at
+    assert second.status == "pending"
+
+
 def test_registration_runs_service_terminal_status_is_immutable(temp_db):
     service = RegistrationRunsService(temp_db)
 
-    run = service.create_run(task_uuid="task-3", batch_id=None, trigger_source="manual")
-    service.mark_completed(run.id)
-    updated = service.mark_failed(run.id, error_message="ignored")
+    run = service.create_run(task_uuid="task-3", batch_id=None, trigger_source="manual", commit=True)
+    completed = service.mark_completed(run.id, commit=True)
+    service.mark_started(run.id, commit=True)
+    service.mark_running(run.id, commit=True)
+    service.mark_failed(run.id, error_message="ignored", commit=True)
+    updated = service.mark_cancelled(run.id, error_message="ignored-too", commit=True)
 
     assert updated.status == "completed"
+    assert completed is not None
+    assert updated.completed_at == completed.completed_at
+    assert updated.started_at == completed.started_at
     assert updated.error_message in (None, "")
 
 

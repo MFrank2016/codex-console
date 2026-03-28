@@ -3,14 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from ..core.time import utc_now_naive
-from ..database.repositories.registration_repository import (
-    append_registration_run_event,
-    create_registration_run,
-    get_registration_run_by_id,
-    get_registration_run_by_task_uuid,
-    list_registration_run_events,
-    update_registration_run,
-)
+from ..database.repositories.registration_repository import RegistrationRepository
 
 
 class RegistrationRunsService:
@@ -18,91 +11,113 @@ class RegistrationRunsService:
 
     def __init__(self, session: Session):
         self.session = session
+        self.repository = RegistrationRepository(session)
 
-    def create_run(self, *, task_uuid: str, batch_id: str | None, trigger_source: str):
-        existing = get_registration_run_by_task_uuid(self.session, task_uuid)
+    def _persist(self, row, *, commit: bool = True):
+        if row is None:
+            return None
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
+        self.session.refresh(row)
+        return row
+
+    def create_run(
+        self,
+        *,
+        task_uuid: str,
+        batch_id: str | None,
+        trigger_source: str,
+        commit: bool = False,
+    ):
+        existing = self.repository.get_run_by_task_uuid(task_uuid)
         if existing is not None:
             return existing
-        run = create_registration_run(
-            self.session,
+        run = self.repository.create_run(
             task_uuid=task_uuid,
             batch_id=batch_id,
             trigger_source=trigger_source,
             status="pending",
         )
-        self.session.commit()
-        return run
+        return self._persist(run, commit=commit)
 
-    def append_event(self, run_id: int, *, level: str, message: str):
-        event = append_registration_run_event(
-            self.session,
+    def append_event(self, run_id: int, *, level: str, message: str, commit: bool = False):
+        event = self.repository.append_event(
             run_id=run_id,
             level=level,
             message=message,
             created_at=utc_now_naive(),
         )
-        self.session.commit()
-        return event
+        return self._persist(event, commit=commit)
 
-    def mark_running(self, run_id: int):
+    def mark_started(self, run_id: int, *, commit: bool = False):
         run = self.get_run(run_id)
         if run is None or run.status in self.TERMINAL_STATUSES:
+            return run
+        if run.started_at is not None:
+            return run
+        run = self.repository.update_run(run_id, started_at=utc_now_naive())
+        return self._persist(run, commit=commit)
+
+    def mark_running(self, run_id: int, *, commit: bool = False):
+        run = self.get_run(run_id)
+        if run is None or run.status in self.TERMINAL_STATUSES:
+            return run
+        if run.status == "running" and run.started_at is not None:
             return run
         started_at = run.started_at or utc_now_naive()
-        run = update_registration_run(self.session, run_id, status="running", started_at=started_at)
-        self.session.commit()
-        return run
+        run = self.repository.update_status_if_not_terminal(
+            run_id,
+            status="running",
+            started_at=started_at,
+        )
+        return self._persist(run, commit=commit)
 
-    def mark_completed(self, run_id: int):
+    def mark_completed(self, run_id: int, *, commit: bool = False):
         run = self.get_run(run_id)
         if run is None or run.status in self.TERMINAL_STATUSES:
             return run
-        run = update_registration_run(
-            self.session,
+        run = self.repository.update_status_if_not_terminal(
             run_id,
             status="completed",
             started_at=run.started_at or utc_now_naive(),
             completed_at=utc_now_naive(),
             error_message=None,
         )
-        self.session.commit()
-        return run
+        return self._persist(run, commit=commit)
 
-    def mark_failed(self, run_id: int, *, error_message: str | None = None):
+    def mark_failed(self, run_id: int, *, error_message: str | None = None, commit: bool = False):
         run = self.get_run(run_id)
         if run is None or run.status in self.TERMINAL_STATUSES:
             return run
-        run = update_registration_run(
-            self.session,
+        run = self.repository.update_status_if_not_terminal(
             run_id,
             status="failed",
             started_at=run.started_at or utc_now_naive(),
             completed_at=utc_now_naive(),
             error_message=error_message,
         )
-        self.session.commit()
-        return run
+        return self._persist(run, commit=commit)
 
-    def mark_cancelled(self, run_id: int, *, error_message: str | None = None):
+    def mark_cancelled(self, run_id: int, *, error_message: str | None = None, commit: bool = False):
         run = self.get_run(run_id)
         if run is None or run.status in self.TERMINAL_STATUSES:
             return run
-        run = update_registration_run(
-            self.session,
+        run = self.repository.update_status_if_not_terminal(
             run_id,
             status="cancelled",
             started_at=run.started_at or utc_now_naive(),
             completed_at=utc_now_naive(),
             error_message=error_message,
         )
-        self.session.commit()
-        return run
+        return self._persist(run, commit=commit)
 
     def get_run(self, run_id: int):
-        return get_registration_run_by_id(self.session, run_id)
+        return self.repository.get_run(run_id)
 
     def get_run_by_task_uuid(self, task_uuid: str):
-        return get_registration_run_by_task_uuid(self.session, task_uuid)
+        return self.repository.get_run_by_task_uuid(task_uuid)
 
     def get_events(self, run_id: int):
-        return list_registration_run_events(self.session, run_id)
+        return self.repository.list_events(run_id)
