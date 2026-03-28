@@ -33,7 +33,7 @@ class RegistrationRunsService:
     ):
         existing = self.repository.get_run_by_task_uuid(task_uuid)
         if existing is not None:
-            return existing
+            return self._persist(existing, commit=commit)
         run = self.repository.create_run(
             task_uuid=task_uuid,
             batch_id=batch_id,

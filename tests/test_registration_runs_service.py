@@ -76,6 +76,29 @@ def test_registration_runs_service_supports_service_owned_commit_boundaries(temp
     assert events[0].message == "committed-event"
 
 
+def test_registration_runs_service_create_run_noop_commit_true_commits_boundary(temp_db):
+    service = RegistrationRunsService(temp_db)
+
+    first = service.create_run(
+        task_uuid="task-create-noop-commit-boundary",
+        batch_id="batch-z",
+        trigger_source="manual",
+        commit=False,
+    )
+    second = service.create_run(
+        task_uuid="task-create-noop-commit-boundary",
+        batch_id="batch-z",
+        trigger_source="manual",
+        commit=True,
+    )
+    temp_db.rollback()
+
+    loaded = service.get_run(first.id)
+    assert loaded is not None
+    assert second.id == first.id
+    assert loaded.task_uuid == "task-create-noop-commit-boundary"
+
+
 def test_registration_runs_service_marks_running_and_completed(temp_db):
     service = RegistrationRunsService(temp_db)
 
