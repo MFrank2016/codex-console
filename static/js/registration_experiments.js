@@ -40,7 +40,7 @@ function renderExperimentSummary(summary) {
     if (!experimentElements.experimentSummary) return;
     const pipelines = summary?.pipelines || {};
     const cards = Object.entries(pipelines).map(([pipelineKey, value]) => `
-        <div class="card experiment-metric-card">
+        <div class="card experiment-metric-card retro-summary-card">
             <div class="card-body">
                 <div class="stat-label">${escapeHtml(pipelineKey)}</div>
                 <div class="stat-value">${formatRate(value.success_rate)}</div>
@@ -50,7 +50,7 @@ function renderExperimentSummary(summary) {
     `).join('');
 
     experimentElements.experimentSummary.innerHTML = `
-        <div class="card experiment-overview-card">
+        <div class="card experiment-overview-card retro-summary-card">
             <div class="card-body">
                 <div class="stat-label">总任务数</div>
                 <div class="stat-value">${summary?.total_tasks ?? 0}</div>
@@ -70,26 +70,28 @@ function renderStepComparison(payload) {
     }
 
     experimentElements.experimentStepCompare.innerHTML = `
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Step</th>
-                    <th>current_pipeline</th>
-                    <th>codexgen_pipeline</th>
-                    <th>平均耗时差</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${steps.map((step) => `
+        <div class="table-container table-shell">
+            <table class="data-table">
+                <thead>
                     <tr>
-                        <td>${escapeHtml(step.step_key || '-')}</td>
-                        <td>${formatRate(step.pipelines?.current_pipeline?.success_rate)} / ${formatDuration(step.pipelines?.current_pipeline?.avg_duration_ms)}</td>
-                        <td>${formatRate(step.pipelines?.codexgen_pipeline?.success_rate)} / ${formatDuration(step.pipelines?.codexgen_pipeline?.avg_duration_ms)}</td>
-                        <td>${formatDuration(step.pipeline_diff?.avg_duration_ms)}</td>
+                        <th>Step</th>
+                        <th>current_pipeline</th>
+                        <th>codexgen_pipeline</th>
+                        <th>平均耗时差</th>
                     </tr>
-                `).join('')}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    ${steps.map((step) => `
+                        <tr>
+                            <td>${escapeHtml(step.step_key || '-')}</td>
+                            <td>${formatRate(step.pipelines?.current_pipeline?.success_rate)} / ${formatDuration(step.pipelines?.current_pipeline?.avg_duration_ms)}</td>
+                            <td>${formatRate(step.pipelines?.codexgen_pipeline?.success_rate)} / ${formatDuration(step.pipelines?.codexgen_pipeline?.avg_duration_ms)}</td>
+                            <td>${formatDuration(step.pipeline_diff?.avg_duration_ms)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
     `;
 }
 
@@ -97,7 +99,7 @@ function renderSurvivalSummary(summary) {
     if (!experimentElements.survivalSummary) return;
     const counts = summary?.counts || {};
     experimentElements.survivalSummary.innerHTML = ['healthy', 'warning', 'dead'].map((key) => `
-        <div class="card experiment-metric-card">
+        <div class="card experiment-metric-card retro-summary-card">
             <div class="card-body">
                 <div class="stat-label">${key}</div>
                 <div class="stat-value">${counts[key] ?? 0}</div>

@@ -488,6 +488,55 @@
 }
 
 /* ============================================
+   复盘域
+   ============================================ */
+
+.retro-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+.retro-page-header,
+.retro-summary-panel {
+    overflow: hidden;
+}
+
+.retro-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.retro-summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 148px;
+    padding: var(--spacing-lg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(148, 163, 184, 0.06) 0%, var(--surface) 100%);
+    box-shadow: var(--shadow-sm);
+}
+
+.retro-summary-card .stat-value {
+    font-size: 1.25rem;
+}
+
+.retro-summary-card .panel-subtitle {
+    margin: 0;
+}
+
+.retro-analysis-grid {
+    gap: var(--spacing-lg);
+}
+
+[data-theme="dark"] .retro-summary-card {
+    background: linear-gradient(180deg, rgba(51, 65, 85, 0.42) 0%, var(--surface) 100%);
+}
+
+/* ============================================
    模态框
    ============================================ */
 
