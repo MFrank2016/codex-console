@@ -254,6 +254,11 @@
 
 **产出：** 架构红线与验证护栏。
 
+**完成判定：**
+- owner 边界已写成明确规则，可直接转成 implementation task。
+- 至少有一组 focused tests 能验证终态保护、commit ownership、route 不返回危险 ORM 实体。
+- 新增需求不再被允许继续把 run 状态推进写回 route / helper。
+
 ### Phase 1：收口 run lifecycle 与事务边界
 
 **目标：** 让 Registration / Batch Service 真正成为 owner。
@@ -266,6 +271,11 @@
 
 **产出：** 单一状态 owner + 单一事务 owner。
 
+**完成判定：**
+- single / batch / outlook batch 的关键 checkpoint 由 application service 统一推进。
+- repository 层不再依赖隐式 commit 语义。
+- route 消费的是稳定 DTO / ID / 已明确生命周期的对象。
+
 ### Phase 2：把 Web 层瘦回 Adapter
 
 **目标：** 让 route 回到 HTTP 门面。
@@ -277,6 +287,11 @@
 
 **产出：** Web 层不再是半个业务层。
 
+**完成判定：**
+- start/cancel/query handler 中不再出现批量编排或状态推进逻辑。
+- 页面聚合查询已通过 query facade / presenter 暴露。
+- 新接口增加时不需要复制既有 route 中的业务流程代码。
+
 ### Phase 3：拆掉 `crud.py` 的数据库总控室模式
 
 **目标：** 按领域建立 repository / query service。
@@ -287,6 +302,11 @@
 3. 用 wrapper/facade 兼容旧 import，避免一次性改爆。
 
 **产出：** 领域化持久化边界。
+
+**完成判定：**
+- 新增数据库访问不再默认往 `crud.py` 添加函数。
+- 主要领域已有独立 repository 契约，旧调用点通过 facade / wrapper 渐进兼容。
+- 页面统计/筛选类查询不再和写模型 repository 混杂。
 
 ### Phase 4：净化 Core，并统一注册主链路
 
@@ -300,7 +320,17 @@
 
 **产出：** 主链路可读性与可测试性显著提升。
 
+**完成判定：**
+- `RegistrationEngine` 与 `registration_job.py` 的职责边界能被一句话解释清楚。
+- single / batch / outlook batch 共享统一 orchestration 模板，而不是复制流程树。
+- provider / auth flow / persistence hook 可以被独立测试与替换。
+
 ### Phase 4 并行支线：代理与配置子域治理
+
+**前置依赖说明：**
+- 这条支线不应抢在 Phase 1 之前执行。
+- 至少要先固定 run lifecycle owner、事务 owner 与 route/application 边界，再并行推进代理与配置子域治理。
+- 若多人并行推进，代理子域优先依赖 Batch/Registration Service 契约稳定后再切分；配置子域优先依赖 Boot/Runtime 配置边界规则明确后再改启动实现。
 
 **代理子域：**
 - 将 `dynamic_proxy.py` 拆为 parser / selector / probe / fetch / policy。
