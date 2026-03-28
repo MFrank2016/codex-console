@@ -64,7 +64,7 @@ function renderBatchStatsList(items) {
     }).join('');
 
     batchStatsElements.listContainer.innerHTML = `
-        <div class="table-container">
+        <div class="table-container table-shell">
             <table class="data-table">
                 <thead>
                     <tr>
@@ -336,7 +336,7 @@ function renderBatchStatsTable(title, rows, keys, headers) {
     return `
         <div class="batch-stats-subsection">
             <h4>${escapeHtml(title)}</h4>
-            <div class="table-container">
+            <div class="table-container table-shell">
                 <table class="data-table">
                     <thead>
                         <tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr>
@@ -379,7 +379,7 @@ function renderCompareTable(title, rows, keyField) {
     return `
         <div class="batch-stats-subsection">
             <h4>${escapeHtml(title)}</h4>
-            <div class="table-container">
+            <div class="table-container table-shell">
                 <table class="data-table">
                     <thead>
                         <tr>

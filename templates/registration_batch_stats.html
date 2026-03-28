@@ -1,8 +1,8 @@
 {% extends "_workspace_base.html" %}
 
 {% block page_content %}
-<div class="batch-stats-dashboard analysis-dashboard">
-    <section class="workspace-panel analysis-toolbar-panel">
+<div class="batch-stats-dashboard analysis-dashboard retro-dashboard">
+    <section class="workspace-panel analysis-toolbar-panel retro-page-header">
         <div class="page-head-actions analysis-panel-head">
             <div>
                 <h3>注册批次统计</h3>
@@ -11,7 +11,27 @@
         </div>
     </section>
 
-    <div class="batch-stats-layout">
+    <section class="workspace-panel retro-summary-panel" data-retro-section="summary">
+        <div class="retro-summary-grid">
+            <article class="retro-summary-card">
+                <span class="stat-label">批次列表</span>
+                <strong class="stat-value">筛选样本</strong>
+                <p class="panel-subtitle">先从左侧列表选中单批次，再进入详情或对比流。</p>
+            </article>
+            <article class="retro-summary-card">
+                <span class="stat-label">批次详情</span>
+                <strong class="stat-value">单批复盘</strong>
+                <p class="panel-subtitle">查看成功率、目标量、耗时与步骤分布。</p>
+            </article>
+            <article class="retro-summary-card">
+                <span class="stat-label">批次对比</span>
+                <strong class="stat-value">双批比较</strong>
+                <p class="panel-subtitle">选择两个批次后自动生成并排对比。</p>
+            </article>
+        </div>
+    </section>
+
+    <div class="batch-stats-layout retro-analysis-grid" data-retro-section="analysis">
         <section class="workspace-panel batch-stats-list analysis-content-panel">
             <div class="page-head-actions analysis-panel-head">
                 <div>

@@ -549,13 +549,14 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  buildRegistrationFailureQueryParams,\n  loadRegistrationFailureAnalysis,\n  loadRegistrationFailureSummary,\n  loadRegistrationFailureList,\n  loadRecentRegistrationTasks,\n  renderRecentRegistrationTasks,\n  renderRegistrationFailureRows,\n  openRegistrationFailureDetail,\n  openRegistrationFailureDetailByIndex,\n  closeRegistrationFailureDetail,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  switchWorkbenchView,\n  initWorkbenchTabs,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  buildRegistrationFailureQueryParams,\n  loadRegistrationFailureAnalysis,\n  loadRegistrationFailureSummary,\n  loadRegistrationFailureList,\n  loadRecentRegistrationTasks,\n  renderRecentRegistrationTasks,\n  renderRegistrationFailureRows,\n  openRegistrationFailureDetail,\n  openRegistrationFailureDetailByIndex,\n  closeRegistrationFailureDetail,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  buildRunCenterHref,\n  elements,\n}};`,
   context,
 );
 
 const exported = context.__appTestExports;
 
 function setupBaseElements() {{
+  document.body.dataset.pageKey = 'registration_workbench';
   getElement('email-service').value = 'tempmail:default';
   getElement('reg-mode').value = 'single';
   getElement('batch-count').value = '5';
@@ -628,6 +629,19 @@ async function runScenario() {{
       await exported.handleBatchRegistration(requestPayload);
       return {{
         request_payload: logs.lastPostPayload,
+      }};
+    }}
+    case 'switch_workbench_view': {{
+      exported.initWorkbenchTabs();
+      exported.switchWorkbenchView('config');
+      const initialView = String(getElement('registration-workbench-shell').dataset.activeView || '');
+      exported.switchWorkbenchView('running');
+      return {{
+        active_view_initial: initialView,
+        active_view_after_click: String(getElement('registration-workbench-shell').dataset.activeView || ''),
+        config_hidden_after_click: !!getElement('registration-workbench-view-config').hidden,
+        running_hidden_after_click: !!getElement('registration-workbench-view-running').hidden,
+        recent_hidden_after_click: !!getElement('registration-workbench-view-recent').hidden,
       }};
     }}
     case 'batch_mode_persists_after_reset': {{
@@ -1479,6 +1493,24 @@ async function runScenario() {{
         connection_status: String(getElement('registration-stream-status').textContent || ''),
         api_get_paths: logs.apiGetPaths.slice(),
         polling_interval_started: !!pollingHandle,
+      }};
+    }}
+    case 'build_run_center_href_single_task': {{
+      return {{
+        href: exported.buildRunCenterHref({{
+          scope: 'task',
+          task_uuid: 'task-single-01',
+          source: 'registration-workbench',
+        }}),
+      }};
+    }}
+    case 'build_run_center_href_batch': {{
+      return {{
+        href: exported.buildRunCenterHref({{
+          scope: 'batch',
+          batch_id: 'batch-001',
+          source: 'registration-workbench',
+        }}),
       }};
     }}
     default:

@@ -107,9 +107,7 @@ def test_workspace_routes_render_after_login_with_page_specific_scripts():
             _assert_versioned_asset(response.text, script_path)
             if path == "/scheduled-tasks":
                 _assert_versioned_asset(response.text, "/static/css/realtime_log_console.css")
-                _assert_versioned_asset(response.text, "/static/js/realtime_log_store.js")
-                _assert_versioned_asset(response.text, "/static/js/realtime_log_client.js")
-                _assert_versioned_asset(response.text, "/static/js/realtime_log_console.js")
+                _assert_versioned_asset(response.text, "/static/js/run_center_shared.js")
 
 
 def test_settings_page_keeps_versioned_settings_assets():

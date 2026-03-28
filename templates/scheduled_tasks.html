@@ -5,341 +5,186 @@
 {% endblock %}
 
 {% block page_content %}
-<div class="workspace-side-stack">
-    <section class="workspace-panel workspace-table-panel"><div class="card">
-                    <div class="card-header workspace-toolbar page-head-actions">
-                        <h3>计划列表</h3>
-                        <div class="workspace-toolbar">
-                            <button class="btn btn-primary btn-sm" id="create-plan-btn" data-action="create-plan">➕ 新建计划</button>
-                            <button class="btn btn-secondary btn-sm" id="refresh-plans-btn" data-action="refresh-plans">🔄 刷新</button>
-                        </div>
-                    </div>
-                    <div class="card-body" style="padding:0;">
-                        <div class="table-container table-shell">
-                            <table id="scheduled-plans-table" class="data-table scheduled-dense-table scheduled-plans-grid">
-                                <colgroup>
-                                    <col class="scheduled-col-plan-id">
-                                    <col class="scheduled-col-plan-name">
-                                    <col class="scheduled-col-plan-task">
-                                    <col class="scheduled-col-plan-trigger">
-                                    <col class="scheduled-col-plan-next-run">
-                                    <col class="scheduled-col-plan-status">
-                                    <col class="scheduled-col-plan-last-run">
-                                    <col class="scheduled-col-plan-actions">
-                                </colgroup>
-                                <thead>
-                                    <tr>
-                                        <th data-col="plan-id">ID</th>
-                                        <th data-col="plan-name">计划名称</th>
-                                        <th data-col="plan-task">任务类型</th>
-                                        <th data-col="plan-trigger">触发方式</th>
-                                        <th data-col="plan-next-run">下次执行</th>
-                                        <th data-col="plan-status">状态</th>
-                                        <th data-col="plan-last-run">最近运行</th>
-                                        <th data-col="plan-actions">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="scheduled-plans-table-body">
-                                    <tr>
-                                        <td colspan="8">
-                                            <div class="empty-state">
-                                                <div class="empty-state-icon">⏳</div>
-                                                <div class="empty-state-title">加载中</div>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
+<div class="workspace-side-stack scheduled-tasks-page">
+    <section class="workspace-panel page-head">
+        <div id="scheduled-tasks-support-context" class="scheduled-tasks-support-context">
+            <div class="empty-state-title">运行记录已迁移到运行中心</div>
+            <div class="empty-state-description">这里专注计划管理、配置编辑与支持上下文跳转。</div>
+            <a class="btn btn-secondary btn-sm" href="/run-center?scope=scheduled&source=scheduled-tasks">打开运行中心</a>
+        </div>
+    </section>
 
-                </section>
-    <section class="workspace-panel workspace-table-panel"><div class="card" id="scheduled-runs-card">
-                    <div class="card-header filter-panel scheduled-filter-toolbar">
-                        <div class="scheduled-filter-title-group">
-                            <h3>运行中心</h3>
-                            <p class="scheduled-filter-caption">按任务类型、状态与开始时间快速筛选运行记录</p>
-                        </div>
-                        <div class="filter-panel-grid filter-panel-grid--dense">
-                            <div class="scheduled-filter-field">
-                                <label class="scheduled-filter-label" for="scheduled-run-filter-task-type">任务类型</label>
-                                <select id="scheduled-run-filter-task-type" class="form-select">
-                                    <option value="">全部任务类型</option>
-                                    <option value="cpa_cleanup">CPA 清理</option>
-                                    <option value="cpa_refill">CPA 补量</option>
-                                    <option value="account_refresh">账号刷新</option>
-                                </select>
-                            </div>
-                            <div class="scheduled-filter-field">
-                                <label class="scheduled-filter-label" for="scheduled-run-filter-status">运行状态</label>
-                                <select id="scheduled-run-filter-status" class="form-select">
-                                    <option value="">全部状态</option>
-                                    <option value="running">运行中</option>
-                                    <option value="success">成功</option>
-                                    <option value="failed">失败</option>
-                                    <option value="skipped">已跳过</option>
-                                    <option value="cancelled">已取消</option>
-                                </select>
-                            </div>
-                            <div class="scheduled-filter-field">
-                                <label class="scheduled-filter-label" for="scheduled-run-filter-started-from">开始时间从</label>
-                                <input type="datetime-local" id="scheduled-run-filter-started-from" class="form-input" title="开始时间从">
-                            </div>
-                            <div class="scheduled-filter-field">
-                                <label class="scheduled-filter-label" for="scheduled-run-filter-started-to">开始时间到</label>
-                                <input type="datetime-local" id="scheduled-run-filter-started-to" class="form-input" title="开始时间到">
-                            </div>
-                        </div>
-                        <div class="filter-panel-actions filter-panel-actions--dense">
-                            <button class="btn btn-secondary btn-sm" id="scheduled-run-filter-apply-btn">筛选</button>
-                            <button class="btn btn-secondary btn-sm" id="scheduled-run-filter-reset-btn">重置</button>
-                        </div>
-                    </div>
-                    <div class="card-body" style="padding:0;">
-                        <div class="table-container table-shell">
-                            <table id="scheduled-runs-table" class="data-table scheduled-dense-table scheduled-runs-grid">
-                                <colgroup>
-                                    <col class="scheduled-col-run-id">
-                                    <col class="scheduled-col-run-plan">
-                                    <col class="scheduled-col-run-task">
-                                    <col class="scheduled-col-run-source">
-                                    <col class="scheduled-col-run-status">
-                                    <col class="scheduled-col-run-started">
-                                    <col class="scheduled-col-run-finished">
-                                    <col class="scheduled-col-run-summary">
-                                    <col class="scheduled-col-run-actions">
-                                </colgroup>
-                                <thead>
-                                    <tr>
-                                        <th data-col="run-id"><span class="scheduled-table-heading">Run ID</span><span class="scheduled-table-heading-meta">编号</span></th>
-                                        <th data-col="run-plan"><span class="scheduled-table-heading">计划</span><span class="scheduled-table-heading-meta">来源计划</span></th>
-                                        <th data-col="run-task"><span class="scheduled-table-heading">任务类型</span><span class="scheduled-table-heading-meta">执行任务</span></th>
-                                        <th data-col="run-source"><span class="scheduled-table-heading">触发源</span><span class="scheduled-table-heading-meta">触发渠道</span></th>
-                                        <th data-col="run-status"><span class="scheduled-table-heading">状态</span><span class="scheduled-table-heading-meta">当前结果</span></th>
-                                        <th data-col="run-started"><span class="scheduled-table-heading">开始时间</span><span class="scheduled-table-heading-meta">开始执行</span></th>
-                                        <th data-col="run-finished"><span class="scheduled-table-heading">结束时间</span><span class="scheduled-table-heading-meta">执行完成</span></th>
-                                        <th data-col="run-summary"><span class="scheduled-table-heading">摘要</span><span class="scheduled-table-heading-meta">关键指标</span></th>
-                                        <th data-col="run-actions"><span class="scheduled-table-heading">操作</span><span class="scheduled-table-heading-meta">查看 / 控制</span></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="scheduled-runs-table-body">
-                                    <tr>
-                                        <td colspan="9">
-                                            <div class="empty-state">
-                                                <div class="empty-state-icon">⏳</div>
-                                                <div class="empty-state-title">运行记录加载中</div>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="pagination-panel pagination-panel--dense">
-                            <div id="scheduled-run-pagination-summary" class="pagination-summary-pill">第 1 / 1 页 · 共 0 条</div>
-                            <div class="pagination-jump pagination-jump--dense">
-                                <div class="pagination-jump-actions">
-                                    <button class="btn btn-secondary btn-sm" id="scheduled-run-prev-page">上一页</button>
-                                    <button class="btn btn-secondary btn-sm" id="scheduled-run-next-page">下一页</button>
-                                </div>
-                                <div class="pagination-jump-field">
-                                    <label for="scheduled-run-page-jump-input">跳转到</label>
-                                    <input type="number" id="scheduled-run-page-jump-input" class="form-input pagination-jump-input" min="1" step="1" inputmode="numeric" placeholder="页码">
-                                </div>
-                                <button class="btn btn-secondary btn-sm" id="scheduled-run-page-jump-btn">前往</button>
-                            </div>
-                        </div>
-                    </div>
+    <section class="workspace-panel workspace-table-panel">
+        <div class="card">
+            <div class="card-header workspace-toolbar page-head-actions">
+                <h3>计划列表</h3>
+                <div class="workspace-toolbar">
+                    <button class="btn btn-primary btn-sm" id="create-plan-btn" data-action="create-plan">➕ 新建计划</button>
+                    <button class="btn btn-secondary btn-sm" id="refresh-plans-btn" data-action="refresh-plans">🔄 刷新</button>
                 </div>
-            </section>
-
+            </div>
+            <div class="card-body" style="padding:0;">
+                <div class="table-container table-shell">
+                    <table id="scheduled-plans-table" class="data-table scheduled-dense-table scheduled-plans-grid">
+                        <colgroup>
+                            <col class="scheduled-col-plan-id">
+                            <col class="scheduled-col-plan-name">
+                            <col class="scheduled-col-plan-task">
+                            <col class="scheduled-col-plan-trigger">
+                            <col class="scheduled-col-plan-next-run">
+                            <col class="scheduled-col-plan-status">
+                            <col class="scheduled-col-plan-last-run">
+                            <col class="scheduled-col-plan-actions">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th data-col="plan-id">ID</th>
+                                <th data-col="plan-name">计划名称</th>
+                                <th data-col="plan-task">任务类型</th>
+                                <th data-col="plan-trigger">触发方式</th>
+                                <th data-col="plan-next-run">下次执行</th>
+                                <th data-col="plan-status">状态</th>
+                                <th data-col="plan-last-run">最近运行</th>
+                                <th data-col="plan-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scheduled-plans-table-body">
+                            <tr>
+                                <td colspan="8">
+                                    <div class="empty-state">
+                                        <div class="empty-state-icon">⏳</div>
+                                        <div class="empty-state-title">加载中</div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
 </div>
 
-    <div id="plan-form-modal" class="modal">
-        <div class="modal-content" style="max-width: 1080px;">
-            <div class="modal-header">
-                <h3 id="plan-form-title">新建计划</h3>
-                <button class="modal-close" data-close-modal="plan-form-modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="plan-form">
-                    <input type="hidden" id="plan-id">
-                    <div class="form-group">
-                        <label for="plan-name">计划名称</label>
-                        <input type="text" id="plan-name" required placeholder="例如：每小时补量">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="plan-task-type">任务类型</label>
-                            <select id="plan-task-type" required>
-                                <option value="cpa_cleanup">CPA 清理</option>
-                                <option value="cpa_refill">CPA 补量</option>
-                                <option value="account_refresh">账号刷新</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="plan-cpa-service-select">CPA 服务</label>
-                            <select id="plan-cpa-service-select"></select>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="plan-cpa-service-id">CPA 服务 ID（手动输入可覆盖下拉选择）</label>
-                        <input type="number" id="plan-cpa-service-id" min="1" required placeholder="1">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="plan-trigger-type">触发方式</label>
-                            <select id="plan-trigger-type" required>
-                                <option value="interval">间隔</option>
-                                <option value="cron">Cron</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="plan-cron-group" style="display:none;">
-                            <label for="plan-cron-expression">Cron 表达式</label>
-                            <input type="text" id="plan-cron-expression" placeholder="0 * * * *">
-                        </div>
-                    </div>
-                    <div class="form-row" id="plan-interval-group">
-                        <div class="form-group">
-                            <label for="plan-interval-value">间隔值</label>
-                            <input type="number" id="plan-interval-value" min="1" value="60">
-                        </div>
-                        <div class="form-group">
-                            <label for="plan-interval-unit">间隔单位</label>
-                            <select id="plan-interval-unit">
-                                <option value="minutes">分钟</option>
-                                <option value="hours">小时</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>配置参数</label>
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-                            <button type="button" class="btn btn-secondary btn-sm" id="plan-config-mode-table">键值对编辑</button>
-                            <button type="button" class="btn btn-secondary btn-sm" id="plan-config-mode-json">原始 JSON</button>
-                            <button type="button" class="btn btn-secondary btn-sm" id="plan-config-add-entry-btn">➕ 新增配置项</button>
-                        </div>
-
-                        <div id="plan-config-editor-panel">
-                            <div class="table-container">
-                                <table class="data-table">
-                                    <thead>
-                                        <tr>
-                                            <th style="width: 180px;">键</th>
-                                            <th style="width: 220px;">键说明</th>
-                                            <th>值</th>
-                                            <th style="width: 220px;">值说明</th>
-                                            <th style="width: 120px;">类型</th>
-                                            <th style="width: 90px;">操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="plan-config-entries-body"></tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div id="plan-config-json-panel" style="display:none;">
-                            <label for="plan-config-json" style="display:block;margin-bottom:8px;">原始 JSON（高级模式）</label>
-                            <textarea id="plan-config-json" rows="10" placeholder='{"max_consecutive_failures": 10}'>{}</textarea>
-                            <small style="display:block;color:var(--text-muted);margin-top:8px;">
-                                原始 JSON 只编辑 config 值；键说明和值说明请在键值对模式中维护。
-                            </small>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="plan-enabled" checked>
-                            保存后启用计划
-                        </label>
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-primary" id="plan-form-submit-btn">保存计划</button>
-                        <button type="button" class="btn btn-secondary" data-close-modal="plan-form-modal">取消</button>
-                    </div>
-                </form>
-            </div>
+<div id="plan-form-modal" class="modal">
+    <div class="modal-content" style="max-width: 1080px;">
+        <div class="modal-header">
+            <h3 id="plan-form-title">新建计划</h3>
+            <button class="modal-close" data-close-modal="plan-form-modal">&times;</button>
         </div>
-    </div>
-
-    <div id="plan-modal" class="modal">
-        <div class="modal-content" style="max-width: 520px;">
-            <div class="modal-header">
-                <h3>计划详情</h3>
-                <button class="modal-close" data-close-modal="plan-modal">&times;</button>
-            </div>
-            <div class="modal-body" id="plan-modal-body">
-                <div style="color: var(--text-muted);">计划详情加载中...</div>
-            </div>
-        </div>
-    </div>
-
-    <div id="run-detail-modal" class="modal">
-        <div class="modal-content" style="max-width: 960px;">
-            <div class="modal-header">
-                <h3>运行详情</h3>
-                <button class="modal-close" data-close-modal="run-detail-modal">&times;</button>
-            </div>
-            <div class="modal-body" id="run-detail-modal-body">
-                <div style="color: var(--text-muted);">未选择运行记录</div>
-            </div>
-        </div>
-    </div>
-
-    <div id="run-log-modal" class="modal">
-        <div class="modal-content scheduled-run-log-modal-content">
-            <div class="modal-header">
-                <h3>运行记录</h3>
-                <button class="modal-close" data-close-modal="run-log-modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div id="run-log-status-bar" class="scheduled-run-console-status">
-                    <span>未选择运行记录</span>
+        <div class="modal-body">
+            <form id="plan-form">
+                <input type="hidden" id="plan-id">
+                <div class="form-group">
+                    <label for="plan-name">计划名称</label>
+                    <input type="text" id="plan-name" required placeholder="例如：每小时补量">
                 </div>
-
-                <div class="scheduled-run-console-toolbar">
-                    <div class="scheduled-run-console-toolbar-group">
-                        <input id="run-log-search-input" class="form-input" type="search" placeholder="搜索日志">
-                        <select id="run-log-level-filter" class="form-select">
-                            <option value="">全部级别</option>
-                            <option value="INFO">INFO</option>
-                            <option value="WARN">WARN</option>
-                            <option value="ERROR">ERROR</option>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="plan-task-type">任务类型</label>
+                        <select id="plan-task-type" required>
+                            <option value="cpa_cleanup">CPA 清理</option>
+                            <option value="cpa_refill">CPA 补量</option>
+                            <option value="account_refresh">账号刷新</option>
                         </select>
-                        <button class="btn btn-secondary btn-sm" id="run-log-refresh-btn">刷新</button>
-                        <button class="btn btn-secondary btn-sm" id="run-log-copy-btn">复制</button>
-                        <button class="btn btn-secondary btn-sm" id="run-log-clear-btn">清空</button>
-                        <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);">
-                            <input type="checkbox" id="run-log-auto-scroll" checked>
-                            自动滚动
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);">
-                            <input type="checkbox" id="run-log-wrap-input" checked>
-                            自动换行
-                        </label>
                     </div>
-                    <div id="run-log-stop-actions">
-                        <button class="btn btn-secondary btn-sm" id="run-log-stop-btn" data-action="stop-run" style="display:none;" onclick="handleRunLogAction(this)">停止运行</button>
+                    <div class="form-group">
+                        <label for="plan-cpa-service-select">CPA 服务</label>
+                        <select id="plan-cpa-service-select"></select>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label for="plan-cpa-service-id">CPA 服务 ID（手动输入可覆盖下拉选择）</label>
+                    <input type="number" id="plan-cpa-service-id" min="1" required placeholder="1">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="plan-trigger-type">触发方式</label>
+                        <select id="plan-trigger-type" required>
+                            <option value="interval">间隔</option>
+                            <option value="cron">Cron</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="plan-cron-group" style="display:none;">
+                        <label for="plan-cron-expression">Cron 表达式</label>
+                        <input type="text" id="plan-cron-expression" placeholder="0 * * * *">
+                    </div>
+                </div>
+                <div class="form-row" id="plan-interval-group">
+                    <div class="form-group">
+                        <label for="plan-interval-value">间隔值</label>
+                        <input type="number" id="plan-interval-value" min="1" value="60">
+                    </div>
+                    <div class="form-group">
+                        <label for="plan-interval-unit">间隔单位</label>
+                        <select id="plan-interval-unit">
+                            <option value="minutes">分钟</option>
+                            <option value="hours">小时</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>配置参数</label>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+                        <button type="button" class="btn btn-secondary btn-sm" id="plan-config-mode-table">键值对编辑</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="plan-config-mode-json">原始 JSON</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="plan-config-add-entry-btn">➕ 新增配置项</button>
+                    </div>
 
-                <div id="run-log-modal-body">
-                    <div id="run-log-console" class="scheduled-run-console-shell scheduled-run-log-wrap">
-                        <div class="scheduled-run-log-line">
-                            <span class="scheduled-run-log-level-badge">INFO</span>
-                            <span>暂无记录</span>
+                    <div id="plan-config-editor-panel">
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 180px;">键</th>
+                                        <th style="width: 220px;">键说明</th>
+                                        <th>值</th>
+                                        <th style="width: 220px;">值说明</th>
+                                        <th style="width: 120px;">类型</th>
+                                        <th style="width: 90px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="plan-config-entries-body"></tbody>
+                            </table>
                         </div>
                     </div>
+
+                    <div id="plan-config-json-panel" style="display:none;">
+                        <label for="plan-config-json" style="display:block;margin-bottom:8px;">原始 JSON（高级模式）</label>
+                        <textarea id="plan-config-json" rows="10" placeholder='{"max_consecutive_failures": 10}'>{}</textarea>
+                        <small style="display:block;color:var(--text-muted);margin-top:8px;">
+                            原始 JSON 只编辑 config 值；键说明和值说明请在键值对模式中维护。
+                        </small>
+                    </div>
                 </div>
-            </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="plan-enabled" checked>
+                        保存后启用计划
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary" id="plan-form-submit-btn">保存计划</button>
+                    <button type="button" class="btn btn-secondary" data-close-modal="plan-form-modal">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div id="plan-modal" class="modal">
+    <div class="modal-content" style="max-width: 520px;">
+        <div class="modal-header">
+            <h3>计划详情</h3>
+            <button class="modal-close" data-close-modal="plan-modal">&times;</button>
+        </div>
+        <div class="modal-body" id="plan-modal-body">
+            <div style="color: var(--text-muted);">计划详情加载中...</div>
         </div>
     </div>
 </div>
 {% endblock %}
 
 {% block page_scripts %}
-<script src="/static/js/utils.js?v={{ static_version }}"></script>
-<script src="/static/js/realtime_log_store.js?v={{ static_version }}"></script>
-<script src="/static/js/realtime_log_client.js?v={{ static_version }}"></script>
-<script src="/static/js/realtime_log_console.js?v={{ static_version }}"></script>
-<script src="/static/js/scheduled_tasks.js?v={{ static_version }}"></script>
+<script src="{{ '/static/js/run_center_shared.js?v=' ~ static_version }}"></script>
+<script src="{{ '/static/js/scheduled_tasks.js?v=' ~ static_version }}"></script>
 {% endblock %}

@@ -11,6 +11,8 @@ let selectedAccounts = new Set();
 let isLoading = false;
 let selectAllPages = false;  // 是否选中了全部页
 let currentFilters = { status: '', email_service: '', search: '', primary_cpa_service_id: '' };  // 当前筛选条件
+let detailDrawerRestoreTarget = null;
+let detailDrawerInteractionsBound = false;
 
 // DOM 元素
 const elements = {
@@ -37,9 +39,9 @@ const elements = {
     pageInfo: document.getElementById('page-info'),
     pageJumpInput: document.getElementById('page-jump-input'),
     pageJumpBtn: document.getElementById('page-jump-btn'),
-    detailModal: document.getElementById('detail-modal'),
-    modalBody: document.getElementById('modal-body'),
-    closeModal: document.getElementById('close-modal')
+    detailModal: document.getElementById('accounts-detail-drawer'),
+    modalBody: document.getElementById('accounts-detail-drawer-body'),
+    closeModal: document.getElementById('close-detail-drawer')
 };
 
 // 初始化
@@ -51,8 +53,76 @@ document.addEventListener('DOMContentLoaded', () => {
     renderSelectAllBanner();
 });
 
+function ensureDetailDrawerInteractions() {
+    if (detailDrawerInteractionsBound || !elements.detailModal) {
+        return;
+    }
+
+    if (elements.closeModal) {
+        elements.closeModal.addEventListener('click', () => {
+            closeAccountDrawer();
+        });
+    }
+
+    elements.detailModal.addEventListener('click', (e) => {
+        if (e.target === elements.detailModal) {
+            closeAccountDrawer();
+        }
+    });
+
+    elements.detailModal.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') {
+            return;
+        }
+        e.preventDefault();
+        closeAccountDrawer();
+    });
+
+    detailDrawerInteractionsBound = true;
+}
+
+function openAccountDrawer(contentHtml, trigger = null) {
+    if (!elements.detailModal || !elements.modalBody) {
+        return;
+    }
+
+    ensureDetailDrawerInteractions();
+    detailDrawerRestoreTarget = trigger || document.activeElement || null;
+    elements.modalBody.innerHTML = contentHtml;
+    elements.detailModal.hidden = false;
+    elements.detailModal.classList.add('active');
+    if (typeof elements.detailModal.setAttribute === 'function') {
+        elements.detailModal.setAttribute('aria-hidden', 'false');
+    } else {
+        elements.detailModal.ariaHidden = 'false';
+    }
+    if (typeof elements.detailModal.focus === 'function') {
+        elements.detailModal.focus();
+    }
+}
+
+function closeAccountDrawer() {
+    if (!elements.detailModal) {
+        return;
+    }
+
+    elements.detailModal.hidden = true;
+    elements.detailModal.classList.remove('active');
+    if (typeof elements.detailModal.setAttribute === 'function') {
+        elements.detailModal.setAttribute('aria-hidden', 'true');
+    } else {
+        elements.detailModal.ariaHidden = 'true';
+    }
+
+    if (detailDrawerRestoreTarget && typeof detailDrawerRestoreTarget.focus === 'function') {
+        detailDrawerRestoreTarget.focus();
+    }
+}
+
 // 事件监听
 function initEventListeners() {
+    ensureDetailDrawerInteractions();
+
     // 筛选
     elements.filterStatus.addEventListener('change', () => {
         currentPage = 1;
@@ -179,17 +249,6 @@ function initEventListeners() {
         const format = target.dataset.format;
         exportAccounts(format);
         elements.exportMenu.classList.remove('active');
-    });
-
-    // 关闭模态框
-    elements.closeModal.addEventListener('click', () => {
-        elements.detailModal.classList.remove('active');
-    });
-
-    elements.detailModal.addEventListener('click', (e) => {
-        if (e.target === elements.detailModal) {
-            elements.detailModal.classList.remove('active');
-        }
     });
 
     // 点击其他地方关闭下拉菜单
@@ -647,7 +706,7 @@ async function viewAccount(id) {
         const account = await api.get(`/accounts/${id}`);
         const tokens = await api.get(`/accounts/${id}/tokens`);
 
-        elements.modalBody.innerHTML = `
+        const drawerHtml = `
             <div class="info-grid">
                 <div class="info-item">
                     <span class="label">邮箱</span>
@@ -744,13 +803,12 @@ async function viewAccount(id) {
                 </div>
             </div>
             <div style="margin-top: var(--spacing-lg); display: flex; gap: var(--spacing-sm);">
-                <button class="btn btn-primary" onclick="refreshToken(${id}); elements.detailModal.classList.remove('active');">
+                <button class="btn btn-primary" onclick="refreshToken(${id}); closeAccountDrawer();">
                     🔄 刷新Token
                 </button>
             </div>
         `;
-
-        elements.detailModal.classList.add('active');
+        openAccountDrawer(drawerHtml);
     } catch (error) {
         toast.error('加载账号详情失败: ' + error.message);
     }
@@ -1349,7 +1407,7 @@ async function checkInboxCode(id) {
 }
 
 function showInboxCodeResult(code, email) {
-    elements.modalBody.innerHTML = `
+    openAccountDrawer(`
         <div style="text-align:center; padding:24px 16px;">
             <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">
                 ${escapeHtml(email)} 最新验证码
@@ -1360,6 +1418,5 @@ function showInboxCodeResult(code, email) {
             </div>
             <button class="btn btn-primary" onclick="copyToClipboard('${escapeHtml(code)}')">复制验证码</button>
         </div>
-    `;
-    elements.detailModal.classList.add('active');
+    `);
 }

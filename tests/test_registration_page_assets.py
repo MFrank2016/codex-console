@@ -32,7 +32,18 @@ def test_registration_workbench_page_requires_auth_and_renders_workspace_shell_h
         assert response.text.index("/static/js/registration_stream.js?v=") < response.text.index("/static/js/app.js?v=")
         assert 'href="/registration-workbench"' in response.text
         assert 'href="/logout"' in response.text
-        assert 'class="theme-toggle"' in response.text
+        assert re.search(r'class="[^"]*\btheme-toggle\b[^"]*"', response.text)
+        assert re.search(r'<header class="page-head">[\s\S]*id="workspace-theme-toggle"', response.text)
+        assert re.search(
+            r'<footer class="workspace-sidebar-footer">[\s\S]*href="/logout"',
+            response.text,
+        )
+        page_head_match = re.search(
+            r'<header class="page-head">(?P<body>[\s\S]*?)</header>',
+            response.text,
+        )
+        assert page_head_match is not None
+        assert 'href="/logout"' not in page_head_match.group("body")
 
 
 def test_registration_template_contains_unlimited_mode_and_domain_stats_container():
@@ -96,6 +107,17 @@ def test_registration_template_uses_workbench_layout_classes():
     assert "registration-workbench-side" in template
 
 
+def test_registration_template_contains_workbench_tabs_and_views():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    assert 'id="registration-workbench-tabs"' in template
+    assert 'data-workbench-view="config"' in template
+    assert 'data-workbench-view="running"' in template
+    assert 'data-workbench-view="recent"' in template
+    assert 'data-workbench-panel="config"' in template
+    assert 'data-workbench-panel="running"' in template
+    assert 'data-workbench-panel="recent"' in template
+
+
 def test_registration_template_recent_accounts_uses_shared_table_shell():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     assert "recent-accounts-table table-shell" in template or "table-shell recent-accounts-table" in template
@@ -129,6 +151,17 @@ def test_registration_workbench_stylesheet_stretches_console_log_for_taller_log_
     stylesheet = Path("static/css/registration_workbench.css").read_text(encoding="utf-8")
     assert ".feedback-panel-log .console-log" in stylesheet
     assert "height: 420px" in stylesheet
+
+
+def test_app_js_switches_registration_workbench_views():
+    result = run_app_js_scenario("switch_workbench_view")
+    assert result == {
+        "active_view_initial": "config",
+        "active_view_after_click": "running",
+        "config_hidden_after_click": True,
+        "running_hidden_after_click": False,
+        "recent_hidden_after_click": True,
+    }
 
 
 def test_registration_workbench_template_uses_task_elapsed_label_without_overall_elapsed_copy():
@@ -328,6 +361,22 @@ def test_registration_workbench_falls_back_to_stream_polling_when_websocket_hand
     assert result["polling_interval_started"] is True
 
 
+def test_app_js_builds_run_center_href_for_single_task_context():
+    result = run_app_js_scenario("build_run_center_href_single_task")
+    assert result["href"] == (
+        "/run-center?scope=task&task_uuid=task-single-01"
+        "&source=registration-workbench"
+    )
+
+
+def test_app_js_builds_run_center_href_for_batch_context():
+    result = run_app_js_scenario("build_run_center_href_batch")
+    assert result["href"] == (
+        "/run-center?scope=batch&batch_id=batch-001"
+        "&source=registration-workbench"
+    )
+
+
 def test_app_js_uses_shared_realtime_log_client_without_legacy_dom_append_main_path():
     script = Path("static/js/app.js").read_text(encoding="utf-8")
 
@@ -430,7 +479,7 @@ def test_accounts_template_filter_panel_uses_shared_shell_classes():
 
 
 def test_shared_stylesheet_defines_filter_and_pagination_panel_selectors():
-    stylesheet = Path("static/css/style.css").read_text(encoding="utf-8")
+    stylesheet = Path("static/css/workspace_components.css").read_text(encoding="utf-8")
     assert ".filter-panel" in stylesheet
     assert ".filter-panel-grid" in stylesheet
     assert ".filter-panel-actions" in stylesheet

@@ -69,14 +69,21 @@ const sidebarToggle = createMockButton('workspace-sidebar-toggle');
 const themeToggle = createMockButton('workspace-theme-toggle');
 const themeToggles = [themeToggle];
 const domListeners = {{}};
-const localStorageMap = new Map([['codex-console.workspace.sidebar', 'collapsed']]);
+const localStorageMap = new Map([
+  ['codex-console.workspace.sidebar', 'collapsed'],
+  ['theme', 'dark'],
+]);
 
 const document = {{
-  body: {{ classList: createClassList() }},
+  body: {{ classList: createClassList(['workspace-sidebar-collapsed']) }},
   documentElement: {{
-    _attrs: {{}},
+    _attrs: {{ 'data-theme': 'dark' }},
+    classList: createClassList(['workspace-sidebar-collapsed']),
     setAttribute(name, value) {{
       this._attrs[String(name)] = String(value);
+    }},
+    getAttribute(name) {{
+      return this._attrs[String(name)] || null;
     }},
   }},
   addEventListener(type, handler) {{
@@ -132,21 +139,33 @@ async function main() {{
   }}
 
   ensureFunction('toggleWorkspaceSidebar');
+  ensureFunction('toggleWorkspaceTheme');
+
+  const result = {{
+    preflight_collapsed: document.body.classList.contains('workspace-sidebar-collapsed'),
+    preflight_theme: document.documentElement._attrs['data-theme'] || '',
+  }};
 
   await domListeners.DOMContentLoaded();
 
-  const result = {{
-    after_restore_collapsed: document.body.classList.contains('workspace-sidebar-collapsed'),
-    after_restore_toggle_title: sidebarToggle.title,
-    after_restore_toggle_pressed: sidebarToggle._attrs['aria-pressed'] || '',
-  }};
+  result.after_restore_collapsed = document.body.classList.contains('workspace-sidebar-collapsed');
+  result.after_restore_toggle_title = sidebarToggle.title;
+  result.after_restore_toggle_pressed = sidebarToggle._attrs['aria-pressed'] || '';
+  result.after_restore_theme = document.documentElement._attrs['data-theme'] || '';
+  result.after_restore_theme_title = themeToggle.title;
+  result.after_restore_theme_icon = themeToggle._attrs['data-theme-icon'] || '';
 
   sidebarToggle.click();
 
   result.after_click_collapsed = document.body.classList.contains('workspace-sidebar-collapsed');
   result.after_click_toggle_title = sidebarToggle.title;
   result.after_click_toggle_pressed = sidebarToggle._attrs['aria-pressed'] || '';
+  themeToggle.click();
+  result.after_theme_click_theme = document.documentElement._attrs['data-theme'] || '';
+  result.after_theme_click_title = themeToggle.title;
+  result.after_theme_click_icon = themeToggle._attrs['data-theme-icon'] || '';
   result.stored_sidebar_value = localStorageMap.get('codex-console.workspace.sidebar');
+  result.stored_theme_value = localStorageMap.get('theme');
 
   process.stdout.write(JSON.stringify(result));
 }}

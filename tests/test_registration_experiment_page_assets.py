@@ -23,6 +23,17 @@ def test_registration_experiments_template_references_dashboard_script():
     assert '/static/js/registration_experiments.js' in template
 
 
+def test_experiment_and_batch_stats_templates_share_retro_shell_hooks():
+    experiments = Path("templates/registration_experiments.html").read_text(encoding="utf-8")
+    batch_stats = Path("templates/registration_batch_stats.html").read_text(encoding="utf-8")
+    assert "retro-dashboard" in experiments
+    assert "retro-dashboard" in batch_stats
+    assert 'data-retro-section="summary"' in experiments
+    assert 'data-retro-section="summary"' in batch_stats
+    assert 'data-retro-section="analysis"' in experiments
+    assert 'data-retro-section="analysis"' in batch_stats
+
+
 def test_web_app_registers_registration_experiments_page_route():
     app_source = Path("src/web/app.py").read_text(encoding="utf-8")
     assert '@app.get("/registration-experiments", response_class=HTMLResponse)' in app_source

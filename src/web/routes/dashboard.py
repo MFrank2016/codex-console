@@ -184,6 +184,11 @@ async def get_dashboard_summary(request: Request):
                     "description": "查看账号状态并执行维护操作。",
                 },
                 {
+                    "label": "运行中心",
+                    "href": "/run-center",
+                    "description": "查看执行摘要、运行列表与日志。",
+                },
+                {
                     "label": "定时任务",
                     "href": "/scheduled-tasks",
                     "description": "配置自动补号、清理和刷新任务。",

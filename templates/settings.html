@@ -1,7 +1,11 @@
 {% extends "_workspace_base.html" %}
 
 {% block page_content %}
-<div class="config-workbench-grid">
+<div class="config-workbench-grid support-page-shell">
+    <section class="workspace-panel page-head support-page-summary">
+        <h2 class="page-head-title">系统设置支撑台</h2>
+        <p class="page-head-subtitle">在统一面板中维护代理、访问控制、上传服务与数据库操作。</p>
+    </section>
     <section class="workspace-panel workspace-side-stack"><div class="tabs">
                     <button class="tab-btn active" data-tab="proxy">🌐 代理设置</button>
                     <button class="tab-btn" data-tab="webui">🔒 访问控制</button>
@@ -731,6 +735,24 @@
                     </div>
                 </div>
             </section>
+
+            <div class="modal" id="danger-confirm-modal">
+                <div class="modal-content" style="max-width: 420px;">
+                    <div class="modal-header">
+                        <h3>危险操作确认</h3>
+                        <button class="modal-close" id="close-danger-confirm-modal">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <p id="danger-confirm-message" style="margin-top: 0; color: var(--text-secondary);">
+                            该操作会清理过期数据，请确认后继续。
+                        </p>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" id="danger-cancel-btn" data-danger-default="cancel">取消</button>
+                            <button type="button" class="btn btn-danger" id="danger-confirm-btn">确认清理</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
 </div>
 {% endblock %}
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -30,86 +31,91 @@ def test_dashboard_page_requires_auth_and_renders_dashboard_hooks():
         assert 'data-page-key="dashboard"' in response.text
         assert 'id="workspace-theme-toggle"' in response.text
         assert 'href="/logout"' in response.text
+        assert re.search(r'<header class="page-head">[\s\S]*id="workspace-theme-toggle"', response.text)
+        assert re.search(
+            r'<footer class="workspace-sidebar-footer">[\s\S]*href="/logout"',
+            response.text,
+        )
+        page_head_match = re.search(
+            r'<header class="page-head">(?P<body>[\s\S]*?)</header>',
+            response.text,
+        )
+        assert page_head_match is not None
+        assert 'href="/logout"' not in page_head_match.group("body")
         assert "/static/js/dashboard.js?v=" in response.text
 
 
 def test_dashboard_template_contains_required_sections():
     template = Path("templates/dashboard.html").read_text(encoding="utf-8")
     assert "dashboard-page" in template
-    assert 'id="dashboard-hero-primary"' in template
-    assert 'id="dashboard-activity-feed"' in template
-    assert 'id="dashboard-quick-actions"' in template
+    assert 'id="dashboard-overview-summary"' in template
+    assert 'id="dashboard-overview-alerts"' in template
+    assert 'id="dashboard-overview-launchpad"' in template
 
 
-def test_dashboard_template_contains_new_hero_and_activity_sections():
+def test_dashboard_template_contains_overview_hub_sections():
     template = Path("templates/dashboard.html").read_text(encoding="utf-8")
-    assert 'id="dashboard-hero-primary"' in template
-    assert 'id="dashboard-metric-grid"' in template
-    assert 'id="dashboard-activity-feed"' in template
-    assert 'id="dashboard-quick-actions"' in template
+    assert "dashboard-overview-hub" in template
+    assert "dashboard-overview-section" in template
+    assert "启动台" in template
     assert "/static/css/dashboard_page.css" in template
 
 
-def test_dashboard_stylesheet_defines_dark_mode_polish_selectors():
+def test_dashboard_stylesheet_defines_overview_hub_dark_mode_selectors():
     stylesheet = Path("static/css/dashboard_page.css").read_text(encoding="utf-8")
-    assert '[data-theme="dark"] .dashboard-hero-primary' in stylesheet
-    assert '[data-theme="dark"] .dashboard-metric-card' in stylesheet
-    assert '[data-theme="dark"] .dashboard-quick-action--secondary' in stylesheet
+    assert ".dashboard-overview-summary-grid" in stylesheet
+    assert ".dashboard-launchpad-grid" in stylesheet
+    assert '[data-theme="dark"] .dashboard-overview-section' in stylesheet
+    assert '[data-theme="dark"] .dashboard-launchpad-card' in stylesheet
 
 
-def test_dashboard_script_loads_summary_endpoint_and_render_helpers():
+def test_dashboard_script_loads_summary_endpoint_and_overview_render_helpers():
     script = Path("static/js/dashboard.js").read_text(encoding="utf-8")
     assert "/dashboard/summary" in script
-    assert "renderDashboardHero" in script
-    assert "renderRecentActivity" in script
+    assert "renderOverviewSummary" in script
+    assert "renderOverviewAlerts" in script
+    assert "renderOverviewLaunchpad" in script
+    assert "renderDashboardLoadingState" in script
     assert "safeHref" in script
-    assert "dashboard-activity-item" in script
+    assert "dashboard-overview-summary" in script
 
 
-def test_dashboard_js_harness_renders_modern_hero_metrics_and_activity_feed():
-    result = run_dashboard_js_scenario("render_dashboard")
+def test_dashboard_js_harness_renders_overview_hub_with_safe_links():
+    result = run_dashboard_js_scenario("render_overview_hub")
 
-    metric_html = result["metric_html"]
-    assert "dashboard-metric-card" in metric_html
-    assert "dashboard-hero-copy" not in metric_html
+    summary_html = result["summary_html"]
+    assert "dashboard-summary-card" in summary_html
+    assert "注册任务" in summary_html
 
-    activity_html = result["activity_html"]
-    assert 'class="dashboard-activity-item"' in activity_html
-    assert "&lt;script&gt;" in activity_html
-    assert 'href="#"' in activity_html
-    assert 'href="https://example.com/activity"' in activity_html
-    assert "javascript:" not in activity_html
-    assert "data:" not in activity_html
+    alerts_html = result["alerts_html"]
+    assert 'class="dashboard-alert-item"' in alerts_html
+    assert "&lt;script&gt;" in alerts_html
+    assert 'href="#"' in alerts_html
+    assert 'href="https://example.com/activity"' in alerts_html
+    assert "javascript:" not in alerts_html
+    assert "data:" not in alerts_html
 
-    quick_actions_html = result["quick_actions_html"]
-    assert 'href="/registration-workbench"' in quick_actions_html
-    assert 'href="#"' in quick_actions_html
-    assert "javascript:" not in quick_actions_html
-    assert "data:" not in quick_actions_html
-
-
-def test_dashboard_js_harness_renders_metric_tones_and_buttonized_quick_actions():
-    result = run_dashboard_js_scenario("render_dashboard")
-    assert "dashboard-metric-card--registration" in result["metric_html"]
-    assert "dashboard-metric-value-badge--success-rate" in result["metric_html"]
-    assert "dashboard-quick-action--primary" in result["quick_actions_html"]
-    assert "dashboard-quick-action--secondary" in result["quick_actions_html"]
+    launchpad_html = result["launchpad_html"]
+    assert "dashboard-launchpad-card" in launchpad_html
+    assert 'href="/registration-workbench"' in launchpad_html
+    assert 'href="#"' in launchpad_html
+    assert "javascript:" not in launchpad_html
+    assert "data:" not in launchpad_html
 
 
-def test_dashboard_js_harness_rejects_invalid_metric_tone_tokens():
-    result = run_dashboard_js_scenario("render_metric_card_with_invalid_tone")
-    html = result["html"]
-    assert 'data-evil=' not in html
-    assert 'dashboard-metric-card--bad' not in html
-    assert 'dashboard-metric-value-badge--bad' not in html
-    assert 'class="dashboard-metric-card"' in html
-    assert 'class="dashboard-metric-value-badge"' in html
+def test_dashboard_js_harness_renders_loading_state_for_all_overview_sections():
+    result = run_dashboard_js_scenario("render_loading_state")
+    assert "加载中" in result["summary_html"]
+    assert "加载中" in result["alerts_html"]
+    assert "加载中" in result["launchpad_html"]
 
 
 def test_dashboard_js_harness_renders_error_state_without_invalid_ul_children():
     result = run_dashboard_js_scenario("render_error")
-    assert result["activity_html"].lstrip().startswith('<li class="dashboard-empty">')
-    assert "<p" not in result["activity_html"]
+    assert result["alerts_html"].lstrip().startswith('<li class="dashboard-empty">')
+    assert "<p" not in result["alerts_html"]
+    assert "Dashboard 加载失败" in result["summary_html"]
+    assert "Dashboard 加载失败" in result["launchpad_html"]
 
 
 def test_dashboard_js_harness_safe_href_rejects_protocol_relative_urls():
@@ -127,9 +133,10 @@ def test_dashboard_js_harness_dom_content_loaded_flow_mounts_all_sections_and_fe
     result = run_dashboard_js_scenario("dom_content_loaded_flow")
 
     assert result["fetch_paths"] == ["/api/dashboard/summary"]
-    assert "dashboard-metric-card" in result["metric_grid_html"]
-    assert 'class="dashboard-activity-item"' in result["activity_html"]
-    assert 'class="dashboard-quick-action' in result["quick_actions_html"]
+    assert "加载中" in result["loading_summary_html"]
+    assert "dashboard-summary-card" in result["summary_html"]
+    assert 'class="dashboard-alert-item"' in result["alerts_html"]
+    assert 'class="dashboard-launchpad-card"' in result["launchpad_html"]
 
 def test_dashboard_summary_api_requires_auth():
     app = create_app()
@@ -197,6 +204,7 @@ def test_dashboard_summary_api_returns_expected_nested_contract_for_authenticate
     assert "label" in quick_link
     assert "href" in quick_link
     assert "description" in quick_link
+    assert any(item.get("href") == "/run-center" for item in payload["quick_links"])
 
     assert isinstance(payload["recent_activity"], list)
     assert payload["recent_activity"]

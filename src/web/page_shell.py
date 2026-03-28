@@ -4,7 +4,12 @@ WORKSPACE_NAV = [
     {
         "group": "总览",
         "items": [
-            {"key": "dashboard", "label": "控制台总览", "href": "/"},
+            {
+                "key": "dashboard",
+                "label": "控制台总览",
+                "href": "/",
+                "icon": "dashboard",
+            },
         ],
     },
     {
@@ -14,14 +19,20 @@ WORKSPACE_NAV = [
                 "key": "registration_workbench",
                 "label": "注册工作台",
                 "href": "/registration-workbench",
+                "icon": "registration_workbench",
             },
-            {"key": "accounts", "label": "账号管理", "href": "/accounts"},
             {
-                "key": "scheduled_tasks",
-                "label": "定时任务",
-                "href": "/scheduled-tasks",
+                "key": "run_center",
+                "label": "运行中心",
+                "href": "/run-center",
+                "icon": "run_center",
             },
-            {"key": "payment", "label": "支付中心", "href": "/payment"},
+            {
+                "key": "accounts",
+                "label": "账号管理",
+                "href": "/accounts",
+                "icon": "accounts",
+            },
         ],
     },
     {
@@ -31,19 +42,38 @@ WORKSPACE_NAV = [
                 "key": "registration_experiments",
                 "label": "注册实验",
                 "href": "/registration-experiments",
+                "icon": "registration_experiments",
             },
             {
                 "key": "registration_batch_stats",
                 "label": "批次统计",
                 "href": "/registration-batch-stats",
+                "icon": "registration_batch_stats",
             },
         ],
     },
     {
-        "group": "配置",
+        "group": "支撑",
         "items": [
-            {"key": "email_services", "label": "邮箱服务", "href": "/email-services"},
-            {"key": "settings", "label": "系统设置", "href": "/settings"},
+            {
+                "key": "scheduled_tasks",
+                "label": "定时任务",
+                "href": "/scheduled-tasks",
+                "icon": "scheduled_tasks",
+            },
+            {
+                "key": "email_services",
+                "label": "邮箱服务",
+                "href": "/email-services",
+                "icon": "email_services",
+            },
+            {
+                "key": "settings",
+                "label": "系统设置",
+                "href": "/settings",
+                "icon": "settings",
+            },
+            {"key": "payment", "label": "支付中心", "href": "/payment", "icon": "payment"},
         ],
     },
 ]

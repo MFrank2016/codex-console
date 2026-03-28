@@ -1,0 +1,160 @@
+{% extends "_workspace_base.html" %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ '/static/css/run_center.css?v=' ~ static_version }}">
+{% endblock %}
+
+{% block page_content %}
+<section id="run-center-page" class="run-center-page">
+  <section id="run-center-summary-panel" class="workspace-panel run-center-panel">
+    <header class="run-center-panel-head">
+      <div>
+        <h2 class="run-center-panel-title">运行摘要</h2>
+        <p class="run-center-panel-subtitle">/run-center 负责承载统一运行视图与上下文跳转。</p>
+      </div>
+      <input id="run-center-control-scope" type="hidden" value="scheduled">
+    </header>
+    <div class="run-center-summary-grid">
+      <div class="run-center-summary-card">
+        <span class="run-center-summary-label">当前作用域</span>
+        <strong id="run-center-summary-scope">计划上下文</strong>
+      </div>
+      <div class="run-center-summary-card">
+        <span class="run-center-summary-label">来源页面</span>
+        <strong id="run-center-summary-source">scheduled-tasks</strong>
+      </div>
+    </div>
+    <div class="run-center-context-actions">
+      <a id="run-center-context-link" class="btn btn-secondary btn-sm" href="/scheduled-tasks?scope=scheduled&source=scheduled-tasks">返回上下文</a>
+      <button id="run-center-open-context-btn" class="btn btn-secondary btn-sm" type="button">打开来源页</button>
+      <button id="run-center-retry-btn" class="btn btn-primary btn-sm" type="button">基于当前上下文重试</button>
+    </div>
+  </section>
+
+  <section id="run-center-list-panel" class="workspace-panel run-center-panel">
+    <header class="run-center-panel-head">
+      <div>
+        <h2 class="run-center-panel-title">运行列表</h2>
+        <p class="run-center-panel-subtitle">统一筛选计划运行记录。</p>
+      </div>
+    </header>
+    <div class="filter-panel run-center-filter-panel">
+      <div class="filter-panel-grid filter-panel-grid--dense">
+        <div class="scheduled-filter-field">
+          <label class="scheduled-filter-label" for="scheduled-run-filter-task-type">任务类型</label>
+          <select id="scheduled-run-filter-task-type" class="form-select">
+            <option value="">全部任务类型</option>
+            <option value="cpa_cleanup">CPA 清理</option>
+            <option value="cpa_refill">CPA 补量</option>
+            <option value="account_refresh">账号刷新</option>
+          </select>
+        </div>
+        <div class="scheduled-filter-field">
+          <label class="scheduled-filter-label" for="scheduled-run-filter-status">运行状态</label>
+          <select id="scheduled-run-filter-status" class="form-select">
+            <option value="">全部状态</option>
+            <option value="running">运行中</option>
+            <option value="success">成功</option>
+            <option value="failed">失败</option>
+            <option value="skipped">已跳过</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
+        <div class="scheduled-filter-field">
+          <label class="scheduled-filter-label" for="scheduled-run-filter-started-from">开始时间从</label>
+          <input type="datetime-local" id="scheduled-run-filter-started-from" class="form-input">
+        </div>
+        <div class="scheduled-filter-field">
+          <label class="scheduled-filter-label" for="scheduled-run-filter-started-to">开始时间到</label>
+          <input type="datetime-local" id="scheduled-run-filter-started-to" class="form-input">
+        </div>
+      </div>
+      <div class="filter-panel-actions filter-panel-actions--dense">
+        <button id="scheduled-run-filter-apply-btn" class="btn btn-secondary btn-sm" type="button">应用筛选</button>
+        <button id="scheduled-run-filter-reset-btn" class="btn btn-secondary btn-sm" type="button">重置</button>
+      </div>
+    </div>
+    <div class="table-container table-shell">
+      <table id="scheduled-runs-table" class="data-table scheduled-dense-table scheduled-runs-grid">
+        <thead>
+          <tr>
+            <th>Run ID</th>
+            <th>计划</th>
+            <th>任务类型</th>
+            <th>触发源</th>
+            <th>状态</th>
+            <th>开始时间</th>
+            <th>结束时间</th>
+            <th>摘要</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="scheduled-runs-table-body">
+          <tr>
+            <td colspan="9">
+              <div class="empty-state">
+                <div class="empty-state-icon">⏳</div>
+                <div class="empty-state-title">运行记录加载中</div>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination-panel pagination-panel--dense">
+      <div id="scheduled-run-pagination-summary" class="pagination-summary-pill">第 1 / 1 页 · 共 0 条</div>
+      <div class="pagination-jump pagination-jump--dense">
+        <div class="pagination-jump-actions">
+          <button class="btn btn-secondary btn-sm" id="scheduled-run-prev-page" type="button">上一页</button>
+          <button class="btn btn-secondary btn-sm" id="scheduled-run-next-page" type="button">下一页</button>
+        </div>
+        <div class="pagination-jump-field">
+          <label for="scheduled-run-page-jump-input">跳转到</label>
+          <input type="number" id="scheduled-run-page-jump-input" class="form-input pagination-jump-input" min="1" step="1" inputmode="numeric" placeholder="页码">
+        </div>
+        <button class="btn btn-secondary btn-sm" id="scheduled-run-page-jump-btn" type="button">前往</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="run-center-log-panel" class="workspace-panel run-center-panel">
+    <header class="run-center-panel-head">
+      <div>
+        <h2 class="run-center-panel-title">日志面板</h2>
+        <p class="run-center-panel-subtitle">日志查看与实时状态控制统一放在运行中心。</p>
+      </div>
+    </header>
+    <div class="run-center-log-placeholder">
+      <p>点击运行项后，可在日志弹窗中继续查看详情。</p>
+    </div>
+  </section>
+</section>
+
+<div id="run-log-modal" class="modal">
+  <div class="modal-content scheduled-run-log-modal-content">
+    <div class="modal-header">
+      <h3>运行记录</h3>
+      <button class="modal-close" data-close-modal="run-log-modal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="run-log-status-bar" class="scheduled-run-console-status">
+        <span>未选择运行记录</span>
+      </div>
+      <div class="scheduled-run-console-toolbar">
+        <div class="scheduled-run-console-toolbar-group">
+          <button class="btn btn-secondary btn-sm" id="run-log-refresh-btn" type="button">刷新</button>
+          <button class="btn btn-secondary btn-sm" id="run-log-stop-btn" type="button">停止</button>
+        </div>
+      </div>
+      <div class="scheduled-run-log-shell">
+        <div id="run-log-console" class="console-log">暂无记录</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="{{ '/static/js/run_center_shared.js?v=' ~ static_version }}"></script>
+<script src="{{ '/static/js/run_center.js?v=' ~ static_version }}"></script>
+{% endblock %}

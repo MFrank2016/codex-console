@@ -151,23 +151,26 @@ function ensureFunction(name) {{
 async function main() {{
   const result = {{}};
 
-  if (scenarioName === 'render_dashboard') {{
+  if (scenarioName === 'render_overview_hub') {{
     const summary = sampleSummary();
-    ensureFunction('renderDashboardHero');
-    ensureFunction('renderRecentActivity');
-    ensureFunction('renderQuickActions');
-    result.metric_html = context.renderDashboardHero(summary);
-    result.activity_html = context.renderRecentActivity(summary.recent_activity);
-    result.quick_actions_html = context.renderQuickActions(summary.quick_links);
-  }} else if (scenarioName === 'render_metric_card_with_invalid_tone') {{
-    ensureFunction('renderMetricCard');
-    result.html = context.renderMetricCard('注册任务', '12', '运行中 3', 'bad" data-evil="1');
+    ensureFunction('renderOverviewSummary');
+    ensureFunction('renderOverviewAlerts');
+    ensureFunction('renderOverviewLaunchpad');
+    result.summary_html = context.renderOverviewSummary(summary);
+    result.alerts_html = context.renderOverviewAlerts(summary.recent_activity);
+    result.launchpad_html = context.renderOverviewLaunchpad(summary.quick_links);
+  }} else if (scenarioName === 'render_loading_state') {{
+    ensureFunction('renderDashboardLoadingState');
+    context.renderDashboardLoadingState();
+    result.summary_html = document.getElementById('dashboard-overview-summary').innerHTML;
+    result.alerts_html = document.getElementById('dashboard-overview-alerts').innerHTML;
+    result.launchpad_html = document.getElementById('dashboard-overview-launchpad').innerHTML;
   }} else if (scenarioName === 'render_error') {{
     ensureFunction('renderDashboardError');
     context.renderDashboardError(new Error('boom'));
-    result.metric_html = document.getElementById('dashboard-metric-grid').innerHTML;
-    result.activity_html = document.getElementById('dashboard-activity-feed').innerHTML;
-    result.quick_actions_html = document.getElementById('dashboard-quick-actions').innerHTML;
+    result.summary_html = document.getElementById('dashboard-overview-summary').innerHTML;
+    result.alerts_html = document.getElementById('dashboard-overview-alerts').innerHTML;
+    result.launchpad_html = document.getElementById('dashboard-overview-launchpad').innerHTML;
   }} else if (scenarioName === 'safe_href_matrix') {{
     ensureFunction('safeHref');
     result.relative_ok = context.safeHref('/registration-workbench');
@@ -181,13 +184,15 @@ async function main() {{
     }}
 
     // 触发真实主链路：DOMContentLoaded -> loadDashboardSummary -> mountDashboard
-    await domListeners.DOMContentLoaded();
+    const pending = domListeners.DOMContentLoaded();
+    result.loading_summary_html = document.getElementById('dashboard-overview-summary').innerHTML;
+    await pending;
     await flushPromises();
 
     result.fetch_paths = logs.fetchPaths;
-    result.metric_grid_html = document.getElementById('dashboard-metric-grid').innerHTML;
-    result.activity_html = document.getElementById('dashboard-activity-feed').innerHTML;
-    result.quick_actions_html = document.getElementById('dashboard-quick-actions').innerHTML;
+    result.summary_html = document.getElementById('dashboard-overview-summary').innerHTML;
+    result.alerts_html = document.getElementById('dashboard-overview-alerts').innerHTML;
+    result.launchpad_html = document.getElementById('dashboard-overview-launchpad').innerHTML;
   }} else {{
     throw new Error(`unknown scenario: ${{scenarioName}}`);
   }}
