@@ -234,4 +234,4 @@ def test_registration_workbench_page_requires_auth_and_renders_registration_hook
         response = client.get("/registration-workbench")
         assert response.status_code == 200
         assert 'id="registration-form"' in response.text
-        assert 'id="task-step-waterfall"' in response.text
+        assert 'id="task-step-waterfall"' not in response.text

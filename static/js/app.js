@@ -71,11 +71,6 @@ function isBatchRegistrationModeSelected() {
     return mode === 'batch' || mode === 'unlimited';
 }
 
-function shouldRenderSingleTaskSteps(task) {
-    const pipelineKey = task?.pipeline_key || currentTask?.pipeline_key || registrationStreamState?.task?.pipeline_key;
-    return pipelineKey !== 'codexgen_pipeline';
-}
-
 function normalizeTaskProxyIp(task) {
     const proxyIp = String(task?.proxy_ip || task?.result?.metadata?.proxy_ip || '').trim();
     return proxyIp || '—';
@@ -449,11 +444,10 @@ function renderRegistrationStreamStatus() {
 function syncRegistrationStreamPanels(previous, next, event) {
     renderRegistrationStreamStatus();
 
-    // 步骤瀑布流：仅在相关事件时刷新
+    // 单任务进度摘要：仅在相关事件时刷新
     if (event?.kind === 'snapshot' || event?.kind === 'task_step_updated') {
         rememberSingleTaskStart(next?.task, next?.taskProgress);
         renderSingleTaskProgressSummary(next?.taskProgress, next?.currentStep);
-        renderTaskSteps(Array.isArray(next?.steps) ? next.steps : []);
     }
 
     // 任务状态：仅在相关事件时刷新（保持最小侵入，避免影响旧逻辑）
@@ -560,7 +554,6 @@ const elements = {
     singleProgressStepText: document.getElementById('single-progress-step-text'),
     singleProgressElapsed: document.getElementById('single-progress-elapsed'),
     singleProgressBar: document.getElementById('single-progress-bar'),
-    taskStepWaterfall: document.getElementById('task-step-waterfall'),
     batchProgressSection: document.getElementById('batch-progress-section'),
     batchProgressElapsed: document.getElementById('batch-progress-elapsed'),
     batchProgressAvgElapsed: document.getElementById('batch-progress-avg-elapsed'),
@@ -2140,7 +2133,6 @@ function showTaskStatus(task) {
     }
     rememberSingleTaskStart(task, task.task_progress || registrationStreamState.taskProgress);
     renderSingleTaskProgressSummary(task.task_progress || registrationStreamState.taskProgress, registrationStreamState.currentStep);
-    renderTaskSteps(shouldRenderSingleTaskSteps(task) ? (task.steps || []) : []);
     renderSingleTaskElapsedClock();
     if (isTerminalTaskStatus(task.status)) {
         stopRegistrationRuntimeTicker();
@@ -2180,38 +2172,6 @@ async function refreshTaskDetail(taskUuid) {
         console.error('加载任务详情失败:', error);
         return null;
     }
-}
-
-function renderTaskSteps(steps) {
-    if (!elements.taskStepWaterfall) return;
-
-    const rows = Array.isArray(steps) ? steps : [];
-    if (rows.length === 0) {
-        elements.taskStepWaterfall.innerHTML = '';
-        elements.taskStepWaterfall.style.display = 'none';
-        return;
-    }
-
-    elements.taskStepWaterfall.innerHTML = rows.map((step, index) => {
-        const stepKey = escapeHtml(step.step_key || `step_${index + 1}`);
-        const status = escapeHtml(step.status || 'pending');
-        const errorHtml = step.error_message
-            ? `<div class="task-step-error">${escapeHtml(step.error_message)}</div>`
-            : '';
-        return `
-            <div class="task-step-card ${status}">
-                <div class="task-step-header">
-                    <span class="task-step-order">${index + 1}</span>
-                    <span class="task-step-key">${stepKey}</span>
-                </div>
-                <div class="task-step-meta">
-                    <span class="task-step-status">${status}</span>
-                </div>
-                ${errorHtml}
-            </div>
-        `;
-    }).join('');
-    elements.taskStepWaterfall.style.display = 'grid';
 }
 
 function normalizeProgressPercent(value) {
@@ -2256,7 +2216,6 @@ function showBatchStatus(batch) {
     elements.taskStatusBadge.style.display = 'none';
     rememberBatchTaskStart(batch);
     renderSingleTaskProgressSummary(null, null);
-    renderTaskSteps([]);
     elements.batchProgressText.textContent = isUnlimited ? '0/∞' : `0/${batch.count}`;
     elements.batchProgressPercent.textContent = isUnlimited ? '运行中' : '0%';
     elements.progressBar.style.width = isUnlimited ? '100%' : '0%';

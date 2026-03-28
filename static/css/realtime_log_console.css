@@ -26,14 +26,14 @@
   background: var(--log-console-bg);
   border: 1px solid var(--log-console-border);
   border-radius: 12px;
-  padding: 12px;
+  padding: 10px;
   overflow: auto;
 }
 
 .console-log.realtime-log-console-shell {
   background: var(--log-console-bg);
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: 1.35;
   position: relative;
 }
 
@@ -41,8 +41,8 @@
   background: var(--log-console-bg);
   border: 1px solid var(--log-console-border);
   color: var(--text-primary);
-  padding: 12px;
-  line-height: 1.5;
+  padding: 10px;
+  line-height: 1.35;
 }
 
 .console-log.realtime-log-console-shell::before {
@@ -53,15 +53,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   font-size: 0.75rem;
   color: var(--log-console-muted);
 }
 
 .realtime-log-states {
   display: grid;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 6px;
 }
 
 .realtime-log-empty,
@@ -77,16 +77,16 @@
 
 .realtime-log-lines {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .realtime-log-line {
   display: grid;
   grid-template-columns: 72px 56px minmax(0, 1fr);
-  gap: 8px;
+  gap: 6px;
   align-items: start;
   font-size: 0.8125rem;
-  line-height: 1.35;
+  line-height: 1.2;
 }
 
 .realtime-log-time {
@@ -120,7 +120,7 @@
 .realtime-log-line-rate-limit {
   background: var(--log-rate-limit-bg);
   border-radius: 8px;
-  padding: 4px 6px;
+  padding: 2px 4px;
 }
 
 .realtime-log-tag {

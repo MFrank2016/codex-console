@@ -549,7 +549,7 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  switchWorkbenchView,\n  initWorkbenchTabs,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  buildRegistrationFailureQueryParams,\n  loadRegistrationFailureAnalysis,\n  loadRegistrationFailureSummary,\n  loadRegistrationFailureList,\n  loadRecentRegistrationTasks,\n  renderRecentRegistrationTasks,\n  renderRegistrationFailureRows,\n  openRegistrationFailureDetail,\n  openRegistrationFailureDetailByIndex,\n  closeRegistrationFailureDetail,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  buildRunCenterHref,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  switchWorkbenchView,\n  initWorkbenchTabs,\n  reduceRegistrationStream,\n  renderSingleTaskProgressSummary,\n  buildRegistrationFailureQueryParams,\n  loadRegistrationFailureAnalysis,\n  loadRegistrationFailureSummary,\n  loadRegistrationFailureList,\n  loadRecentRegistrationTasks,\n  renderRecentRegistrationTasks,\n  renderRegistrationFailureRows,\n  openRegistrationFailureDetail,\n  openRegistrationFailureDetailByIndex,\n  closeRegistrationFailureDetail,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  buildRunCenterHref,\n  elements,\n}};`,
   context,
 );
 
@@ -691,20 +691,12 @@ async function runScenario() {{
         enabled_request: enabledRequest,
       }};
     }}
-    case 'render_task_steps': {{
-      exported.renderTaskSteps([
-        {{ step_key: 'create_email', status: 'completed', duration_ms: 123 }},
-        {{ step_key: 'submit_login_email', status: 'failed', duration_ms: 456, error_message: 'timeout' }},
-      ]);
-      return {{
-        waterfall_html: getElement('task-step-waterfall').innerHTML,
-      }};
-    }}
     case 'single_task_step_refresh': {{
       await exported.handleSingleRegistration({{ email_service_type: 'tempmail', pipeline_key: 'current_pipeline' }});
       return {{
         api_get_paths: logs.apiGetPaths.slice(),
         waterfall_html: getElement('task-step-waterfall').innerHTML,
+        waterfall_display: getElement('task-step-waterfall').style.display || '',
       }};
     }}
     case 'codexgen_single_task_hides_steps': {{

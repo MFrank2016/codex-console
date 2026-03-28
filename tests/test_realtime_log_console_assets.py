@@ -52,6 +52,18 @@ def test_realtime_log_console_stylesheet_resets_legacy_console_mask_and_shadow()
     assert "content: none;" in stylesheet
 
 
+def test_realtime_log_console_stylesheet_uses_compact_line_spacing():
+    stylesheet = Path("static/css/realtime_log_console.css").read_text(encoding="utf-8")
+    assert ".console-log.realtime-log-console-shell" in stylesheet
+    assert "line-height: 1.35;" in stylesheet
+    assert ".realtime-log-lines" in stylesheet
+    assert "gap: 2px;" in stylesheet
+    assert ".realtime-log-line" in stylesheet
+    assert "line-height: 1.2;" in stylesheet
+    assert ".realtime-log-line-rate-limit" in stylesheet
+    assert "padding: 2px 4px;" in stylesheet
+
+
 def test_realtime_log_console_marks_rate_limit_entries():
     result = run_realtime_log_scenario("rate_limit_entry_highlight")
     assert result["has_rate_limit_class"] is True

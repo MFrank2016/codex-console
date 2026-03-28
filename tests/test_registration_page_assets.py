@@ -27,7 +27,7 @@ def test_registration_workbench_page_requires_auth_and_renders_workspace_shell_h
         assert response.status_code == 200
         assert 'data-page-key="registration_workbench"' in response.text
         assert 'id="registration-form"' in response.text
-        assert 'id="task-step-waterfall"' in response.text
+        assert 'id="task-step-waterfall"' not in response.text
         assert "/static/js/registration_stream.js?v=" in response.text
         assert response.text.index("/static/js/registration_stream.js?v=") < response.text.index("/static/js/app.js?v=")
         assert 'href="/registration-workbench"' in response.text
@@ -53,12 +53,12 @@ def test_registration_template_contains_unlimited_mode_and_domain_stats_containe
     assert 'id="batch-domain-stats"' in template
 
 
-def test_registration_template_contains_pipeline_selector_and_task_step_waterfall():
+def test_registration_template_contains_pipeline_selector_without_task_step_waterfall():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     assert 'id="pipeline-key"' in template
     assert 'value="current_pipeline"' in template
     assert 'value="codexgen_pipeline"' in template
-    assert 'id="task-step-waterfall"' in template
+    assert 'id="task-step-waterfall"' not in template
 
 
 def test_registration_template_loads_registration_stream_before_app_js():
@@ -234,28 +234,17 @@ def test_app_js_builds_use_proxy_request_matrix_from_config_controls():
     assert result["enabled_request"]["proxy"] == "http://manual-static:8000"
 
 
-def test_app_js_renders_task_step_waterfall_html():
-    result = run_app_js_scenario("render_task_steps")
-    assert "create_email" in result["waterfall_html"]
-    assert "completed" in result["waterfall_html"]
-    assert "submit_login_email" in result["waterfall_html"]
-    assert "timeout" in result["waterfall_html"]
-    assert "123ms" not in result["waterfall_html"]
-    assert "456ms" not in result["waterfall_html"]
-
-
-def test_app_js_single_task_flow_fetches_task_detail_and_renders_steps():
+def test_app_js_single_task_flow_fetches_task_detail_without_rendering_step_waterfall():
     result = run_app_js_scenario("single_task_step_refresh")
     assert "/registration/tasks/task-single-01" in result["api_get_paths"]
-    assert "create_email" in result["waterfall_html"]
-    assert "running" in result["waterfall_html"]
-    assert "88ms" not in result["waterfall_html"]
+    assert result["waterfall_html"] == ""
+    assert result["waterfall_display"] in {"", "none"}
 
 
-def test_app_js_hides_codexgen_single_task_step_waterfall():
+def test_app_js_keeps_codexgen_single_task_step_waterfall_absent():
     result = run_app_js_scenario("codexgen_single_task_hides_steps")
     assert result["waterfall_html"] == ""
-    assert result["waterfall_display"] == "none"
+    assert result["waterfall_display"] in {"", "none"}
 
 
 def test_app_js_renders_single_task_progress_summary_instead_of_waterfall_primary_view():
@@ -521,11 +510,11 @@ def test_shared_stylesheet_defines_filter_and_pagination_panel_selectors():
     assert ".pagination-jump-input" in stylesheet
 
 
-def test_shared_stylesheet_defines_task_step_waterfall_selectors():
+def test_shared_stylesheet_removes_task_step_waterfall_selectors():
     stylesheet = Path("static/css/style.css").read_text(encoding="utf-8")
-    assert ".task-step-waterfall" in stylesheet
-    assert ".task-step-card" in stylesheet
-    assert ".task-step-meta" in stylesheet
+    assert ".task-step-waterfall" not in stylesheet
+    assert ".task-step-card" not in stylesheet
+    assert ".task-step-meta" not in stylesheet
 
 
 def _get_div_by_class_tokens(template: str, class_tokens: set[str]) -> str | None:

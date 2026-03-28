@@ -177,10 +177,6 @@
   color: var(--text-primary);
 }
 
-.task-step-waterfall-secondary {
-  opacity: 0.78;
-}
-
 .registration-workbench-guidance {
   display: grid;
   gap: var(--spacing-md);
