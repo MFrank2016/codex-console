@@ -242,6 +242,11 @@ function initEventListeners() {
     if (elements.emailSuffixBlacklistForm) {
         elements.emailSuffixBlacklistForm.addEventListener('submit', handleSaveEmailSuffixBlacklist);
     }
+    if (elements.emailSuffixBlacklistTable) {
+        elements.emailSuffixBlacklistTable.addEventListener('click', (event) => {
+            void handleSettingsDelegatedTableClick(event);
+        });
+    }
 
     // 备份数据库
     if (elements.backupBtn) {
@@ -340,6 +345,12 @@ function initEventListeners() {
             updateSelectedServices();
         });
     }
+    if (elements.emailServicesTable) {
+        elements.emailServicesTable.addEventListener('change', handleSettingsDelegatedTableChange);
+        elements.emailServicesTable.addEventListener('click', (event) => {
+            void handleSettingsDelegatedTableClick(event);
+        });
+    }
 
     // 代理列表相关
     if (elements.proxyBatchImportForm) {
@@ -377,6 +388,11 @@ function initEventListeners() {
                 }
             });
             updateProxySelectionUi();
+        });
+    }
+    if (elements.proxiesTable) {
+        elements.proxiesTable.addEventListener('click', (event) => {
+            void handleSettingsDelegatedTableClick(event);
         });
     }
 
@@ -457,6 +473,11 @@ function initEventListeners() {
     if (elements.testTmServiceBtn) {
         elements.testTmServiceBtn.addEventListener('click', handleTestTmService);
     }
+    if (elements.tmServicesTable) {
+        elements.tmServicesTable.addEventListener('click', (event) => {
+            void handleSettingsDelegatedTableClick(event);
+        });
+    }
 
     // CPA 服务管理
     if (elements.addCpaServiceBtn) {
@@ -479,6 +500,11 @@ function initEventListeners() {
     if (elements.testCpaServiceBtn) {
         elements.testCpaServiceBtn.addEventListener('click', handleTestCpaService);
     }
+    if (elements.cpaServicesTable) {
+        elements.cpaServicesTable.addEventListener('click', (event) => {
+            void handleSettingsDelegatedTableClick(event);
+        });
+    }
 
     // Sub2API 服务管理
     if (elements.addSub2ApiServiceBtn) {
@@ -500,6 +526,11 @@ function initEventListeners() {
     }
     if (elements.testSub2ApiServiceBtn) {
         elements.testSub2ApiServiceBtn.addEventListener('click', handleTestSub2ApiService);
+    }
+    if (elements.sub2ApiServicesTable) {
+        elements.sub2ApiServicesTable.addEventListener('click', (event) => {
+            void handleSettingsDelegatedTableClick(event);
+        });
     }
 }
 
@@ -627,11 +658,30 @@ function renderEmailServices(services) {
         return;
     }
 
-    elements.emailServicesTable.innerHTML = services.map(service => `
+    elements.emailServicesTable.innerHTML = services.map(service => renderEmailServiceRow(service)).join('');
+}
+
+function renderEmailServiceActionButtons(service) {
+    return `
+        <div class="action-buttons">
+            <button class="btn btn-ghost btn-sm" data-email-service-action="test" data-service-id="${service.id}" title="测试">
+                🔌
+            </button>
+            <button class="btn btn-ghost btn-sm" data-email-service-action="toggle" data-service-id="${service.id}" data-next-enabled="${!service.enabled}" title="${service.enabled ? '禁用' : '启用'}">
+                ${service.enabled ? '🔒' : '🔓'}
+            </button>
+            <button class="btn btn-ghost btn-sm" data-email-service-action="delete" data-service-id="${service.id}" title="删除">
+                🗑️
+            </button>
+        </div>
+    `;
+}
+
+function renderEmailServiceRow(service) {
+    return `
         <tr data-service-id="${service.id}">
             <td>
-                <input type="checkbox" class="service-checkbox" data-id="${service.id}"
-                    onchange="updateSelectedServices()">
+                <input type="checkbox" class="service-checkbox" data-id="${service.id}">
             </td>
             <td>${escapeHtml(service.name)}</td>
             <td>${getServiceTypeText(service.service_type)}</td>
@@ -639,20 +689,10 @@ function renderEmailServices(services) {
             <td>${service.priority}</td>
             <td>${format.date(service.last_used)}</td>
             <td>
-                <div class="action-buttons">
-                    <button class="btn btn-ghost btn-sm" onclick="testService(${service.id})" title="测试">
-                        🔌
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="toggleService(${service.id}, ${!service.enabled})" title="${service.enabled ? '禁用' : '启用'}">
-                        ${service.enabled ? '🔒' : '🔓'}
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="deleteService(${service.id})" title="删除">
-                        🗑️
-                    </button>
-                </div>
+                ${renderEmailServiceActionButtons(service)}
             </td>
         </tr>
-    `).join('');
+    `;
 }
 
 // 加载数据库信息
@@ -694,6 +734,23 @@ function normalizeEmailSuffixInput(value) {
     return String(value || '').trim().replace(/^@+/, '').toLowerCase();
 }
 
+function buildSettingsTableFeedbackRow(message, options = {}) {
+    const colspan = Number.isFinite(options.colspan) ? options.colspan : 5;
+    const toneClass = options.tone === 'danger'
+        ? 'settings-table-feedback-cell--danger'
+        : 'settings-table-feedback-cell--muted';
+    return `
+        <tr>
+            <td colspan="${colspan}" class="settings-table-feedback-cell ${toneClass}">${escapeHtml(message || '')}</td>
+        </tr>
+    `;
+}
+
+function setSettingsTableFeedback(tableElement, message, options = {}) {
+    if (!tableElement) return;
+    tableElement.innerHTML = buildSettingsTableFeedbackRow(message, options);
+}
+
 async function loadEmailSuffixBlacklist() {
     if (!elements.emailSuffixBlacklistTable) return;
     try {
@@ -701,11 +758,11 @@ async function loadEmailSuffixBlacklist() {
         const items = Array.isArray(result) ? result : (result.items || []);
         renderEmailSuffixBlacklist(items);
     } catch (error) {
-        elements.emailSuffixBlacklistTable.innerHTML = `
-            <tr>
-                <td colspan="5" style="text-align:center;color:var(--danger-color);padding:20px;">加载失败: ${escapeHtml(error.message || '未知错误')}</td>
-            </tr>
-        `;
+        setSettingsTableFeedback(
+            elements.emailSuffixBlacklistTable,
+            `加载失败: ${error.message || '未知错误'}`,
+            { tone: 'danger' },
+        );
     }
 }
 
@@ -713,35 +770,272 @@ function renderEmailSuffixBlacklist(items) {
     if (!elements.emailSuffixBlacklistTable) return;
     emailSuffixBlacklistItems = Array.isArray(items) ? items : [];
     if (emailSuffixBlacklistItems.length === 0) {
-        elements.emailSuffixBlacklistTable.innerHTML = `
-            <tr>
-                <td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">暂无黑名单后缀，点击「添加后缀」新增</td>
-            </tr>
-        `;
+        setSettingsTableFeedback(
+            elements.emailSuffixBlacklistTable,
+            '暂无黑名单后缀，点击「添加后缀」新增',
+        );
         return;
     }
-    elements.emailSuffixBlacklistTable.innerHTML = emailSuffixBlacklistItems.map(item => {
-        const normalizedId = Number(item.id);
-        const hasValidId = Number.isFinite(normalizedId);
-        const actionHtml = hasValidId
-            ? `
-                <button class="btn btn-secondary btn-sm" onclick="openEmailSuffixBlacklistModalById(${normalizedId})">编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="toggleEmailSuffixBlacklistItem(${normalizedId}, ${!item.enabled})">${item.enabled ? '禁用' : '启用'}</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteEmailSuffixBlacklistItem(${normalizedId})">删除</button>
-            `
-            : '<span style="color:var(--text-muted);">ID 无效</span>';
-        return `
-            <tr>
-                <td>${escapeHtml(item.id ?? '-')}</td>
-                <td>${escapeHtml(item.suffix || '')}</td>
-                <td>${item.enabled ? '✅ 已启用' : '⭕ 已禁用'}</td>
-                <td>${escapeHtml(item.reason || '-')}</td>
-                <td style="white-space:nowrap;">
-                    ${actionHtml}
-                </td>
-            </tr>
-        `;
-    }).join('');
+    elements.emailSuffixBlacklistTable.innerHTML = emailSuffixBlacklistItems.map(item => renderEmailSuffixBlacklistRow(item)).join('');
+}
+
+function renderEmailSuffixBlacklistActionButtons(item) {
+    const normalizedId = Number(item.id);
+    if (!Number.isFinite(normalizedId)) {
+        return '<span class="settings-text-muted">ID 无效</span>';
+    }
+    return `
+        <button class="btn btn-secondary btn-sm" data-blacklist-action="edit" data-blacklist-id="${normalizedId}">编辑</button>
+        <button class="btn btn-secondary btn-sm" data-blacklist-action="toggle" data-blacklist-id="${normalizedId}" data-next-enabled="${!item.enabled}">${item.enabled ? '禁用' : '启用'}</button>
+        <button class="btn btn-danger btn-sm" data-blacklist-action="delete" data-blacklist-id="${normalizedId}">删除</button>
+    `;
+}
+
+function renderEmailSuffixBlacklistRow(item) {
+    return `
+        <tr>
+            <td>${escapeHtml(item.id ?? '-')}</td>
+            <td>${escapeHtml(item.suffix || '')}</td>
+            <td>${item.enabled ? '✅ 已启用' : '⭕ 已禁用'}</td>
+            <td>${escapeHtml(item.reason || '-')}</td>
+            <td class="settings-cell-nowrap">
+                ${renderEmailSuffixBlacklistActionButtons(item)}
+            </td>
+        </tr>
+    `;
+}
+
+function hasClassToken(element, token) {
+    return String(element?.className || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .includes(token);
+}
+
+function getClosestDelegatedTarget(target, selector) {
+    if (!target || typeof target.closest !== 'function') return null;
+    return target.closest(selector);
+}
+
+function handleSettingsDelegatedTableChange(event) {
+    const target = event?.target;
+    if (hasClassToken(target, 'service-checkbox') && target?.dataset?.id) {
+        updateSelectedServices();
+    }
+}
+
+function renderManagedServiceActionButtons(serviceType, service) {
+    const serviceId = Number.parseInt(service?.id, 10);
+    if (!Number.isFinite(serviceId)) {
+        return '';
+    }
+
+    const escapedServiceType = escapeHtml(serviceType);
+    const escapedServiceName = escapeHtml(service?.name || '');
+
+    return `
+        <button
+            class="btn btn-secondary btn-sm"
+            data-managed-service-action="edit"
+            data-managed-service-type="${escapedServiceType}"
+            data-service-id="${serviceId}"
+            data-service-name="${escapedServiceName}"
+        >编辑</button>
+        <button
+            class="btn btn-secondary btn-sm"
+            data-managed-service-action="test"
+            data-managed-service-type="${escapedServiceType}"
+            data-service-id="${serviceId}"
+            data-service-name="${escapedServiceName}"
+        >测试</button>
+        <button
+            class="btn btn-danger btn-sm"
+            data-managed-service-action="delete"
+            data-managed-service-type="${escapedServiceType}"
+            data-service-id="${serviceId}"
+            data-service-name="${escapedServiceName}"
+        >删除</button>
+    `;
+}
+
+function renderManagedServiceStatus(enabled) {
+    return enabled ? '✅' : '⭕';
+}
+
+function renderManagedServiceRow(serviceType, service) {
+    return `
+        <tr>
+            <td>${escapeHtml(service.name)}</td>
+            <td class="settings-service-url">${escapeHtml(service.api_url)}</td>
+            <td class="settings-cell-center" title="${service.enabled ? '已启用' : '已禁用'}">${renderManagedServiceStatus(service.enabled)}</td>
+            <td class="settings-cell-center">${service.priority}</td>
+            <td class="settings-cell-nowrap">
+                ${renderManagedServiceActionButtons(serviceType, service)}
+            </td>
+        </tr>
+    `;
+}
+
+function renderManagedServiceTable(tableElement, services, options = {}) {
+    if (!tableElement) return;
+    if (!services || services.length === 0) {
+        setSettingsTableFeedback(tableElement, options.emptyMessage || '暂无服务');
+        return;
+    }
+    tableElement.innerHTML = services.map(service => renderManagedServiceRow(options.serviceType, service)).join('');
+}
+
+async function handleManagedSettingsServiceAction(serviceType, action, serviceId, serviceName) {
+    switch (serviceType) {
+        case 'tm':
+            switch (action) {
+                case 'edit':
+                    await editTmService(serviceId);
+                    return;
+                case 'test':
+                    await testTmServiceById(serviceId);
+                    return;
+                case 'delete':
+                    await deleteTmService(serviceId, serviceName);
+                    return;
+                default:
+                    return;
+            }
+        case 'cpa':
+            switch (action) {
+                case 'edit':
+                    await editCpaService(serviceId);
+                    return;
+                case 'test':
+                    await testCpaServiceById(serviceId);
+                    return;
+                case 'delete':
+                    await deleteCpaService(serviceId, serviceName);
+                    return;
+                default:
+                    return;
+            }
+        case 'sub2api':
+            switch (action) {
+                case 'edit':
+                    await editSub2ApiService(serviceId);
+                    return;
+                case 'test':
+                    await testSub2ApiServiceById(serviceId);
+                    return;
+                case 'delete':
+                    await deleteSub2ApiService(serviceId, serviceName);
+                    return;
+                default:
+                    return;
+            }
+        default:
+            return;
+    }
+}
+
+async function handleSettingsDelegatedTableClick(event) {
+    const target = event?.target;
+
+    const serviceButton = getClosestDelegatedTarget(target, '[data-email-service-action][data-service-id]');
+    if (serviceButton) {
+        const serviceId = Number.parseInt(serviceButton.dataset.serviceId || '', 10);
+        const action = serviceButton.dataset.emailServiceAction;
+        if (!Number.isFinite(serviceId) || !action) return;
+
+        switch (action) {
+            case 'test':
+                await testService(serviceId);
+                return;
+            case 'toggle':
+                await toggleService(serviceId, serviceButton.dataset.nextEnabled === 'true');
+                return;
+            case 'delete':
+                await deleteService(serviceId);
+                return;
+            default:
+                return;
+        }
+    }
+
+    const managedServiceButton = getClosestDelegatedTarget(
+        target,
+        '[data-managed-service-action][data-managed-service-type][data-service-id]',
+    );
+    if (managedServiceButton) {
+        const serviceId = Number.parseInt(managedServiceButton.dataset.serviceId || '', 10);
+        const action = managedServiceButton.dataset.managedServiceAction;
+        const serviceType = managedServiceButton.dataset.managedServiceType;
+        if (!Number.isFinite(serviceId) || !action || !serviceType) return;
+
+        await handleManagedSettingsServiceAction(
+            serviceType,
+            action,
+            serviceId,
+            managedServiceButton.dataset.serviceName || '',
+        );
+        return;
+    }
+
+    const proxyActionButton = getClosestDelegatedTarget(target, '[data-proxy-action][data-proxy-id]');
+    if (proxyActionButton) {
+        const proxyId = Number.parseInt(proxyActionButton.dataset.proxyId || '', 10);
+        const action = proxyActionButton.dataset.proxyAction;
+        if (!Number.isFinite(proxyId) || !action) return;
+
+        if (action === 'toggle-more') {
+            event?.stopPropagation?.();
+            toggleSettingsMoreMenu(proxyActionButton);
+            return;
+        }
+
+        const proxyDropdownMenu = getClosestDelegatedTarget(proxyActionButton, '.dropdown-menu');
+        if (proxyDropdownMenu) {
+            event?.preventDefault?.();
+            closeSettingsMoreMenu(proxyActionButton);
+        }
+
+        switch (action) {
+            case 'edit':
+                await editProxyItem(proxyId);
+                return;
+            case 'test':
+                await testProxyItem(proxyId);
+                return;
+            case 'toggle':
+                await toggleProxyItem(proxyId, proxyActionButton.dataset.nextEnabled === 'true');
+                return;
+            case 'set-default':
+                await handleSetProxyDefault(proxyId);
+                return;
+            case 'delete':
+                await deleteProxyItem(proxyId);
+                return;
+            default:
+                return;
+        }
+    }
+
+    const blacklistButton = getClosestDelegatedTarget(target, '[data-blacklist-action][data-blacklist-id]');
+    if (blacklistButton) {
+        const blacklistId = Number.parseInt(blacklistButton.dataset.blacklistId || '', 10);
+        const action = blacklistButton.dataset.blacklistAction;
+        if (!Number.isFinite(blacklistId) || !action) return;
+
+        switch (action) {
+            case 'edit':
+                openEmailSuffixBlacklistModalById(blacklistId);
+                return;
+            case 'toggle':
+                await toggleEmailSuffixBlacklistItem(blacklistId, blacklistButton.dataset.nextEnabled === 'true');
+                return;
+            case 'delete':
+                await deleteEmailSuffixBlacklistItem(blacklistId);
+                return;
+            default:
+                return;
+        }
+    }
 }
 
 function closeEmailSuffixBlacklistModal() {
@@ -1121,28 +1415,104 @@ function getProxyLocationLabel(proxy) {
     return [proxy.country, proxy.city].filter(Boolean).join(' / ') || '-';
 }
 
+function renderProxyDefaultAction(proxy) {
+    return proxy.is_default
+        ? '<span class="status-badge active">默认</span>'
+        : `<button class="btn btn-ghost btn-sm" data-proxy-action="set-default" data-proxy-id="${proxy.id}" title="设为默认">设默认</button>`;
+}
+
+function renderProxyActionMenu(proxy) {
+    return `
+        <div class="settings-action-row">
+            <button class="btn btn-secondary btn-sm" data-proxy-action="edit" data-proxy-id="${proxy.id}">编辑</button>
+            <div class="dropdown settings-dropdown">
+                <button class="btn btn-secondary btn-sm" data-proxy-action="toggle-more" data-proxy-id="${proxy.id}">更多</button>
+                <div class="dropdown-menu settings-dropdown-menu--compact">
+                    <a href="#" class="dropdown-item" data-proxy-action="test" data-proxy-id="${proxy.id}">测试</a>
+                    <a href="#" class="dropdown-item" data-proxy-action="toggle" data-proxy-id="${proxy.id}" data-next-enabled="${!proxy.enabled}">${proxy.enabled ? '禁用' : '启用'}</a>
+                    ${!proxy.is_default ? `<a href="#" class="dropdown-item" data-proxy-action="set-default" data-proxy-id="${proxy.id}">设为默认</a>` : ''}
+                </div>
+            </div>
+            <button class="btn btn-danger btn-sm" data-proxy-action="delete" data-proxy-id="${proxy.id}">删除</button>
+        </div>
+    `;
+}
+
+function renderProxyRow(proxy) {
+    return `
+        <tr data-proxy-id="${proxy.id}">
+            <td>
+                <input
+                    type="checkbox"
+                    class="proxy-checkbox"
+                    data-id="${proxy.id}"
+                    aria-label="选择代理 ${escapeHtml(proxy.name)}"
+                    ${selectedProxyIds.has(proxy.id) ? 'checked' : ''}
+                >
+            </td>
+            <td>${proxy.id}</td>
+            <td>
+                <div>${escapeHtml(proxy.name)}</div>
+                <div class="settings-meta-text">${escapeHtml(proxy.host)}:${proxy.port}</div>
+            </td>
+            <td>${escapeHtml(getProxyLocationLabel(proxy))}</td>
+            <td><span class="badge">${(proxy.type || 'http').toUpperCase()}</span></td>
+            <td>
+                <code>${escapeHtml(proxy.host)}:${proxy.port}</code>
+                ${proxy.username ? `<div class="settings-meta-text">账号：${escapeHtml(proxy.username)}</div>` : ''}
+            </td>
+            <td>
+                ${renderProxyDefaultAction(proxy)}
+            </td>
+            <td title="${proxy.enabled ? '已启用' : '已禁用'}">${proxy.enabled ? '✅' : '⭕'}</td>
+            <td>${format.date(proxy.last_used)}</td>
+            <td>
+                ${renderProxyActionMenu(proxy)}
+            </td>
+        </tr>
+    `;
+}
+
+function getProxyImportResultStatusText(status) {
+    return status === 'success'
+        ? '✅ 成功'
+        : status === 'skipped'
+            ? '⏭️ 跳过'
+            : '❌ 失败';
+}
+
+function getProxyImportResultDetail(item) {
+    return item.status === 'success'
+        ? escapeHtml(item.proxy?.name || `${item.proxy?.host || ''}:${item.proxy?.port || ''}`)
+        : escapeHtml(item.reason || '-');
+}
+
+function renderProxyImportResultItem(item) {
+    return `
+        <li class="settings-import-result-item">
+            <strong>第 ${item.line_no} 行</strong>
+            <span class="settings-import-result-status">${getProxyImportResultStatusText(item.status)}</span>
+            <div class="settings-import-result-detail">${getProxyImportResultDetail(item)}</div>
+        </li>
+    `;
+}
+
+function renderProxyImportResultDetails(items) {
+    if (!items?.length) {
+        return '';
+    }
+    return `
+        <div class="import-errors settings-import-errors">
+            <strong>处理结果：</strong>
+            <ul class="settings-import-errors-list">${items.map(item => renderProxyImportResultItem(item)).join('')}</ul>
+        </div>
+    `;
+}
+
 function renderProxyImportResult(result) {
     if (!elements.proxyImportResult) {
         return;
     }
-
-    const rows = (result.results || []).map(item => {
-        const statusText = item.status === 'success'
-            ? '✅ 成功'
-            : item.status === 'skipped'
-                ? '⏭️ 跳过'
-                : '❌ 失败';
-        const detail = item.status === 'success'
-            ? escapeHtml(item.proxy?.name || `${item.proxy?.host || ''}:${item.proxy?.port || ''}`)
-            : escapeHtml(item.reason || '-');
-        return `
-            <li style="margin-top: 4px; line-height: 1.5;">
-                <strong>第 ${item.line_no} 行</strong>
-                <span style="margin-left: 8px;">${statusText}</span>
-                <div style="color: var(--text-muted); margin-top: 2px;">${detail}</div>
-            </li>
-        `;
-    }).join('');
 
     elements.proxyImportResult.style.display = 'block';
     elements.proxyImportResult.innerHTML = `
@@ -1151,7 +1521,7 @@ function renderProxyImportResult(result) {
             <span>⏭️ 跳过: <strong>${result.skipped || 0}</strong></span>
             <span>❌ 失败: <strong>${result.failed || 0}</strong></span>
         </div>
-        ${rows ? `<div class="import-errors" style="margin-top: var(--spacing-sm);"><strong>处理结果：</strong><ul style="margin: 8px 0 0; padding-left: 20px;">${rows}</ul></div>` : ''}
+        ${renderProxyImportResultDetails(result.results || [])}
     `;
 }
 
@@ -1307,52 +1677,7 @@ function renderProxies(proxies) {
         return;
     }
 
-    elements.proxiesTable.innerHTML = proxies.map(proxy => `
-        <tr data-proxy-id="${proxy.id}">
-            <td>
-                <input
-                    type="checkbox"
-                    class="proxy-checkbox"
-                    data-id="${proxy.id}"
-                    aria-label="选择代理 ${escapeHtml(proxy.name)}"
-                    ${selectedProxyIds.has(proxy.id) ? 'checked' : ''}
-                >
-            </td>
-            <td>${proxy.id}</td>
-            <td>
-                <div>${escapeHtml(proxy.name)}</div>
-                <div style="color: var(--text-muted); font-size: 0.75rem; margin-top: 4px;">${escapeHtml(proxy.host)}:${proxy.port}</div>
-            </td>
-            <td>${escapeHtml(getProxyLocationLabel(proxy))}</td>
-            <td><span class="badge">${(proxy.type || 'http').toUpperCase()}</span></td>
-            <td>
-                <code>${escapeHtml(proxy.host)}:${proxy.port}</code>
-                ${proxy.username ? `<div style="color: var(--text-muted); margin-top: 4px; font-size: 0.75rem;">账号：${escapeHtml(proxy.username)}</div>` : ''}
-            </td>
-            <td>
-                ${proxy.is_default
-                    ? '<span class="status-badge active">默认</span>'
-                    : `<button class="btn btn-ghost btn-sm" onclick="handleSetProxyDefault(${proxy.id})" title="设为默认">设默认</button>`
-                }
-            </td>
-            <td title="${proxy.enabled ? '已启用' : '已禁用'}">${proxy.enabled ? '✅' : '⭕'}</td>
-            <td>${format.date(proxy.last_used)}</td>
-            <td>
-                <div style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
-                    <button class="btn btn-secondary btn-sm" onclick="editProxyItem(${proxy.id})">编辑</button>
-                    <div class="dropdown" style="position:relative;">
-                        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleSettingsMoreMenu(this)">更多</button>
-                        <div class="dropdown-menu" style="min-width:80px;">
-                            <a href="#" class="dropdown-item" onclick="event.preventDefault();closeSettingsMoreMenu(this);testProxyItem(${proxy.id})">测试</a>
-                            <a href="#" class="dropdown-item" onclick="event.preventDefault();closeSettingsMoreMenu(this);toggleProxyItem(${proxy.id}, ${!proxy.enabled})">${proxy.enabled ? '禁用' : '启用'}</a>
-                            ${!proxy.is_default ? `<a href="#" class="dropdown-item" onclick="event.preventDefault();closeSettingsMoreMenu(this);handleSetProxyDefault(${proxy.id})">设为默认</a>` : ''}
-                        </div>
-                    </div>
-                    <button class="btn btn-danger btn-sm" onclick="deleteProxyItem(${proxy.id})">删除</button>
-                </div>
-            </td>
-        </tr>
-    `).join('');
+    elements.proxiesTable.innerHTML = proxies.map(proxy => renderProxyRow(proxy)).join('');
 
     elements.proxiesTable.querySelectorAll('.proxy-checkbox[data-id]').forEach(cb => {
         cb.addEventListener('change', (e) => {
@@ -1852,28 +2177,15 @@ async function loadTmServices() {
         const services = await api.get('/tm-services');
         renderTmServicesTable(services);
     } catch (e) {
-        elements.tmServicesTable.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger-color);">${e.message}</td></tr>`;
+        setSettingsTableFeedback(elements.tmServicesTable, e.message || '加载失败', { tone: 'danger' });
     }
 }
 
 function renderTmServicesTable(services) {
-    if (!services || services.length === 0) {
-        elements.tmServicesTable.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">暂无 Team Manager 服务，点击「添加服务」新增</td></tr>';
-        return;
-    }
-    elements.tmServicesTable.innerHTML = services.map(s => `
-        <tr>
-            <td>${escapeHtml(s.name)}</td>
-            <td style="font-size:0.85rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</td>
-            <td style="text-align:center;" title="${s.enabled ? '已启用' : '已禁用'}">${s.enabled ? '✅' : '⭕'}</td>
-            <td style="text-align:center;">${s.priority}</td>
-            <td style="white-space:nowrap;">
-                <button class="btn btn-secondary btn-sm" onclick="editTmService(${s.id})">编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="testTmServiceById(${s.id})">测试</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteTmService(${s.id}, '${escapeHtml(s.name)}')">删除</button>
-            </td>
-        </tr>
-    `).join('');
+    renderManagedServiceTable(elements.tmServicesTable, services, {
+        serviceType: 'tm',
+        emptyMessage: '暂无 Team Manager 服务，点击「添加服务」新增',
+    });
 }
 
 function openTmServiceModal(service = null) {
@@ -2013,28 +2325,15 @@ async function loadCpaServices() {
         const services = await api.get('/cpa-services');
         renderCpaServicesTable(services);
     } catch (e) {
-        elements.cpaServicesTable.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger-color);">${e.message}</td></tr>`;
+        setSettingsTableFeedback(elements.cpaServicesTable, e.message || '加载失败', { tone: 'danger' });
     }
 }
 
 function renderCpaServicesTable(services) {
-    if (!services || services.length === 0) {
-        elements.cpaServicesTable.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">暂无 CPA 服务，点击「添加服务」新增</td></tr>';
-        return;
-    }
-    elements.cpaServicesTable.innerHTML = services.map(s => `
-        <tr>
-            <td>${escapeHtml(s.name)}</td>
-            <td style="font-size:0.85rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</td>
-            <td style="text-align:center;" title="${s.enabled ? '已启用' : '已禁用'}">${s.enabled ? '✅' : '⭕'}</td>
-            <td style="text-align:center;">${s.priority}</td>
-            <td style="white-space:nowrap;">
-                <button class="btn btn-secondary btn-sm" onclick="editCpaService(${s.id})">编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="testCpaServiceById(${s.id})">测试</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteCpaService(${s.id}, '${escapeHtml(s.name)}')">删除</button>
-            </td>
-        </tr>
-    `).join('');
+    renderManagedServiceTable(elements.cpaServicesTable, services, {
+        serviceType: 'cpa',
+        emptyMessage: '暂无 CPA 服务，点击「添加服务」新增',
+    });
 }
 
 function openCpaServiceModal(service = null) {
@@ -2174,30 +2473,17 @@ async function loadSub2ApiServices() {
         renderSub2ApiServices(services);
     } catch (e) {
         if (elements.sub2ApiServicesTable) {
-            elements.sub2ApiServicesTable.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载失败</td></tr>';
+            setSettingsTableFeedback(elements.sub2ApiServicesTable, e.message || '加载失败', { tone: 'danger' });
         }
     }
 }
 
 function renderSub2ApiServices(services) {
     if (!elements.sub2ApiServicesTable) return;
-    if (!services || services.length === 0) {
-        elements.sub2ApiServicesTable.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">暂无 Sub2API 服务，点击「添加服务」新增</td></tr>';
-        return;
-    }
-    elements.sub2ApiServicesTable.innerHTML = services.map(s => `
-        <tr>
-            <td>${escapeHtml(s.name)}</td>
-            <td style="font-size:0.85rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</td>
-            <td style="text-align:center;" title="${s.enabled ? '已启用' : '已禁用'}">${s.enabled ? '✅' : '⭕'}</td>
-            <td style="text-align:center;">${s.priority}</td>
-            <td style="white-space:nowrap;">
-                <button class="btn btn-secondary btn-sm" onclick="editSub2ApiService(${s.id})">编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="testSub2ApiServiceById(${s.id})">测试</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteSub2ApiService(${s.id}, '${escapeHtml(s.name)}')">删除</button>
-            </td>
-        </tr>
-    `).join('');
+    renderManagedServiceTable(elements.sub2ApiServicesTable, services, {
+        serviceType: 'sub2api',
+        emptyMessage: '暂无 Sub2API 服务，点击「添加服务」新增',
+    });
 }
 
 function openSub2ApiServiceModal(svc = null) {

@@ -23,6 +23,17 @@ def test_settings_js_contains_proxy_batch_handlers():
     assert "handleBatchDeleteProxies" in script
 
 
+def test_settings_js_avoids_inline_proxy_row_handlers():
+    script = Path("static/js/settings.js").read_text(encoding="utf-8")
+
+    assert 'onclick="handleSetProxyDefault(' not in script
+    assert 'onclick="editProxyItem(' not in script
+    assert 'onclick="toggleSettingsMoreMenu(' not in script
+    assert 'onclick="testProxyItem(' not in script
+    assert 'onclick="toggleProxyItem(' not in script
+    assert 'onclick="deleteProxyItem(' not in script
+
+
 def test_settings_js_generates_proxy_filter_query_from_form_state():
     result = run_settings_js_scenario("apply_proxy_filters")
 
@@ -75,6 +86,7 @@ def test_settings_js_renders_proxy_import_result_summary_and_details():
     result = run_settings_js_scenario("proxy_import_result")
 
     assert result["display"] == "block"
+    assert 'style=' not in result["html"]
     assert "成功导入" in result["html"]
     assert "跳过" in result["html"]
     assert "失败" in result["html"]
@@ -83,15 +95,75 @@ def test_settings_js_renders_proxy_import_result_summary_and_details():
     assert "美国-西雅图-001" in result["html"]
 
 
-def test_settings_js_rendered_proxy_rows_keep_single_item_actions():
+def test_settings_js_proxy_import_result_item_helper_formats_success_row():
+    result = run_settings_js_scenario("render_proxy_import_result_item")
+    html = result["html"]
+
+    assert "settings-import-result-item" in html
+    assert "settings-import-result-status" in html
+    assert "settings-import-result-detail" in html
+    assert "第 3 行" in html
+    assert "✅ 成功" in html
+    assert "美国-西雅图-003" in html
+    assert "style=" not in html
+
+
+def test_settings_js_proxy_import_result_details_helper_wraps_list_without_inline_styles():
+    result = run_settings_js_scenario("render_proxy_import_result_details")
+    html = result["html"]
+
+    assert "settings-import-errors" in html
+    assert "settings-import-errors-list" in html
+    assert "处理结果" in html
+    assert "第 4 行" in html
+    assert "timeout" in html
+    assert "style=" not in html
+
+
+def test_settings_js_rendered_proxy_rows_use_delegated_single_item_actions():
     result = run_settings_js_scenario("proxy_row_actions")
     html = result["html"]
 
-    assert 'editProxyItem(7)' in html
-    assert 'testProxyItem(7)' in html
-    assert 'toggleProxyItem(7, false)' in html
-    assert 'handleSetProxyDefault(7)' in html
-    assert 'deleteProxyItem(7)' in html
+    assert 'data-proxy-action="edit"' in html
+    assert 'data-proxy-action="test"' in html
+    assert 'data-proxy-action="toggle"' in html
+    assert 'data-proxy-action="set-default"' in html
+    assert 'data-proxy-action="delete"' in html
+    assert 'data-proxy-action="toggle-more"' in html
+    assert 'data-proxy-id="7"' in html
+    assert 'data-next-enabled="false"' in html
+    assert 'onclick=' not in html
+    assert 'style=' not in html
+
+
+def test_settings_js_delegated_proxy_edit_action_still_works():
+    result = run_settings_js_scenario("delegated_proxy_edit")
+    assert result["api_get_paths"] == ["/settings/proxies/7"]
+
+
+def test_settings_js_delegated_proxy_test_action_still_works():
+    result = run_settings_js_scenario("delegated_proxy_test")
+    assert result["api_post_paths"] == ["/settings/proxies/7/test"]
+
+
+def test_settings_js_delegated_proxy_toggle_action_still_works():
+    result = run_settings_js_scenario("delegated_proxy_toggle")
+    assert result["api_post_paths"][0] == "/settings/proxies/7/disable"
+
+
+def test_settings_js_delegated_proxy_set_default_action_still_works():
+    result = run_settings_js_scenario("delegated_proxy_set_default")
+    assert result["api_post_paths"][0] == "/settings/proxies/7/set-default"
+
+
+def test_settings_js_delegated_proxy_delete_action_still_works():
+    result = run_settings_js_scenario("delegated_proxy_delete")
+    assert result["api_delete_paths"] == ["/settings/proxies/7"]
+
+
+def test_settings_js_delegated_proxy_more_toggle_still_works():
+    result = run_settings_js_scenario("delegated_proxy_toggle_more")
+    assert result["menu_active"] is True
 
 
 def test_settings_template_contains_advanced_dynamic_proxy_controls():

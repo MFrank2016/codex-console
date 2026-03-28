@@ -1,5 +1,230 @@
 {% extends "_workspace_base.html" %}
 
+{% block head_extra %}
+<style>
+.settings-section-card {
+    margin-top: var(--spacing-lg);
+}
+
+.settings-toolbar-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.settings-card-header--stacked {
+    display: block;
+}
+
+.settings-toolbar-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.settings-filter-form {
+    margin-top: var(--spacing-md);
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    align-items: end;
+}
+
+.settings-filter-field {
+    margin: 0;
+    min-width: 120px;
+}
+
+.settings-filter-field--wide {
+    min-width: 180px;
+    flex: 1 1 180px;
+}
+
+.settings-filter-field--location {
+    min-width: 160px;
+    flex: 1 1 160px;
+}
+
+.settings-form-actions--inline {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.settings-card-body--flush {
+    padding: 0;
+}
+
+.settings-hint-text {
+    color: var(--text-muted);
+}
+
+.settings-button-offset-top {
+    margin-top: var(--spacing-xs);
+}
+
+.settings-inline-feedback {
+    display: none;
+    margin-top: var(--spacing-md);
+}
+
+.settings-modal-content--service {
+    max-width: 500px;
+}
+
+.settings-modal-content--wide {
+    max-width: 520px;
+}
+
+.settings-modal-content--compact {
+    max-width: 420px;
+}
+
+.settings-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-toggle-label--offset {
+    margin-top: 10px;
+}
+
+.settings-table-loading-cell {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 20px;
+}
+
+.settings-info-grid {
+    margin-bottom: var(--spacing-lg);
+}
+
+.settings-danger-message {
+    margin-top: 0;
+    color: var(--text-secondary);
+}
+
+.settings-text-muted {
+    color: var(--text-muted);
+}
+
+.settings-table-feedback-cell {
+    text-align: center;
+    padding: 20px;
+}
+
+.settings-table-feedback-cell--muted {
+    color: var(--text-muted);
+}
+
+.settings-table-feedback-cell--danger {
+    color: var(--danger-color);
+}
+
+.settings-cell-nowrap {
+    white-space: nowrap;
+}
+
+.settings-cell-center {
+    text-align: center;
+}
+
+.settings-service-url {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.settings-meta-text {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 4px;
+}
+
+.settings-action-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    white-space: nowrap;
+}
+
+.settings-dropdown {
+    position: relative;
+}
+
+.settings-dropdown-menu--compact {
+    min-width: 80px;
+}
+
+.settings-import-result-item {
+    margin-top: 4px;
+    line-height: 1.5;
+}
+
+.settings-import-result-status {
+    margin-left: 8px;
+}
+
+.settings-import-result-detail {
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.settings-import-errors {
+    margin-top: var(--spacing-sm);
+}
+
+.settings-import-errors-list {
+    margin: 8px 0 0;
+    padding-left: 20px;
+}
+
+.settings-col-checkbox {
+    width: 44px;
+}
+
+.settings-col-id {
+    width: 50px;
+}
+
+.settings-col-region,
+.settings-col-last-used {
+    width: 140px;
+}
+
+.settings-col-type {
+    width: 90px;
+}
+
+.settings-col-flag {
+    width: 80px;
+}
+
+.settings-col-actions {
+    width: 180px;
+}
+
+.settings-col-service-name {
+    width: 150px;
+}
+
+.settings-col-priority {
+    width: 60px;
+    text-align: center;
+}
+
+.settings-col-service-actions {
+    width: 220px;
+}
+
+.settings-col-blacklist-status {
+    width: 120px;
+}
+</style>
+{% endblock %}
+
 {% block page_content %}
 <div class="workspace-side-stack support-page-shell">
     <section class="workspace-panel workspace-side-stack"><div class="tabs">
@@ -14,7 +239,7 @@
 
                 <div class="tab-content active" id="proxy-tab">
                     <!-- 动态代理配置 -->
-                    <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card settings-section-card">
                         <div class="card-header">
                             <h3>动态代理配置</h3>
                             <span class="hint">通过 API 每次获取新代理 IP，优先级高于代理列表</span>
@@ -30,7 +255,7 @@
                                 <div class="form-group">
                                     <label for="dynamic-proxy-api-url">代理 API 地址</label>
                                     <input type="text" id="dynamic-proxy-api-url" name="api_url" placeholder="http://api.example.com/get_proxy">
-                                    <small style="color: var(--text-muted);">每次注册任务启动时调用此 API 获取代理 URL</small>
+                                    <small class="settings-hint-text">每次注册任务启动时调用此 API 获取代理 URL</small>
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group">
@@ -45,7 +270,7 @@
                                 <div class="form-group">
                                     <label for="dynamic-proxy-result-field">JSON 字段路径 (可选)</label>
                                     <input type="text" id="dynamic-proxy-result-field" name="result_field" placeholder="例如: data.proxy 或留空使用响应原文">
-                                    <small style="color: var(--text-muted);">若 API 返回 JSON，填写点号分隔的字段路径提取代理 URL；留空则将响应原文作为代理 URL</small>
+                                    <small class="settings-hint-text">若 API 返回 JSON，填写点号分隔的字段路径提取代理 URL；留空则将响应原文作为代理 URL</small>
                                 </div>
                                 <div class="form-group">
                                     <label for="dynamic-proxy-request-method">请求方法</label>
@@ -57,12 +282,12 @@
                                 <div class="form-group">
                                     <label for="dynamic-proxy-request-url">高级请求地址</label>
                                     <input type="text" id="dynamic-proxy-request-url" name="request_url" placeholder="https://proxy.example.com/fetch">
-                                    <small style="color: var(--text-muted);">用于高级动态代理请求配置，可与基础 API 地址不同</small>
+                                    <small class="settings-hint-text">用于高级动态代理请求配置，可与基础 API 地址不同</small>
                                 </div>
                                 <div class="form-group">
                                     <label for="dynamic-proxy-curl-input">cURL 快速导入</label>
                                     <textarea id="dynamic-proxy-curl-input" rows="3" placeholder="粘贴 cURL 命令后可自动填充高级字段"></textarea>
-                                    <button type="button" class="btn btn-secondary btn-sm" id="dynamic-proxy-parse-curl-btn" style="margin-top: var(--spacing-xs);">解析 cURL</button>
+                                    <button type="button" class="btn btn-secondary btn-sm settings-button-offset-top" id="dynamic-proxy-parse-curl-btn">解析 cURL</button>
                                 </div>
                                 <div class="form-group">
                                     <label for="dynamic-proxy-request-headers">请求头模板 (JSON)</label>
@@ -126,7 +351,7 @@
                     </div>
 
                     <!-- 代理批量导入 -->
-                    <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card settings-section-card">
                         <div class="card-header">
                             <h3>代理批量导入</h3>
                             <span class="hint">支持逐行粘贴 host:port、user:pass@host:port 等格式</span>
@@ -153,27 +378,27 @@
                                     <button type="button" class="btn btn-secondary" id="clear-proxy-import-btn">清空</button>
                                 </div>
                             </form>
-                            <div id="proxy-import-result" style="display: none; margin-top: var(--spacing-md);"></div>
+                            <div id="proxy-import-result" class="settings-inline-feedback"></div>
                         </div>
                     </div>
 
                     <!-- 代理列表 -->
-                    <div class="card" style="margin-top: var(--spacing-lg);">
-                        <div class="card-header" style="display: block;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;">
+                    <div class="card settings-section-card">
+                        <div class="card-header settings-card-header--stacked">
+                            <div class="settings-toolbar-row">
                                 <h3>代理列表</h3>
-                                <div style="display: flex; gap: var(--spacing-sm); flex-wrap: wrap;">
+                                <div class="settings-toolbar-actions">
                                     <button class="btn btn-danger btn-sm" id="batch-delete-proxies-btn" disabled>🗑️ 批量删除</button>
                                     <button class="btn btn-secondary btn-sm" id="test-all-proxies-btn">🔌 测试全部</button>
                                     <button class="btn btn-primary btn-sm" id="add-proxy-btn">➕ 添加代理</button>
                                 </div>
                             </div>
-                            <form id="proxy-filter-form" class="proxy-filter-bar" style="margin-top: var(--spacing-md); display: flex; gap: var(--spacing-sm); flex-wrap: wrap; align-items: end;">
-                                <div class="form-group" style="margin: 0; min-width: 180px; flex: 1 1 180px;">
+                            <form id="proxy-filter-form" class="proxy-filter-bar settings-filter-form">
+                                <div class="form-group settings-filter-field settings-filter-field--wide">
                                     <label for="proxy-filter-keyword">关键词</label>
                                     <input type="text" id="proxy-filter-keyword" placeholder="名称 / 地址 / 地区">
                                 </div>
-                                <div class="form-group" style="margin: 0; min-width: 120px;">
+                                <div class="form-group settings-filter-field">
                                     <label for="proxy-filter-type">类型</label>
                                     <select id="proxy-filter-type">
                                         <option value="">全部</option>
@@ -181,7 +406,7 @@
                                         <option value="socks5">SOCKS5</option>
                                     </select>
                                 </div>
-                                <div class="form-group" style="margin: 0; min-width: 120px;">
+                                <div class="form-group settings-filter-field">
                                     <label for="proxy-filter-enabled">状态</label>
                                     <select id="proxy-filter-enabled">
                                         <option value="">全部</option>
@@ -189,7 +414,7 @@
                                         <option value="false">已禁用</option>
                                     </select>
                                 </div>
-                                <div class="form-group" style="margin: 0; min-width: 120px;">
+                                <div class="form-group settings-filter-field">
                                     <label for="proxy-filter-is-default">默认</label>
                                     <select id="proxy-filter-is-default">
                                         <option value="">全部</option>
@@ -197,31 +422,31 @@
                                         <option value="false">非默认</option>
                                     </select>
                                 </div>
-                                <div class="form-group" style="margin: 0; min-width: 160px; flex: 1 1 160px;">
+                                <div class="form-group settings-filter-field settings-filter-field--location">
                                     <label for="proxy-filter-location">地区</label>
                                     <input type="text" id="proxy-filter-location" placeholder="国家 / 城市">
                                 </div>
-                                <div class="form-actions" style="margin: 0; padding: 0; border: 0; gap: var(--spacing-sm);">
+                                <div class="form-actions settings-form-actions--inline">
                                     <button type="submit" class="btn btn-secondary btn-sm">筛选</button>
                                     <button type="button" class="btn btn-ghost btn-sm" id="reset-proxy-filters-btn">重置</button>
                                 </div>
                             </form>
                         </div>
-                        <div class="card-body" style="padding: 0;">
+                        <div class="card-body settings-card-body--flush">
                             <div class="table-container table-shell">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
-                                            <th style="width: 44px;"><input type="checkbox" id="select-all-proxies" aria-label="全选代理"></th>
-                                            <th style="width: 50px;">ID</th>
+                                            <th class="settings-col-checkbox"><input type="checkbox" id="select-all-proxies" aria-label="全选代理"></th>
+                                            <th class="settings-col-id">ID</th>
                                             <th>名称</th>
-                                            <th style="width: 140px;">地区</th>
-                                            <th style="width: 90px;">类型</th>
+                                            <th class="settings-col-region">地区</th>
+                                            <th class="settings-col-type">类型</th>
                                             <th>地址</th>
-                                            <th style="width: 80px;">默认</th>
-                                            <th style="width: 80px;">状态</th>
-                                            <th style="width: 140px;">最后使用</th>
-                                            <th style="width: 180px;">操作</th>
+                                            <th class="settings-col-flag">默认</th>
+                                            <th class="settings-col-flag">状态</th>
+                                            <th class="settings-col-last-used">最后使用</th>
+                                            <th class="settings-col-actions">操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="proxies-table">
@@ -312,25 +537,25 @@
 
                 <div class="tab-content" id="upload-tab">
                     <!-- CPA 服务管理 -->
-                    <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card settings-section-card">
                         <div class="card-header">
                             <h3>☁️ CPA 服务</h3>
                             <button class="btn btn-primary btn-sm" id="add-cpa-service-btn">+ 添加服务</button>
                         </div>
-                        <div class="card-body" style="padding: 0;">
+                        <div class="card-body settings-card-body--flush">
                             <div class="table-container table-shell">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
-                                            <th style="width:150px;">名称</th>
+                                            <th class="settings-col-service-name">名称</th>
                                             <th>API URL</th>
-                                            <th style="width:80px;">状态</th>
-                                            <th style="width:60px;text-align:center;">优先级</th>
-                                            <th style="width:220px;">操作</th>
+                                            <th class="settings-col-flag">状态</th>
+                                            <th class="settings-col-priority">优先级</th>
+                                            <th class="settings-col-service-actions">操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="cpa-services-table">
-                                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td></tr>
+                                        <tr><td colspan="5" class="settings-table-loading-cell">加载中...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -338,25 +563,25 @@
                     </div>
 
                     <!-- Sub2API 服务管理 -->
-                    <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card settings-section-card">
                         <div class="card-header">
                             <h3>🔗 Sub2API 服务</h3>
                             <button class="btn btn-primary btn-sm" id="add-sub2api-service-btn">+ 添加服务</button>
                         </div>
-                        <div class="card-body" style="padding: 0;">
+                        <div class="card-body settings-card-body--flush">
                             <div class="table-container table-shell">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
-                                            <th style="width:150px;">名称</th>
+                                            <th class="settings-col-service-name">名称</th>
                                             <th>API URL</th>
-                                            <th style="width:80px;">状态</th>
-                                            <th style="width:60px;text-align:center;">优先级</th>
-                                            <th style="width:220px;">操作</th>
+                                            <th class="settings-col-flag">状态</th>
+                                            <th class="settings-col-priority">优先级</th>
+                                            <th class="settings-col-service-actions">操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="sub2api-services-table">
-                                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td></tr>
+                                        <tr><td colspan="5" class="settings-table-loading-cell">加载中...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -364,25 +589,25 @@
                     </div>
 
                     <!-- Team Manager 服务管理 -->
-                    <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card settings-section-card">
                         <div class="card-header">
                             <h3>🚀 Team Manager 服务</h3>
                             <button class="btn btn-primary btn-sm" id="add-tm-service-btn">+ 添加服务</button>
                         </div>
-                        <div class="card-body" style="padding: 0;">
+                        <div class="card-body settings-card-body--flush">
                             <div class="table-container table-shell">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
-                                            <th style="width:150px;">名称</th>
+                                            <th class="settings-col-service-name">名称</th>
                                             <th>API URL</th>
-                                            <th style="width:80px;">状态</th>
-                                            <th style="width:60px;text-align:center;">优先级</th>
-                                            <th style="width:220px;">操作</th>
+                                            <th class="settings-col-flag">状态</th>
+                                            <th class="settings-col-priority">优先级</th>
+                                            <th class="settings-col-service-actions">操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="tm-services-table">
-                                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td></tr>
+                                        <tr><td colspan="5" class="settings-table-loading-cell">加载中...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -391,7 +616,7 @@
                 </div>
 
                 <div class="modal" id="tm-service-edit-modal">
-                    <div class="modal-content" style="max-width: 500px;">
+                    <div class="modal-content settings-modal-content--service">
                         <div class="modal-header">
                             <h3 id="tm-service-modal-title">添加 Team Manager 服务</h3>
                             <button class="modal-close" id="close-tm-service-modal">×</button>
@@ -419,7 +644,7 @@
                                     </div>
                                     <div class="form-group">
                                         <label> </label>
-                                        <label style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                                        <label class="settings-toggle-label settings-toggle-label--offset">
                                             <input type="checkbox" id="tm-service-enabled" checked> 启用
                                         </label>
                                     </div>
@@ -435,7 +660,7 @@
                 </div>
 
                 <div class="modal" id="sub2api-service-edit-modal">
-                    <div class="modal-content" style="max-width: 500px;">
+                    <div class="modal-content settings-modal-content--service">
                         <div class="modal-header">
                             <h3 id="sub2api-service-modal-title">添加 Sub2API 服务</h3>
                             <button class="modal-close" id="close-sub2api-service-modal">×</button>
@@ -463,7 +688,7 @@
                                     </div>
                                     <div class="form-group">
                                         <label> </label>
-                                        <label style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                                        <label class="settings-toggle-label settings-toggle-label--offset">
                                             <input type="checkbox" id="sub2api-service-enabled" checked> 启用
                                         </label>
                                     </div>
@@ -479,7 +704,7 @@
                 </div>
 
                 <div class="modal" id="cpa-service-edit-modal">
-                    <div class="modal-content" style="max-width: 500px;">
+                    <div class="modal-content settings-modal-content--service">
                         <div class="modal-header">
                             <h3 id="cpa-service-modal-title">添加 CPA 服务</h3>
                             <button class="modal-close" id="close-cpa-service-modal">×</button>
@@ -508,7 +733,7 @@
                                     </div>
                                     <div class="form-group">
                                         <label> </label>
-                                        <label style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                                        <label class="settings-toggle-label settings-toggle-label--offset">
                                             <input type="checkbox" id="cpa-service-enabled" checked> 启用
                                         </label>
                                     </div>
@@ -588,26 +813,26 @@
                         </div>
                     </div>
 
-                    <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card settings-section-card">
                         <div class="card-header">
                             <h3>邮箱后缀黑名单</h3>
                             <button type="button" class="btn btn-primary btn-sm" id="add-email-suffix-blacklist-btn">+ 添加后缀</button>
                         </div>
-                        <div class="card-body" style="padding: 0;">
+                        <div class="card-body settings-card-body--flush">
                             <div class="table-container table-shell">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
-                                            <th style="width: 80px;">ID</th>
+                                            <th class="settings-col-flag">ID</th>
                                             <th>邮箱后缀</th>
-                                            <th style="width: 120px;">状态</th>
+                                            <th class="settings-col-blacklist-status">状态</th>
                                             <th>原因</th>
-                                            <th style="width: 220px;">操作</th>
+                                            <th class="settings-col-service-actions">操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="email-suffix-blacklist-table">
                                         <tr>
-                                            <td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td>
+                                            <td colspan="5" class="settings-table-loading-cell">加载中...</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -616,7 +841,7 @@
                     </div>
 
                     <div class="modal" id="email-suffix-blacklist-modal">
-                        <div class="modal-content" style="max-width: 520px;">
+                        <div class="modal-content settings-modal-content--wide">
                             <div class="modal-header">
                                 <h3 id="email-suffix-blacklist-modal-title">添加邮箱后缀黑名单</h3>
                                 <button type="button" class="modal-close" id="close-email-suffix-blacklist-modal">×</button>
@@ -633,7 +858,7 @@
                                         <textarea id="email-suffix-blacklist-reason" rows="3" placeholder="例如：高风险域名"></textarea>
                                     </div>
                                     <div class="form-group">
-                                        <label style="display:flex;align-items:center;gap:8px;">
+                                        <label class="settings-toggle-label">
                                             <input type="checkbox" id="email-suffix-blacklist-enabled" checked>
                                             启用
                                         </label>
@@ -677,7 +902,7 @@
                         </div>
                     </div>
 
-                    <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card settings-section-card">
                         <div class="card-header">
                             <h3>验证码获取策略</h3>
                         </div>
@@ -704,7 +929,7 @@
                             <h3>数据库信息</h3>
                         </div>
                         <div class="card-body">
-                            <div class="info-grid" style="margin-bottom: var(--spacing-lg);">
+                            <div class="info-grid settings-info-grid">
                                 <div class="info-item">
                                     <span class="label">数据库大小</span>
                                     <span id="db-size" class="value">-</span>
@@ -733,13 +958,13 @@
             </section>
 
             <div class="modal" id="danger-confirm-modal">
-                <div class="modal-content" style="max-width: 420px;">
+                <div class="modal-content settings-modal-content--compact">
                     <div class="modal-header">
                         <h3>危险操作确认</h3>
                         <button class="modal-close" id="close-danger-confirm-modal">×</button>
                     </div>
                     <div class="modal-body">
-                        <p id="danger-confirm-message" style="margin-top: 0; color: var(--text-secondary);">
+                        <p id="danger-confirm-message" class="settings-danger-message">
                             该操作会清理过期数据，请确认后继续。
                         </p>
                         <div class="form-actions">
