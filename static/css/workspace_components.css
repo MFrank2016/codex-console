@@ -468,6 +468,26 @@
 }
 
 /* ============================================
+   账号资产页
+   ============================================ */
+
+.accounts-asset-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+.accounts-asset-toolbar {
+    overflow: visible;
+}
+
+.accounts-detail-drawer-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+/* ============================================
    模态框
    ============================================ */
 

@@ -44,7 +44,7 @@
 {% endblock %}
 
 {% block page_content %}
-<div class="workspace-side-stack">
+<div class="workspace-side-stack accounts-asset-page">
     <div class="stats-grid hero-metrics">
                     <div class="stat-card">
                         <div class="stat-value" id="total-accounts">0</div>
@@ -65,7 +65,7 @@
                 </div>
 
                 
-    <section class="workspace-panel workspace-table-panel"><div class="card toolbar-card">
+    <section class="workspace-panel workspace-table-panel"><div id="accounts-asset-toolbar" class="card toolbar-card">
                     <div class="card-body filter-panel">
                         <div class="filter-panel-grid">
                             <select id="filter-status" class="form-select">
@@ -182,18 +182,28 @@
 
 </div>
 
-    <!-- 详情模态框 -->
-    <div class="modal" id="detail-modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>📋 账号详情</h3>
-                <button class="modal-close" id="close-modal">&times;</button>
+    <aside
+        id="accounts-detail-drawer"
+        class="drawer accounts-detail-drawer"
+        hidden
+        tabindex="-1"
+        role="dialog"
+        aria-modal="true"
+        aria-hidden="true"
+    >
+        <div class="drawer-panel">
+            <div class="drawer-header">
+                <div class="page-head-copy">
+                    <h3 class="page-head-title">账号详情</h3>
+                    <p class="page-head-subtitle">查看令牌、订阅、Cookie 与刷新操作。</p>
+                </div>
+                <button class="modal-close" id="close-detail-drawer" type="button">&times;</button>
             </div>
-            <div class="modal-body" id="modal-body">
+            <div class="drawer-body accounts-detail-drawer-body" id="accounts-detail-drawer-body">
                 <!-- 动态加载 -->
             </div>
         </div>
-    </div>
+    </aside>
 
     <!-- CPA 服务选择模态框 -->
     <div class="modal" id="cpa-service-modal">
