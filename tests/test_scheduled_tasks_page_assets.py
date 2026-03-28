@@ -51,6 +51,11 @@ def test_scheduled_tasks_template_extends_workspace_shell_and_keeps_plan_managem
     assert template.index("/static/js/utils.js?v=") < template.index("/static/js/scheduled_tasks.js?v=")
 
 
+def test_scheduled_tasks_template_does_not_load_realtime_log_console_assets():
+    template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
+    assert "/static/css/realtime_log_console.css?v=" not in template
+
+
 def test_scheduled_tasks_template_no_longer_carries_primary_run_center_shell():
     template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
     assert 'id="scheduled-runs-card"' not in template
@@ -67,6 +72,13 @@ def test_scheduled_tasks_template_no_longer_carries_primary_run_center_shell():
     assert 'id="run-detail-modal"' not in template
     assert 'id="run-log-modal"' not in template
     assert 'id="run-log-stop-btn"' not in template
+
+
+def test_scheduled_tasks_template_reduces_inline_style_hotspots():
+    template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
+    assert 'style="max-width: 1080px;"' not in template
+    assert 'style="display:none;"' not in template
+
 
 
 def test_scheduled_tasks_script_stays_focused_on_plan_management_and_support_context():
@@ -86,6 +98,12 @@ def test_scheduled_tasks_script_stays_focused_on_plan_management_and_support_con
     assert "openScheduledRunDetail(" not in script
     assert "buildScheduledRunQuery(" not in script
     assert "/scheduled-runs" not in script
+
+
+def test_scheduled_tasks_script_avoids_inline_event_markup():
+    script = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
+    assert "onclick=" not in script
+    assert "onchange=" not in script
 
 
 def test_scheduled_tasks_script_surfaces_cpa_service_load_failures_to_users():

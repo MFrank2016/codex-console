@@ -183,6 +183,9 @@ const context = {{
   format: {{
     date(value) {{ return value ? `DATE:${{value}}` : '-'; }},
   }},
+  getServiceTypeText(value) {{
+    return String(value || '-');
+  }},
   api: {{
     async get(path) {{
       logs.apiGets.push(path);
@@ -215,10 +218,23 @@ const context = {{
 
 context.global = context;
 context.globalThis = context;
+context.window.getServiceTypeText = context.getServiceTypeText;
 
 vm.createContext(context);
 vm.runInContext(
-  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResult,\n  renderProxies,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  normalizeEmailSuffixInput: typeof normalizeEmailSuffixInput === 'function' ? normalizeEmailSuffixInput : null,\n  renderEmailSuffixBlacklist: typeof renderEmailSuffixBlacklist === 'function' ? renderEmailSuffixBlacklist : null,\n  handleSaveEmailSuffixBlacklist: typeof handleSaveEmailSuffixBlacklist === 'function' ? handleSaveEmailSuffixBlacklist : null,\n  elements,\n  getProxyFilters: () => ({{ ...proxyFilters }}),\n  getSelectedProxyIds: () => Array.from(selectedProxyIds).sort((a, b) => a - b),\n  resetProxyState: () => {{\n    Object.assign(proxyFilters, getDefaultProxyFilters());\n    selectedProxyIds = new Set();\n  }},\n}};`,
+  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResultItem: typeof renderProxyImportResultItem === 'function' ? renderProxyImportResultItem : null,\n  renderProxyImportResultDetails: typeof renderProxyImportResultDetails === 'function' ? renderProxyImportResultDetails : null,\n  renderProxyImportResult,\n  renderProxies,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  loadTmServices: typeof loadTmServices === 'function' ? loadTmServices : null,\n  loadCpaServices: typeof loadCpaServices === 'function' ? loadCpaServices : null,\n  loadSub2ApiServices: typeof loadSub2ApiServices === 'function' ? loadSub2ApiServices : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  normalizeEmailSuffixInput: typeof normalizeEmailSuffixInput === 'function' ? normalizeEmailSuffixInput : null,
+  renderEmailServices: typeof renderEmailServices === 'function' ? renderEmailServices : null,
+  renderEmailServiceRow: typeof renderEmailServiceRow === 'function' ? renderEmailServiceRow : null,
+  renderEmailSuffixBlacklistRow: typeof renderEmailSuffixBlacklistRow === 'function' ? renderEmailSuffixBlacklistRow : null,
+  renderProxyRow: typeof renderProxyRow === 'function' ? renderProxyRow : null,
+  renderTmServicesTable: typeof renderTmServicesTable === 'function' ? renderTmServicesTable : null,
+  renderCpaServicesTable: typeof renderCpaServicesTable === 'function' ? renderCpaServicesTable : null,
+  renderSub2ApiServices: typeof renderSub2ApiServices === 'function' ? renderSub2ApiServices : null,
+  renderEmailSuffixBlacklist: typeof renderEmailSuffixBlacklist === 'function' ? renderEmailSuffixBlacklist : null,
+  handleSaveEmailSuffixBlacklist: typeof handleSaveEmailSuffixBlacklist === 'function' ? handleSaveEmailSuffixBlacklist : null,
+  handleSettingsDelegatedTableClick: typeof handleSettingsDelegatedTableClick === 'function' ? handleSettingsDelegatedTableClick : null,
+  elements,
+  getProxyFilters: () => ({{ ...proxyFilters }}),\n  getSelectedProxyIds: () => Array.from(selectedProxyIds).sort((a, b) => a - b),\n  resetProxyState: () => {{\n    Object.assign(proxyFilters, getDefaultProxyFilters());\n    selectedProxyIds = new Set();\n  }},\n}};`,
   context,
 );
 
@@ -297,11 +313,164 @@ async function runScenario() {{
         html: importResult.innerHTML,
       }};
     }}
+    case 'render_proxy_import_result_item': {{
+      if (typeof exported.renderProxyImportResultItem !== 'function') {{
+        throw new Error('renderProxyImportResultItem is not implemented');
+      }}
+      return {{
+        html: exported.renderProxyImportResultItem({{
+          line_no: 3,
+          status: 'success',
+          proxy: {{ name: '美国-西雅图-003', host: '3.3.3.3', port: 8080 }},
+        }}),
+      }};
+    }}
+    case 'render_proxy_import_result_details': {{
+      if (typeof exported.renderProxyImportResultDetails !== 'function') {{
+        throw new Error('renderProxyImportResultDetails is not implemented');
+      }}
+      return {{
+        html: exported.renderProxyImportResultDetails([
+          {{ line_no: 4, status: 'failed', reason: 'timeout' }},
+        ]),
+      }};
+    }}
+    case 'render_email_service_row_helper': {{
+      if (typeof exported.renderEmailServiceRow !== 'function') {{
+        throw new Error('renderEmailServiceRow is not implemented');
+      }}
+      return {{
+        html: exported.renderEmailServiceRow({{
+          id: 17,
+          name: 'Service-17',
+          service_type: 'temp_mail',
+          enabled: true,
+          priority: 2,
+          last_used: '2026-03-29T09:00:00Z',
+        }}),
+      }};
+    }}
     case 'proxy_row_actions': {{
       exported.renderProxies([
         {{ id: 7, name: '代理-007', type: 'http', host: '7.7.7.7', port: 8080, country: '美国', city: '西雅图', is_default: false, enabled: true, last_used: '2026-03-22T10:00:00', username: 'bob' }},
       ]);
       return {{ html: getElement('proxies-table').innerHTML }};
+    }}
+    case 'delegated_proxy_edit': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ proxyAction: 'edit', proxyId: '7' }},
+          closest(selector) {{
+            return selector === '[data-proxy-action][data-proxy-id]' ? this : null;
+          }},
+        }},
+      }});
+      return {{
+        api_get_paths: logs.apiGets,
+      }};
+    }}
+    case 'delegated_proxy_test': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ proxyAction: 'test', proxyId: '7' }},
+          closest(selector) {{
+            if (selector === '[data-proxy-action][data-proxy-id]') return this;
+            if (selector === '.dropdown-menu') return {{ classList: {{ remove() {{}} }} }};
+            return null;
+          }},
+        }},
+        preventDefault() {{}},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+      }};
+    }}
+    case 'delegated_proxy_toggle': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ proxyAction: 'toggle', proxyId: '7', nextEnabled: 'false' }},
+          closest(selector) {{
+            if (selector === '[data-proxy-action][data-proxy-id]') return this;
+            if (selector === '.dropdown-menu') return {{ classList: {{ remove() {{}} }} }};
+            return null;
+          }},
+        }},
+        preventDefault() {{}},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+      }};
+    }}
+    case 'delegated_proxy_set_default': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ proxyAction: 'set-default', proxyId: '7' }},
+          closest(selector) {{
+            if (selector === '[data-proxy-action][data-proxy-id]') return this;
+            if (selector === '.dropdown-menu') return {{ classList: {{ remove() {{}} }} }};
+            return null;
+          }},
+        }},
+        preventDefault() {{}},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+      }};
+    }}
+    case 'delegated_proxy_delete': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ proxyAction: 'delete', proxyId: '7' }},
+          closest(selector) {{
+            return selector === '[data-proxy-action][data-proxy-id]' ? this : null;
+          }},
+        }},
+      }});
+      return {{
+        api_delete_paths: logs.apiDeletes,
+      }};
+    }}
+    case 'delegated_proxy_toggle_more': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      let active = false;
+      const menu = {{
+        classList: {{
+          contains() {{ return active; }},
+          add(token) {{ if (token === 'active') active = true; }},
+          remove(token) {{ if (token === 'active') active = false; }},
+        }},
+      }};
+      const button = {{
+        dataset: {{ proxyAction: 'toggle-more', proxyId: '7' }},
+        nextElementSibling: menu,
+        closest(selector) {{
+          return selector === '[data-proxy-action][data-proxy-id]' ? this : null;
+        }},
+      }};
+      await exported.handleSettingsDelegatedTableClick({{
+        target: button,
+        stopPropagation() {{}},
+      }});
+      return {{
+        menu_active: active,
+      }};
     }}
     case 'parse_dynamic_proxy_curl': {{
       getElement('dynamic-proxy-curl-input').value = `curl -X POST 'https://proxy.example.com/fetch' -H 'Authorization: Bearer token-123' -H 'Content-Type: application/json' --data '{{"region":"us","count":5}}'`;
@@ -449,6 +618,195 @@ async function runScenario() {{
       ]);
       return {{
         html: getElement('email-suffix-blacklist-table').innerHTML,
+      }};
+    }}
+    case 'render_email_service_rows': {{
+      if (typeof exported.renderEmailServices !== 'function') {{
+        throw new Error('renderEmailServices is not implemented');
+      }}
+      exported.renderEmailServices([
+        {{ id: 7, name: 'Service-7', service_type: 'temp_mail', enabled: true, priority: 3, last_used: '2026-03-28T10:00:00Z' }},
+      ]);
+      return {{
+        html: getElement('email-services-table').innerHTML,
+      }};
+    }}
+    case 'render_blacklist_row_helper': {{
+      if (typeof exported.renderEmailSuffixBlacklistRow !== 'function') {{
+        throw new Error('renderEmailSuffixBlacklistRow is not implemented');
+      }}
+      return {{
+        html: exported.renderEmailSuffixBlacklistRow({{ id: 42, suffix: 'blocked.com', enabled: true, reason: 'risk' }}),
+      }};
+    }}
+    case 'render_proxy_row_helper': {{
+      if (typeof exported.renderProxyRow !== 'function') {{
+        throw new Error('renderProxyRow is not implemented');
+      }}
+      return {{
+        html: exported.renderProxyRow({{
+          id: 21,
+          name: 'Proxy-21',
+          type: 'http',
+          host: '9.9.9.9',
+          port: 8080,
+          country: '美国',
+          city: '西雅图',
+          is_default: false,
+          enabled: true,
+          last_used: '2026-03-29T08:00:00',
+          username: 'tester',
+        }}),
+      }};
+    }}
+    case 'delegated_custom_service_test': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ emailServiceAction: 'test', serviceId: '7' }},
+          closest(selector) {{
+            return selector === '[data-email-service-action][data-service-id]' ? this : null;
+          }},
+        }},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+      }};
+    }}
+    case 'delegated_blacklist_toggle': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ blacklistAction: 'toggle', blacklistId: '12', nextEnabled: 'false' }},
+          closest(selector) {{
+            return selector === '[data-blacklist-action][data-blacklist-id]' ? this : null;
+          }},
+        }},
+      }});
+      return {{
+        api_patch_paths: logs.apiPatches.map(([path]) => path),
+      }};
+    }}
+    case 'render_tm_service_rows': {{
+      if (typeof exported.renderTmServicesTable !== 'function') {{
+        throw new Error('renderTmServicesTable is not implemented');
+      }}
+      exported.renderTmServicesTable([
+        {{ id: 11, name: 'TM-11', api_url: 'https://tm.example.com', enabled: true, priority: 2 }},
+      ]);
+      return {{
+        html: getElement('tm-services-table').innerHTML,
+      }};
+    }}
+    case 'delegated_tm_service_edit': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ managedServiceAction: 'edit', managedServiceType: 'tm', serviceId: '11', serviceName: 'TM-11' }},
+          closest(selector) {{
+            return selector === '[data-managed-service-action][data-managed-service-type][data-service-id]' ? this : null;
+          }},
+        }},
+      }});
+      return {{
+        api_get_paths: logs.apiGets,
+      }};
+    }}
+    case 'render_cpa_service_rows': {{
+      if (typeof exported.renderCpaServicesTable !== 'function') {{
+        throw new Error('renderCpaServicesTable is not implemented');
+      }}
+      exported.renderCpaServicesTable([
+        {{ id: 12, name: 'CPA-12', api_url: 'https://cpa.example.com', enabled: false, priority: 5 }},
+      ]);
+      return {{
+        html: getElement('cpa-services-table').innerHTML,
+      }};
+    }}
+    case 'delegated_cpa_service_test': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ managedServiceAction: 'test', managedServiceType: 'cpa', serviceId: '12', serviceName: 'CPA-12' }},
+          closest(selector) {{
+            return selector === '[data-managed-service-action][data-managed-service-type][data-service-id]' ? this : null;
+          }},
+        }},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+      }};
+    }}
+    case 'render_sub2api_service_rows': {{
+      if (typeof exported.renderSub2ApiServices !== 'function') {{
+        throw new Error('renderSub2ApiServices is not implemented');
+      }}
+      exported.renderSub2ApiServices([
+        {{ id: 13, name: 'Sub2API-13', api_url: 'https://sub2api.example.com', enabled: true, priority: 1 }},
+      ]);
+      return {{
+        html: getElement('sub2api-services-table').innerHTML,
+      }};
+    }}
+    case 'delegated_sub2api_service_delete': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      await exported.handleSettingsDelegatedTableClick({{
+        target: {{
+          dataset: {{ managedServiceAction: 'delete', managedServiceType: 'sub2api', serviceId: '13', serviceName: 'Sub2API-13' }},
+          closest(selector) {{
+            return selector === '[data-managed-service-action][data-managed-service-type][data-service-id]' ? this : null;
+          }},
+        }},
+      }});
+      return {{
+        api_delete_paths: logs.apiDeletes,
+      }};
+    }}
+    case 'managed_service_empty_states': {{
+      if (
+        typeof exported.renderTmServicesTable !== 'function'
+        || typeof exported.renderCpaServicesTable !== 'function'
+        || typeof exported.renderSub2ApiServices !== 'function'
+      ) {{
+        throw new Error('managed service renderers are not implemented');
+      }}
+      exported.renderTmServicesTable([]);
+      exported.renderCpaServicesTable([]);
+      exported.renderSub2ApiServices([]);
+      return {{
+        tm_html: getElement('tm-services-table').innerHTML,
+        cpa_html: getElement('cpa-services-table').innerHTML,
+        sub2api_html: getElement('sub2api-services-table').innerHTML,
+      }};
+    }}
+    case 'managed_service_error_states': {{
+      if (
+        typeof exported.loadTmServices !== 'function'
+        || typeof exported.loadCpaServices !== 'function'
+        || typeof exported.loadSub2ApiServices !== 'function'
+      ) {{
+        throw new Error('managed service loaders are not implemented');
+      }}
+      apiGetErrors['/tm-services'] = 'tm unavailable';
+      apiGetErrors['/cpa-services'] = 'cpa unavailable';
+      apiGetErrors['/sub2api-services'] = 'sub2api unavailable';
+      await exported.loadTmServices();
+      await exported.loadCpaServices();
+      await exported.loadSub2ApiServices();
+      return {{
+        tm_html: getElement('tm-services-table').innerHTML,
+        cpa_html: getElement('cpa-services-table').innerHTML,
+        sub2api_html: getElement('sub2api-services-table').innerHTML,
       }};
     }}
     case 'save_email_suffix_blacklist_empty_suffix': {{

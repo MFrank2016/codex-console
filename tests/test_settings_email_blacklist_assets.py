@@ -22,13 +22,17 @@ def test_settings_js_save_email_suffix_blacklist_normalizes_suffix_payload():
     }
 
 
-def test_settings_js_render_email_suffix_blacklist_rows_contains_action_hooks():
+def test_settings_js_render_email_suffix_blacklist_rows_contains_delegated_action_hooks():
     result = run_settings_js_scenario("render_email_suffix_blacklist_rows")
     html = result["html"]
 
     assert "badmail.com" in html
-    assert "toggleEmailSuffixBlacklistItem(5, false)" in html
-    assert "deleteEmailSuffixBlacklistItem(5)" in html
+    assert 'data-blacklist-action="edit"' in html
+    assert 'data-blacklist-action="toggle"' in html
+    assert 'data-blacklist-action="delete"' in html
+    assert 'data-blacklist-id="5"' in html
+    assert 'onclick=' not in html
+    assert 'style=' not in html
 
 
 def test_settings_js_save_email_suffix_blacklist_rejects_empty_suffix_without_request():
@@ -67,6 +71,5 @@ def test_settings_js_render_email_suffix_blacklist_escapes_html_and_invalid_id_a
     assert "<script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert "&lt;b&gt;bad&quot;&amp;&lt;/b&gt;" in html
-    assert "openEmailSuffixBlacklistModalById(" not in html
-    assert "toggleEmailSuffixBlacklistItem(" not in html
-    assert "deleteEmailSuffixBlacklistItem(" not in html
+    assert 'data-blacklist-action=' not in html
+    assert 'style=' not in html
