@@ -19,6 +19,7 @@ from ..database.models import Account, EmailService
 from ..services import EmailServiceFactory
 
 logger = logging.getLogger(__name__)
+_RUNTIME_CONTEXT_UNKNOWN = "unknown"
 
 
 @dataclass
@@ -136,7 +137,7 @@ def _resolve_email_service(
                 break
 
         if selected_service and selected_service.config:
-            config = selected_service.config.copy()
+            config = _normalize_email_service_config(service_type, selected_service.config, proxy)
             resolved_service_id = selected_service.id
             return service_type, config, resolved_service_id
 
@@ -213,6 +214,9 @@ def run_registration_job(
         attempt_no = attempt + 1
         engine: RegistrationEngine | None = None
         runtime_ref: dict[str, Any] | None = None
+        attempt_result_payload: dict[str, Any] | None = None
+        attempt_runtime: Any | None = None
+        runtime_context_logged = False
         try:
             service_type, config, resolved_service_id = _resolve_email_service(
                 db=db,
@@ -222,6 +226,12 @@ def run_registration_job(
                 email_service_config=email_service_config,
             )
             known_service_id = resolved_service_id if resolved_service_id is not None else known_service_id
+            _log_runtime_context_selection(
+                callback_logger,
+                email_service_id=resolved_service_id if resolved_service_id is not None else email_service_id,
+                proxy_url=proxy,
+            )
+            runtime_context_logged = True
 
             email_service = EmailServiceFactory.create(service_type, config)
             if pipeline_key == "codexgen_pipeline":
@@ -238,7 +248,9 @@ def run_registration_job(
                     runtime_ref=runtime_ref,
                 )
                 pipeline_runtime = runtime_ref.get("runtime")
+                attempt_runtime = pipeline_runtime
                 result_payload = redact_result_payload(result_payload or {})
+                attempt_result_payload = result_payload
                 known_email = (result_payload or {}).get("email") or known_email
                 known_result_payload = result_payload
                 if not account:
@@ -250,6 +262,7 @@ def run_registration_job(
                         pipeline_key=pipeline_key,
                         registration_mode=registration_mode,
                         email_service_type=email_service_type,
+                        email_service_id=resolved_service_id,
                         email=(result_payload or {}).get("email"),
                         proxy=proxy,
                         error_message=(result_payload or {}).get("error_message") or "注册失败",
@@ -286,8 +299,10 @@ def run_registration_job(
                     callback_logger=callback_logger,
                     task_uuid=task_uuid,
                 )
+                attempt_runtime = engine
                 result = engine.run()
                 result_payload = result.to_dict()
+                attempt_result_payload = result_payload
                 known_email = result.email or known_email
                 known_result_payload = result_payload
 
@@ -301,6 +316,7 @@ def run_registration_job(
                         pipeline_key=pipeline_key,
                         registration_mode=registration_mode,
                         email_service_type=email_service_type,
+                        email_service_id=resolved_service_id,
                         email=result.email or None,
                         proxy=proxy,
                         error_message=result.error_message or "注册失败",
@@ -325,6 +341,7 @@ def run_registration_job(
                         pipeline_key=pipeline_key,
                         registration_mode=registration_mode,
                         email_service_type=email_service_type,
+                        email_service_id=resolved_service_id,
                         email=result.email or None,
                         proxy=proxy,
                         error_message="保存注册账号到数据库失败",
@@ -351,6 +368,7 @@ def run_registration_job(
                         pipeline_key=pipeline_key,
                         registration_mode=registration_mode,
                         email_service_type=email_service_type,
+                        email_service_id=resolved_service_id,
                         email=result.email or None,
                         proxy=proxy,
                         error_message="注册成功但未找到已保存账号",
@@ -391,6 +409,7 @@ def run_registration_job(
                 pipeline_key=pipeline_key,
                 registration_mode=registration_mode,
                 email_service_type=email_service_type,
+                email_service_id=known_service_id,
                 email=known_email,
                 proxy=proxy,
                 error_message=error_message,
@@ -459,6 +478,7 @@ def run_registration_job(
                 pipeline_key=pipeline_key,
                 registration_mode=registration_mode,
                 email_service_type=email_service_type,
+                email_service_id=known_service_id,
                 email=known_email,
                 proxy=proxy,
                 error_message=str(exc) or "注册异常",
@@ -481,6 +501,15 @@ def run_registration_job(
                 error_message=str(exc) or "注册异常",
                 result_payload=known_result_payload,
             )
+        finally:
+            if runtime_context_logged:
+                _log_runtime_context_proxy_ip(
+                    callback_logger,
+                    proxy_ip=_extract_runtime_proxy_ip(
+                        result_payload=attempt_result_payload,
+                        runtime=attempt_runtime,
+                    ),
+                )
 
 
 def _write_failure_attempt(
@@ -492,6 +521,7 @@ def _write_failure_attempt(
     pipeline_key: str,
     registration_mode: str,
     email_service_type: str | None,
+    email_service_id: int | None,
     email: str | None,
     proxy: str | None,
     error_message: str | None,
@@ -506,6 +536,7 @@ def _write_failure_attempt(
         pipeline_key=pipeline_key,
         registration_mode=registration_mode,
         email_service_type=email_service_type,
+        email_service_id=email_service_id,
         email=email,
         proxy=proxy,
         error_message=error_message,
@@ -610,6 +641,48 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _to_jsonable(v) for k, v in value.items()}
     return str(value)
+
+
+def _extract_runtime_proxy_ip(
+    *,
+    result_payload: dict[str, Any] | None,
+    runtime: Any | None,
+) -> str | None:
+    metadata = (result_payload or {}).get("metadata")
+    if isinstance(metadata, dict):
+        proxy_ip = str(metadata.get("proxy_ip") or "").strip()
+        if proxy_ip:
+            return proxy_ip
+
+    proxy_ip = str(getattr(runtime, "proxy_ip", "") or "").strip()
+    return proxy_ip or None
+
+
+def _log_runtime_context_selection(
+    callback_logger: Callable[[str], None] | None,
+    *,
+    email_service_id: int | None,
+    proxy_url: str | None,
+) -> None:
+    if callback_logger is None:
+        return
+
+    callback_logger(
+        "[运行上下文] "
+        f"email_service_id={email_service_id if email_service_id is not None else 'none'} "
+        f"proxy_url={str(proxy_url or 'direct')}"
+    )
+
+
+def _log_runtime_context_proxy_ip(
+    callback_logger: Callable[[str], None] | None,
+    *,
+    proxy_ip: str | None,
+) -> None:
+    if callback_logger is None:
+        return
+
+    callback_logger(f"[运行上下文] proxy_ip={proxy_ip or _RUNTIME_CONTEXT_UNKNOWN}")
 
 
 def _update_registration_task_success(

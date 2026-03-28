@@ -20,8 +20,12 @@ def _apply_filters(query: Query, *, filters: RegistrationFailureQuery | None) ->
         query = query.filter(RegistrationFailureRecord.registration_mode == filters.registration_mode)
     if filters.email_service_type:
         query = query.filter(RegistrationFailureRecord.email_service_type == filters.email_service_type)
+    if filters.email_service_id is not None:
+        query = query.filter(RegistrationFailureRecord.email_service_id == filters.email_service_id)
     if filters.email_suffix:
         query = query.filter(RegistrationFailureRecord.email_suffix.ilike(f"%{filters.email_suffix}%"))
+    if filters.proxy_ip:
+        query = query.filter(RegistrationFailureRecord.proxy_ip.ilike(f"%{filters.proxy_ip}%"))
     if filters.error_keyword:
         keyword = f"%{str(filters.error_keyword).strip().lower()}%"
         haystack = func.lower(

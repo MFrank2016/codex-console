@@ -280,6 +280,18 @@ async function main() {{
     }};
   }}
 
+  if (scenarioName === 'rate_limit_entry_highlight') {{
+    controller.setState(context.realtimeLogStore.createState({{
+      liveWindow: [
+        makeEntry(1, 'ERROR', 'HTTP 429: Rate limit exceeded, please try again later.', '10:00:00'),
+      ],
+    }}));
+    return {{
+      has_rate_limit_class: root.innerHTML.includes('realtime-log-line-rate-limit'),
+      has_rate_limit_badge: root.innerHTML.includes('realtime-log-tag-rate-limit') && root.innerHTML.includes('限流'),
+    }};
+  }}
+
   throw new Error(`Unknown scenario: ${{scenarioName}}`);
 }}
 

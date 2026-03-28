@@ -45,6 +45,7 @@ SQLITE_MIGRATIONS = [
     ("scheduled_runs", "stop_reason", "TEXT"),
     ("scheduled_runs", "last_log_at", "DATETIME"),
     ("scheduled_runs", "log_version", "INTEGER DEFAULT 0"),
+    ("registration_failure_records", "email_service_id", "INTEGER"),
 ]
 
 POSTGRESQL_MIGRATIONS = [
@@ -70,6 +71,7 @@ POSTGRESQL_MIGRATIONS = [
     ("scheduled_runs", "stop_reason", "TEXT"),
     ("scheduled_runs", "last_log_at", "TIMESTAMP"),
     ("scheduled_runs", "log_version", "INTEGER DEFAULT 0"),
+    ("registration_failure_records", "email_service_id", "INTEGER"),
 ]
 
 # 为升级数据库补齐 registration_tasks 在 Task 1 中新增的索引字段。
@@ -83,6 +85,7 @@ SQLITE_INDEX_MIGRATIONS = [
     ("registration_tasks", "ix_registration_tasks_assigned_proxy_id", "assigned_proxy_id"),
     ("registration_tasks", "ix_registration_tasks_proxy_check_run_id", "proxy_check_run_id"),
     ("registration_tasks", "ix_registration_tasks_pipeline_status", "pipeline_status"),
+    ("registration_failure_records", "ix_registration_failure_records_email_service_id", "email_service_id"),
 ]
 
 POSTGRESQL_INDEX_MIGRATIONS = [
@@ -93,6 +96,7 @@ POSTGRESQL_INDEX_MIGRATIONS = [
     ("registration_tasks", "ix_registration_tasks_assigned_proxy_id", "assigned_proxy_id"),
     ("registration_tasks", "ix_registration_tasks_proxy_check_run_id", "proxy_check_run_id"),
     ("registration_tasks", "ix_registration_tasks_pipeline_status", "pipeline_status"),
+    ("registration_failure_records", "ix_registration_failure_records_email_service_id", "email_service_id"),
 ]
 
 

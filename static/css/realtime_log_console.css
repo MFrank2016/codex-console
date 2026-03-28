@@ -5,6 +5,9 @@
   --log-info-fg: #0f3d91;
   --log-warn-fg: #9a5b00;
   --log-error-fg: #a11d2d;
+  --log-rate-limit-fg: #b91c1c;
+  --log-rate-limit-bg: rgba(248, 113, 113, 0.12);
+  --log-rate-limit-border: rgba(239, 68, 68, 0.28);
 }
 
 [data-theme="dark"] {
@@ -14,6 +17,9 @@
   --log-info-fg: #7dd3fc;
   --log-warn-fg: #fbbf24;
   --log-error-fg: #fca5a5;
+  --log-rate-limit-fg: #fecaca;
+  --log-rate-limit-bg: rgba(239, 68, 68, 0.18);
+  --log-rate-limit-border: rgba(248, 113, 113, 0.3);
 }
 
 .realtime-log-console-shell {
@@ -109,6 +115,29 @@
   min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.realtime-log-line-rate-limit {
+  background: var(--log-rate-limit-bg);
+  border-radius: 8px;
+  padding: 4px 6px;
+}
+
+.realtime-log-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  border: 1px solid transparent;
+}
+
+.realtime-log-tag-rate-limit {
+  color: var(--log-rate-limit-fg);
+  background: var(--log-rate-limit-bg);
+  border-color: var(--log-rate-limit-border);
 }
 
 .realtime-log-console--nowrap .realtime-log-message {

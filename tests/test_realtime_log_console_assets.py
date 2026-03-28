@@ -50,3 +50,9 @@ def test_realtime_log_console_stylesheet_resets_legacy_console_mask_and_shadow()
     stylesheet = Path("static/css/realtime_log_console.css").read_text(encoding="utf-8")
     assert ".console-log.realtime-log-console-shell::before" in stylesheet
     assert "content: none;" in stylesheet
+
+
+def test_realtime_log_console_marks_rate_limit_entries():
+    result = run_realtime_log_scenario("rate_limit_entry_highlight")
+    assert result["has_rate_limit_class"] is True
+    assert result["has_rate_limit_badge"] is True

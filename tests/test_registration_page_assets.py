@@ -107,6 +107,24 @@ def test_registration_template_contains_use_proxy_controls_in_config_panel():
     assert 'id="proxy"' in template
 
 
+def test_registration_template_contains_recent_tasks_panel_and_failure_filter_hooks():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+
+    assert 'id="recent-registration-tasks-table"' in template
+    assert 'id="refresh-tasks-btn"' in template
+    assert 'id="failure-filter-proxy-ip"' in template
+    assert 'id="failure-filter-email-service-id"' in template
+
+
+def test_registration_workbench_email_service_dropdown_hides_single_outlook_option():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    script = Path("static/js/app.js").read_text(encoding="utf-8")
+
+    assert '<option value="outlook">Outlook</option>' not in template
+    assert "option.value = `outlook:${service.id}`;" not in script
+    assert "batchOption.value = 'outlook_batch:all';" in script
+
+
 def test_registration_workbench_stylesheet_stretches_console_log_for_taller_log_panel():
     stylesheet = Path("static/css/registration_workbench.css").read_text(encoding="utf-8")
     assert ".feedback-panel-log .console-log" in stylesheet
@@ -194,6 +212,25 @@ def test_app_js_treats_naive_utc_started_at_as_utc_for_runtime_timer():
     result = run_app_js_scenario("single_task_runtime_timer_naive_utc")
     assert result["progress_elapsed_text"] == "01:01:01"
     assert result["progress_elapsed_after_tick"] == "01:01:02"
+
+
+def test_app_js_load_recent_registration_tasks_renders_proxy_ip_and_email_service_id():
+    result = run_app_js_scenario("load_recent_registration_tasks")
+    assert "/registration/tasks?page=1&page_size=10" in result["api_get_paths"]
+    assert "8.8.8.8" in result["table_html"]
+    assert "42" in result["table_html"]
+
+
+def test_app_js_load_registration_failures_includes_proxy_ip_and_email_service_id_filters():
+    result = run_app_js_scenario("load_registration_failures")
+    assert any("proxy_ip=8.8.8.8" in path for path in result["api_get_paths"])
+    assert any("email_service_id=42" in path for path in result["api_get_paths"])
+
+
+def test_app_js_render_registration_failure_rows_marks_rate_limit_entries():
+    result = run_app_js_scenario("render_registration_failure_rows")
+    assert "限流" in result["table_html"]
+    assert "failure-row-rate-limit" in result["table_html"]
 
 
 def test_app_js_freezes_single_task_elapsed_when_task_reaches_terminal_status():

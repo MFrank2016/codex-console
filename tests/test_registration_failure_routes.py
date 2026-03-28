@@ -61,6 +61,7 @@ def _create_failure(
     failed_at: datetime,
     email: str,
     email_suffix: str,
+    email_service_id: int | None = None,
     error_code: str = "registration_disallowed",
     error_detail: str = "registration_disallowed detail",
     proxy_ip: str | None = None,
@@ -74,6 +75,7 @@ def _create_failure(
         registration_mode="batch",
         email=email,
         email_suffix=email_suffix,
+        email_service_id=email_service_id,
         email_service_type="tempmail",
         display_name="Alice Smith",
         birthdate="1994-02-03",
@@ -316,3 +318,87 @@ def test_registration_failures_list_filters_by_keyword_suffix_and_page(client, a
     assert body["total"] == 2
     assert len(body["items"]) == 1
     assert body["items"][0]["email_suffix"] == "semi-blocked.test"
+
+
+def test_registration_failures_list_filters_by_proxy_ip_and_email_service_id(client, auth_cookie, route_db):
+    _create_failure(
+        route_db,
+        task_uuid="task-ip-email-service-hit",
+        failed_at=datetime(2026, 3, 28, 3, 0, 0),
+        email="one@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="8.8.8.8",
+        email_service_id=42,
+    )
+    _create_failure(
+        route_db,
+        task_uuid="task-ip-miss",
+        failed_at=datetime(2026, 3, 28, 3, 1, 0),
+        email="two@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="9.9.9.9",
+        email_service_id=42,
+    )
+    _create_failure(
+        route_db,
+        task_uuid="task-service-miss",
+        failed_at=datetime(2026, 3, 28, 3, 2, 0),
+        email="three@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="8.8.8.8",
+        email_service_id=7,
+    )
+
+    response = client.get(
+        "/api/registration/failures?proxy_ip=8.8.8.8&email_service_id=42",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["task_uuid"] == "task-ip-email-service-hit"
+    assert body["items"][0]["email_service_id"] == 42
+
+
+def test_registration_failures_summary_filters_by_proxy_ip_and_email_service_id(client, auth_cookie, route_db):
+    _create_failure(
+        route_db,
+        task_uuid="task-summary-hit-1",
+        failed_at=datetime(2026, 3, 28, 3, 0, 0),
+        email="one@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="8.8.4.4",
+        email_service_id=99,
+        error_code="proxy_error",
+    )
+    _create_failure(
+        route_db,
+        task_uuid="task-summary-hit-2",
+        failed_at=datetime(2026, 3, 28, 3, 1, 0),
+        email="two@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="8.8.4.4",
+        email_service_id=99,
+        error_code="registration_disallowed",
+    )
+    _create_failure(
+        route_db,
+        task_uuid="task-summary-miss",
+        failed_at=datetime(2026, 3, 28, 3, 2, 0),
+        email="other@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="1.1.1.1",
+        email_service_id=99,
+        error_code="registration_disallowed",
+    )
+
+    response = client.get(
+        "/api/registration/failures/summary?proxy_ip=8.8.4.4&email_service_id=99",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_failed_attempts"] == 2
+    assert body["top_proxy_ips"][0] == {"value": "8.8.4.4", "count": 2}

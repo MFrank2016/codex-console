@@ -394,6 +394,7 @@ const context = {{
               registration_mode: 'batch',
               email: 'tester@blocked.test',
               email_suffix: 'blocked.test',
+              email_service_id: Number(searchParams.get('email_service_id') || 42),
               proxy_ip: '1.1.1.1',
               error_code: 'registration_disallowed',
               error_detail: 'blocked by upstream',
@@ -429,6 +430,27 @@ const context = {{
           email_service: 'tempmail',
           steps: [
             {{ step_key: 'create_email', status: 'running', duration_ms: 88 }},
+          ],
+        }};
+      }}
+      if (pathname === '/registration/tasks') {{
+        return {{
+          total: 2,
+          tasks: [
+            {{
+              task_uuid: 'task-list-01',
+              status: 'completed',
+              email: 'task-one@example.com',
+              email_service_id: 42,
+              proxy_ip: '8.8.8.8',
+            }},
+            {{
+              task_uuid: 'task-list-02',
+              status: 'failed',
+              email: 'task-two@example.com',
+              email_service_id: 7,
+              proxy_ip: null,
+            }},
           ],
         }};
       }}
@@ -527,7 +549,7 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  buildRegistrationFailureQueryParams,\n  loadRegistrationFailureAnalysis,\n  loadRegistrationFailureSummary,\n  loadRegistrationFailureList,\n  renderRegistrationFailureRows,\n  openRegistrationFailureDetail,\n  openRegistrationFailureDetailByIndex,\n  closeRegistrationFailureDetail,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  buildRegistrationFailureQueryParams,\n  loadRegistrationFailureAnalysis,\n  loadRegistrationFailureSummary,\n  loadRegistrationFailureList,\n  loadRecentRegistrationTasks,\n  renderRecentRegistrationTasks,\n  renderRegistrationFailureRows,\n  openRegistrationFailureDetail,\n  openRegistrationFailureDetailByIndex,\n  closeRegistrationFailureDetail,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  elements,\n}};`,
   context,
 );
 
@@ -1389,6 +1411,8 @@ async function runScenario() {{
       getElement('failure-filter-pipeline-key').value = 'codexgen_pipeline';
       getElement('failure-filter-registration-mode').value = 'batch';
       getElement('failure-filter-email-suffix').value = 'blocked.test';
+      getElement('failure-filter-email-service-id').value = '42';
+      getElement('failure-filter-proxy-ip').value = '8.8.8.8';
       getElement('failure-filter-error-keyword').value = 'registration_disallowed';
 
       await exported.loadRegistrationFailureAnalysis();
@@ -1398,6 +1422,13 @@ async function runScenario() {{
         summary_total_text: getElement('failure-total-attempts').textContent,
         table_html: getElement('registration-failure-table-body').innerHTML,
         page_indicator: getElement('failure-page-indicator').textContent,
+      }};
+    }}
+    case 'load_recent_registration_tasks': {{
+      await exported.loadRecentRegistrationTasks();
+      return {{
+        api_get_paths: logs.apiGetPaths.slice(),
+        table_html: getElement('recent-registration-tasks-table').innerHTML,
       }};
     }}
     case 'render_registration_failure_rows': {{
@@ -1411,9 +1442,10 @@ async function runScenario() {{
           registration_mode: 'batch',
           email: malicious,
           email_suffix: 'blocked.test',
+          email_service_id: 42,
           proxy_ip: '1.1.1.1',
-          error_code: 'registration_disallowed',
-          error_detail: malicious,
+          error_code: 'unknown',
+          error_detail: `HTTP 429: ${{malicious}} Rate limit exceeded`,
           failed_at: '2026-03-28T10:00:00Z',
           extra_json: {{ html: malicious }},
         }},

@@ -23,6 +23,8 @@ class RegistrationFailureQuery:
     registration_mode: str | None = None
     email_service_type: str | None = None
     email_suffix: str | None = None
+    email_service_id: int | None = None
+    proxy_ip: str | None = None
     error_keyword: str | None = None
     failed_from: datetime | None = None
     failed_to: datetime | None = None
@@ -37,6 +39,7 @@ class RegistrationFailureWritePayload:
     registration_mode: str
     email: str | None
     email_service_type: str | None
+    email_service_id: int | None
     display_name: str | None
     birthdate: str | None
     proxy: str | None
@@ -181,6 +184,7 @@ def build_failure_write_payload(
     pipeline_key: str,
     registration_mode: str,
     email_service_type: str | None,
+    email_service_id: int | None,
     email: str | None,
     proxy: str | None,
     error_message: str | None,
@@ -213,6 +217,7 @@ def build_failure_write_payload(
         registration_mode=str(registration_mode or "single").strip() or "single",
         email=known_email,
         email_service_type=str(email_service_type or "").strip() or None,
+        email_service_id=email_service_id,
         display_name=display_name,
         birthdate=birthdate,
         proxy=str(proxy or "").strip() or None,
@@ -238,6 +243,7 @@ def write_registration_failure_record(session, payload: RegistrationFailureWrite
         registration_mode=payload.registration_mode,
         email=payload.email,
         email_suffix=extract_email_suffix(payload.email or ""),
+        email_service_id=payload.email_service_id,
         email_service_type=payload.email_service_type,
         display_name=payload.display_name,
         birthdate=payload.birthdate,

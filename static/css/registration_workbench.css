@@ -175,6 +175,33 @@
   text-align: right;
 }
 
+.failure-row-rate-limit td {
+  background: color-mix(in srgb, var(--danger-color, #dc2626) 8%, transparent);
+}
+
+.failure-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  border: 1px solid transparent;
+}
+
+.failure-badge-rate-limit {
+  color: #b91c1c;
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(239, 68, 68, 0.28);
+}
+
+[data-theme="dark"] .failure-badge-rate-limit {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
 .failure-pagination-row {
   margin-top: var(--spacing-md);
   justify-content: space-between;

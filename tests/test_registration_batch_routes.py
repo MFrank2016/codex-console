@@ -199,6 +199,44 @@ def test_get_task_returns_step_aware_pipeline_payload(route_db):
     assert [item["step_key"] for item in response.steps] == ["create_email", "submit_login_email"]
 
 
+def test_get_task_returns_proxy_ip_from_result_metadata(route_db):
+    task = crud.create_registration_task(route_db, task_uuid="task-proxy-ip")
+    crud.update_registration_task(
+        route_db,
+        task.task_uuid,
+        result={
+            "success": True,
+            "metadata": {
+                "proxy_ip": "8.8.8.8",
+            },
+        },
+    )
+
+    response = asyncio.run(registration_routes.get_task(task.task_uuid))
+
+    assert response.proxy_ip == "8.8.8.8"
+
+
+def test_list_tasks_returns_proxy_ip_from_result_metadata(route_db):
+    task = crud.create_registration_task(route_db, task_uuid="task-list-proxy-ip")
+    crud.update_registration_task(
+        route_db,
+        task.task_uuid,
+        result={
+            "success": False,
+            "metadata": {
+                "proxy_ip": "7.7.7.7",
+            },
+        },
+    )
+
+    response = asyncio.run(registration_routes.list_tasks(page=1, page_size=20, status=None))
+
+    assert response.total >= 1
+    matched = next(item for item in response.tasks if item.task_uuid == "task-list-proxy-ip")
+    assert matched.proxy_ip == "7.7.7.7"
+
+
 class FakeTaskManager:
     def __init__(self):
         self._status = {}

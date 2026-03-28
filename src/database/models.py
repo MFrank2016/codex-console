@@ -186,6 +186,7 @@ class RegistrationFailureRecord(Base):
     registration_mode = Column(String(32), nullable=False, index=True)
     email = Column(String(255))
     email_suffix = Column(String(255), index=True)
+    email_service_id = Column(Integer, index=True)
     email_service_type = Column(String(64))
     display_name = Column(String(255))
     birthdate = Column(String(32))
@@ -207,6 +208,7 @@ class RegistrationFailureRecord(Base):
             "registration_mode": self.registration_mode,
             "email": self.email,
             "email_suffix": self.email_suffix,
+            "email_service_id": self.email_service_id,
             "email_service_type": self.email_service_type,
             "display_name": self.display_name,
             "birthdate": self.birthdate,

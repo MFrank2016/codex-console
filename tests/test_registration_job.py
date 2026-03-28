@@ -4,9 +4,9 @@ import pytest
 
 from src.config.constants import EmailServiceType
 from src.core.email_suffix_blacklist import RegistrationDisallowedSuffixError
-from src.core.registration_job import run_registration_job
+from src.core.registration_job import _resolve_email_service, run_registration_job
 from src.database import crud
-from src.database.models import Base, EmailSuffixBlacklist
+from src.database.models import Base, EmailService, EmailSuffixBlacklist
 from src.database.repositories import registration_failure_repository as failure_repo
 from src.database.session import DatabaseSessionManager
 
@@ -100,6 +100,200 @@ def test_run_registration_job_retries_full_round_after_auto_blacklisting(temp_db
     assert row.enabled is True
     assert any("已将邮箱后缀加入黑名单" in item for item in logs)
     assert any("当前任务将使用新邮箱重新尝试注册" in item for item in logs)
+
+
+def test_resolve_email_service_auto_selected_outlook_injects_proxy_url(temp_db):
+    temp_db.add(
+        EmailService(
+            service_type="outlook",
+            name="outlook-auto-selected",
+            config={
+                "email": "outlook-user@example.com",
+                "password": "secret-pass",
+            },
+            enabled=True,
+            priority=0,
+        )
+    )
+    temp_db.commit()
+
+    service_type, config, resolved_service_id = _resolve_email_service(
+        db=temp_db,
+        email_service_type="outlook",
+        email_service_id=None,
+        proxy="http://proxy-outlook-auto:9000",
+        email_service_config=None,
+    )
+
+    assert service_type == EmailServiceType.OUTLOOK
+    assert resolved_service_id is not None
+    assert config["email"] == "outlook-user@example.com"
+    assert config["proxy_url"] == "http://proxy-outlook-auto:9000"
+
+
+def test_run_registration_job_logs_runtime_context_for_current_pipeline(temp_db, monkeypatch):
+    logs: list[str] = []
+
+    class FakeResult:
+        success = True
+        email = "logger@test.dev"
+        error_message = None
+
+        def to_dict(self):
+            return {
+                "success": True,
+                "email": self.email,
+                "metadata": {
+                    "proxy_ip": "8.8.8.8",
+                },
+            }
+
+    class FakeEngine:
+        def __init__(self, **_kwargs):
+            self.proxy_ip = "8.8.8.8"
+
+        def run(self):
+            return FakeResult()
+
+        def save_to_database(self, result):
+            crud.create_account(
+                temp_db,
+                email=result.email,
+                email_service="tempmail",
+                password="p",
+                client_id="cid",
+            )
+            return True
+
+        def flush_task_logs(self):
+            return None
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, 33),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FakeEngine)
+    monkeypatch.setattr(
+        "src.core.registration_job.get_settings",
+        lambda: types.SimpleNamespace(registration_max_retries=0),
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-a:8000",
+        email_service_config={},
+        callback_logger=logs.append,
+    )
+
+    assert result.success is True
+    assert any(
+        "[运行上下文]" in item
+        and "email_service_id=33" in item
+        and "proxy_url=http://proxy-a:8000" in item
+        for item in logs
+    )
+    assert any("[运行上下文]" in item and "proxy_ip=8.8.8.8" in item for item in logs)
+
+
+def test_run_registration_job_logs_runtime_context_for_codexgen_pipeline(temp_db, monkeypatch):
+    logs: list[str] = []
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, 44),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job._run_pipeline_registration",
+        lambda **_kwargs: (
+            types.SimpleNamespace(id=101, email="pipeline@test.dev"),
+            {
+                "success": True,
+                "email": "pipeline@test.dev",
+                "metadata": {
+                    "proxy_ip": "9.9.9.9",
+                },
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.get_settings",
+        lambda: types.SimpleNamespace(registration_max_retries=0),
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-b:9000",
+        email_service_config={},
+        pipeline_key="codexgen_pipeline",
+        callback_logger=logs.append,
+    )
+
+    assert result.success is True
+    assert any(
+        "[运行上下文]" in item
+        and "email_service_id=44" in item
+        and "proxy_url=http://proxy-b:9000" in item
+        for item in logs
+    )
+    assert any("[运行上下文]" in item and "proxy_ip=9.9.9.9" in item for item in logs)
+
+
+def test_run_registration_job_logs_unknown_proxy_ip_when_failure_has_no_ip(temp_db, monkeypatch):
+    logs: list[str] = []
+
+    class FailingEngine:
+        def __init__(self, **_kwargs):
+            self.proxy_ip = None
+
+        def run(self):
+            raise RuntimeError("boom")
+
+        def flush_task_logs(self):
+            return None
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, 55),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FailingEngine)
+    monkeypatch.setattr(
+        "src.core.registration_job.get_settings",
+        lambda: types.SimpleNamespace(registration_max_retries=0),
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-c:7000",
+        email_service_config={},
+        callback_logger=logs.append,
+    )
+
+    assert result.success is False
+    assert any(
+        "[运行上下文]" in item
+        and "email_service_id=55" in item
+        and "proxy_url=http://proxy-c:7000" in item
+        for item in logs
+    )
+    assert any("[运行上下文]" in item and "proxy_ip=unknown" in item for item in logs)
 
 
 def test_run_registration_job_fails_after_exceeding_max_retries(temp_db, monkeypatch):

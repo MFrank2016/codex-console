@@ -461,6 +461,42 @@ def test_registration_service_passes_registration_mode_and_batch_id_to_job_runne
     assert captured["registration_mode"] == "outlook_batch"
 
 
+def test_registration_service_uses_persisted_email_service_id_for_outlook_tasks(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(
+        temp_db,
+        task_uuid="task-outlook-persisted-service-id",
+        email_service_id=42,
+        pipeline_key="current_pipeline",
+    )
+    task_manager = FakeTaskManager()
+    captured: dict[str, object] = {}
+
+    def fake_job_runner(**kwargs):
+        captured.update(kwargs)
+        return RegistrationJobResult(success=False, error_message="boom")
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    service.run_single_task_sync(
+        task_uuid="task-outlook-persisted-service-id",
+        email_service_type="outlook",
+        proxy="http://proxy-for-outlook:8000",
+        email_service_config=None,
+        email_service_id=None,
+        use_proxy=True,
+        proxy_task_group="outlook_batch",
+    )
+
+    assert captured["email_service_id"] == 42
+    assert captured["proxy"] == "http://proxy-for-outlook:8000"
+
+
 def test_registration_service_does_not_retry_non_proxy_failure(db_factory, temp_db):
     from src.application.registration_service import RegistrationService
 

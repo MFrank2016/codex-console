@@ -136,12 +136,14 @@ class RegistrationTaskResponse(BaseModel):
     id: int
     task_uuid: str
     status: str
+    email: Optional[str] = None
     email_service_id: Optional[int] = None
     pipeline_key: Optional[str] = None
     current_step_key: Optional[str] = None
     pipeline_status: Optional[str] = None
     total_duration_ms: Optional[int] = None
     proxy: Optional[str] = None
+    proxy_ip: Optional[str] = None
     logs: Optional[str] = None
     result: Optional[dict] = None
     error_message: Optional[str] = None
@@ -176,6 +178,7 @@ class RegistrationFailureItemResponse(BaseModel):
     registration_mode: str
     email: Optional[str] = None
     email_suffix: Optional[str] = None
+    email_service_id: Optional[int] = None
     email_service_type: Optional[str] = None
     display_name: Optional[str] = None
     birthdate: Optional[str] = None
@@ -279,16 +282,22 @@ def _collect_task_steps(db, task_uuid: str) -> List[dict]:
 
 def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = None) -> RegistrationTaskResponse:
     """转换任务模型为响应"""
+    result_payload = task.result if isinstance(task.result, dict) else {}
+    metadata = result_payload.get("metadata") if isinstance(result_payload, dict) else {}
+    proxy_ip = metadata.get("proxy_ip") if isinstance(metadata, dict) else None
+    email = str(task.email_address or result_payload.get("email") or "").strip() or None
     return RegistrationTaskResponse(
         id=task.id,
         task_uuid=task.task_uuid,
         status=task.status,
+        email=email,
         email_service_id=task.email_service_id,
         pipeline_key=task.pipeline_key,
         current_step_key=task.current_step_key,
         pipeline_status=task.pipeline_status,
         total_duration_ms=task.total_duration_ms,
         proxy=task.proxy,
+        proxy_ip=str(proxy_ip).strip() if proxy_ip else None,
         logs=task.logs,
         result=task.result,
         error_message=task.error_message,
@@ -305,6 +314,8 @@ def _build_failure_filters(
     registration_mode: Optional[str],
     email_service_type: Optional[str],
     email_suffix: Optional[str],
+    email_service_id: Optional[int],
+    proxy_ip: Optional[str],
     error_keyword: Optional[str],
     failed_from: datetime,
     failed_to: datetime,
@@ -314,6 +325,8 @@ def _build_failure_filters(
         registration_mode=str(registration_mode or "").strip() or None,
         email_service_type=str(email_service_type or "").strip() or None,
         email_suffix=str(email_suffix or "").strip() or None,
+        email_service_id=int(email_service_id) if email_service_id is not None else None,
+        proxy_ip=str(proxy_ip or "").strip() or None,
         error_keyword=str(error_keyword or "").strip() or None,
         failed_from=failed_from,
         failed_to=failed_to,
@@ -350,6 +363,8 @@ async def get_registration_failures_summary(
     registration_mode: Optional[str] = None,
     email_service_type: Optional[str] = None,
     email_suffix: Optional[str] = None,
+    email_service_id: Optional[int] = None,
+    proxy_ip: Optional[str] = None,
     error_keyword: Optional[str] = None,
     failed_from: Optional[str] = None,
     failed_to: Optional[str] = None,
@@ -370,6 +385,8 @@ async def get_registration_failures_summary(
         registration_mode=registration_mode,
         email_service_type=email_service_type,
         email_suffix=email_suffix,
+        email_service_id=email_service_id,
+        proxy_ip=proxy_ip,
         error_keyword=error_keyword,
         failed_from=window_from,
         failed_to=window_to,
@@ -392,6 +409,8 @@ async def get_registration_failures(
     registration_mode: Optional[str] = None,
     email_service_type: Optional[str] = None,
     email_suffix: Optional[str] = None,
+    email_service_id: Optional[int] = None,
+    proxy_ip: Optional[str] = None,
     error_keyword: Optional[str] = None,
     failed_from: Optional[str] = None,
     failed_to: Optional[str] = None,
@@ -415,6 +434,8 @@ async def get_registration_failures(
         registration_mode=registration_mode,
         email_service_type=email_service_type,
         email_suffix=email_suffix,
+        email_service_id=email_service_id,
+        proxy_ip=proxy_ip,
         error_keyword=error_keyword,
         failed_from=window_from,
         failed_to=window_to,

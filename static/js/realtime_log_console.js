@@ -22,6 +22,15 @@
     return `realtime-log-level-${String(level || 'info').toLowerCase()}`;
   }
 
+  function isRateLimitEntry(entry) {
+    const text = `${String(entry && entry.level ? entry.level : '')} ${String(entry && (entry.message || entry.raw) ? (entry.message || entry.raw) : '')}`.toLowerCase();
+    return text.includes('http 429')
+      || text.includes('rate limit exceeded')
+      || text.includes('rate_limit')
+      || text.includes('too many requests')
+      || text.includes('限流');
+  }
+
   function formatEntryText(entry) {
     const displayTime = String(entry && entry.display_time ? entry.display_time : '--:--:--');
     const level = String(entry && entry.level ? entry.level : 'INFO');
@@ -72,11 +81,15 @@
 
     const linesHtml = entries.map((entry) => {
       const levelClass = getLevelClass(entry.level);
+      const rateLimitClass = isRateLimitEntry(entry) ? ' realtime-log-line-rate-limit' : '';
       return `
-        <div class="realtime-log-line">
+        <div class="realtime-log-line${rateLimitClass}">
           <span class="realtime-log-time">${escapeHtml(entry.display_time || '--:--:--')}</span>
           <span class="realtime-log-level-badge ${levelClass}">${escapeHtml(entry.level || 'INFO')}</span>
-          <span class="realtime-log-message">${escapeHtml(entry.message || '')}</span>
+          <span class="realtime-log-message">
+            ${escapeHtml(entry.message || '')}
+            ${isRateLimitEntry(entry) ? '<span class="realtime-log-tag realtime-log-tag-rate-limit">限流</span>' : ''}
+          </span>
         </div>
       `;
     }).join('');

@@ -75,6 +75,24 @@ function shouldRenderSingleTaskSteps(task) {
     return pipelineKey !== 'codexgen_pipeline';
 }
 
+function normalizeTaskProxyIp(task) {
+    const proxyIp = String(task?.proxy_ip || task?.result?.metadata?.proxy_ip || '').trim();
+    return proxyIp || '—';
+}
+
+function isRateLimitText(value) {
+    const text = String(value || '').toLowerCase();
+    return text.includes('http 429')
+        || text.includes('rate limit exceeded')
+        || text.includes('rate_limit')
+        || text.includes('too many requests')
+        || text.includes('限流');
+}
+
+function isRateLimitFailureItem(item) {
+    return isRateLimitText(item?.error_code) || isRateLimitText(item?.error_detail);
+}
+
 function formatElapsedMsToClock(elapsedMs) {
     const safeMs = Number.isFinite(Number(elapsedMs)) ? Math.max(0, Number(elapsedMs)) : 0;
     const totalSeconds = Math.floor(safeMs / 1000);
@@ -510,6 +528,7 @@ const elements = {
     taskEmail: document.getElementById('task-email'),
     taskStatus: document.getElementById('task-status'),
     taskService: document.getElementById('task-service'),
+    taskProxyIp: document.getElementById('task-proxy-ip'),
     taskStatusBadge: document.getElementById('task-status-badge'),
     // 批量状态
     batchProgressText: document.getElementById('batch-progress-text'),
@@ -526,6 +545,8 @@ const elements = {
     failureFilterPipelineKey: document.getElementById('failure-filter-pipeline-key'),
     failureFilterRegistrationMode: document.getElementById('failure-filter-registration-mode'),
     failureFilterEmailSuffix: document.getElementById('failure-filter-email-suffix'),
+    failureFilterEmailServiceId: document.getElementById('failure-filter-email-service-id'),
+    failureFilterProxyIp: document.getElementById('failure-filter-proxy-ip'),
     failureFilterErrorKeyword: document.getElementById('failure-filter-error-keyword'),
     failureFilterFailedFrom: document.getElementById('failure-filter-failed-from'),
     failureFilterFailedTo: document.getElementById('failure-filter-failed-to'),
@@ -543,6 +564,8 @@ const elements = {
     registrationFailureDetailMeta: document.getElementById('registration-failure-detail-meta'),
     registrationFailureDetailText: document.getElementById('registration-failure-detail-text'),
     registrationFailureDetailCloseBtn: document.getElementById('registration-failure-detail-close-btn'),
+    recentRegistrationTasksTable: document.getElementById('recent-registration-tasks-table'),
+    refreshTasksBtn: document.getElementById('refresh-tasks-btn'),
     // 已注册账号
     recentAccountsTable: document.getElementById('recent-accounts-table'),
     refreshAccountsBtn: document.getElementById('refresh-accounts-btn'),
@@ -585,6 +608,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderRegistrationStreamStatus();
     loadAvailableServices();
     loadRecentAccounts();
+    loadRecentRegistrationTasks();
     initRegistrationFailureAnalysis();
     startAccountsPolling();
     initVisibilityReconnect();
@@ -706,6 +730,13 @@ function initEventListeners() {
         toast.info('已刷新');
     });
 
+    if (elements.refreshTasksBtn) {
+        elements.refreshTasksBtn.addEventListener('click', () => {
+            loadRecentRegistrationTasks();
+            toast.info('已刷新');
+        });
+    }
+
     if (elements.refreshFailureAnalysisBtn) {
         elements.refreshFailureAnalysisBtn.addEventListener('click', () => {
             loadRegistrationFailureAnalysis();
@@ -768,6 +799,8 @@ function collectRegistrationFailureFilters() {
         pipeline_key: normalizeRegistrationFailureFilterValue(elements.failureFilterPipelineKey?.value),
         registration_mode: normalizeRegistrationFailureFilterValue(elements.failureFilterRegistrationMode?.value),
         email_suffix: normalizeRegistrationFailureFilterValue(elements.failureFilterEmailSuffix?.value),
+        email_service_id: normalizeRegistrationFailureFilterValue(elements.failureFilterEmailServiceId?.value),
+        proxy_ip: normalizeRegistrationFailureFilterValue(elements.failureFilterProxyIp?.value),
         error_keyword: normalizeRegistrationFailureFilterValue(elements.failureFilterErrorKeyword?.value),
         failed_from: normalizeRegistrationFailureFilterValue(elements.failureFilterFailedFrom?.value),
         failed_to: normalizeRegistrationFailureFilterValue(elements.failureFilterFailedTo?.value),
@@ -791,6 +824,8 @@ function buildRegistrationFailureQueryParams(options = {}) {
     appendRegistrationFailureQueryParam(params, 'pipeline_key', filters.pipeline_key);
     appendRegistrationFailureQueryParam(params, 'registration_mode', filters.registration_mode);
     appendRegistrationFailureQueryParam(params, 'email_suffix', filters.email_suffix);
+    appendRegistrationFailureQueryParam(params, 'email_service_id', filters.email_service_id);
+    appendRegistrationFailureQueryParam(params, 'proxy_ip', filters.proxy_ip);
     appendRegistrationFailureQueryParam(params, 'error_keyword', filters.error_keyword);
     appendRegistrationFailureQueryParam(params, 'failed_from', filters.failed_from);
     appendRegistrationFailureQueryParam(params, 'failed_to', filters.failed_to);
@@ -864,6 +899,7 @@ function formatRegistrationFailureTimestamp(value) {
 function buildRegistrationFailureDetailMeta(item) {
     const parts = [
         item?.email || '—',
+        item?.email_service_id != null ? `service:${item.email_service_id}` : 'service:—',
         item?.proxy_ip || item?.proxy || '—',
         item?.failed_at || item?.created_at || '—',
     ];
@@ -885,7 +921,7 @@ function openRegistrationFailureDetail(detail) {
     }
     const item = typeof detail === 'string' ? { error_detail: detail } : (detail || {});
     if (elements.registrationFailureDetailTitle) {
-        elements.registrationFailureDetailTitle.textContent = `失败详情 · ${item.error_code || 'unknown'}`;
+        elements.registrationFailureDetailTitle.textContent = `失败详情 · ${item.error_code || 'unknown'}${isRateLimitFailureItem(item) ? ' · 限流' : ''}`;
     }
     if (elements.registrationFailureDetailMeta) {
         elements.registrationFailureDetailMeta.textContent = buildRegistrationFailureDetailMeta(item);
@@ -934,19 +970,23 @@ function renderRegistrationFailureRows(items) {
     if (rows.length === 0) {
         elements.registrationFailureTableBody.innerHTML = `
             <tr>
-                <td colspan="7">暂无失败记录</td>
+                <td colspan="8">暂无失败记录</td>
             </tr>
         `;
         return;
     }
     elements.registrationFailureTableBody.innerHTML = rows.map((item, index) => `
-        <tr>
+        <tr class="${isRateLimitFailureItem(item) ? 'failure-row-rate-limit' : ''}">
             <td>${formatRegistrationFailureTimestamp(item.failed_at || item.created_at)}</td>
             <td>${escapeHtml(item.email || '—')}</td>
             <td>${escapeHtml(item.email_suffix || '—')}</td>
             <td>${escapeHtml(item.registration_mode || '—')}</td>
+            <td>${escapeHtml(item.email_service_id != null ? String(item.email_service_id) : '—')}</td>
             <td>${escapeHtml(item.proxy_ip || '—')}</td>
-            <td>${escapeHtml(item.error_code || 'unknown')}</td>
+            <td>
+                <span>${escapeHtml(item.error_code || 'unknown')}</span>
+                ${isRateLimitFailureItem(item) ? '<span class="failure-badge failure-badge-rate-limit">限流</span>' : ''}
+            </td>
             <td class="failure-detail-cell">
                 <button type="button" class="btn btn-ghost btn-sm" onclick="openRegistrationFailureDetailByIndex(${index})">查看详情</button>
             </td>
@@ -1041,23 +1081,14 @@ function updateEmailServiceOptions() {
         const optgroup = document.createElement('optgroup');
         optgroup.label = `📧 Outlook (${availableServices.outlook.count} 个账户)`;
 
-        availableServices.outlook.services.forEach(service => {
-            const option = document.createElement('option');
-            option.value = `outlook:${service.id}`;
-            option.textContent = service.name + (service.has_oauth ? ' (OAuth)' : '');
-            option.dataset.type = 'outlook';
-            option.dataset.serviceId = service.id;
-            optgroup.appendChild(option);
-        });
-
-        select.appendChild(optgroup);
-
         // Outlook 批量注册选项
         const batchOption = document.createElement('option');
         batchOption.value = 'outlook_batch:all';
         batchOption.textContent = `📋 Outlook 批量注册 (${availableServices.outlook.count} 个账户)`;
         batchOption.dataset.type = 'outlook_batch';
         optgroup.appendChild(batchOption);
+
+        select.appendChild(optgroup);
     } else {
         const optgroup = document.createElement('optgroup');
         optgroup.label = '📧 Outlook (未配置)';
@@ -1312,6 +1343,7 @@ async function handleSingleRegistration(requestData) {
         addLog('info', `[系统] 任务已创建: ${data.task_uuid}`);
         showTaskStatus(data);
         updateTaskStatus('running');
+        loadRecentRegistrationTasks();
         const taskDetailRefresh = refreshTaskDetail(data.task_uuid);
 
         // 优先使用 WebSocket
@@ -1374,11 +1406,14 @@ function finalizeSingleTaskIfTerminal(taskUuid, status) {
             addLog('success', '[成功] 注册成功！');
             toast.success('注册成功！');
             loadRecentAccounts();
+            loadRecentRegistrationTasks();
         } else if (status === 'failed') {
             addLog('error', '[错误] 注册失败');
             toast.error('注册失败');
+            loadRecentRegistrationTasks();
         } else if (status === 'cancelled' || status === 'cancelling') {
             addLog('warning', '[警告] 任务已取消');
+            loadRecentRegistrationTasks();
         }
     }
     return true;
@@ -1428,23 +1463,29 @@ function finalizeBatchIfTerminal(batchId, payload) {
                 if (success > 0) {
                     toast.success(`Outlook 批量注册完成，成功 ${success} 个`);
                     loadRecentAccounts();
+                    loadRecentRegistrationTasks();
                 } else {
                     toast.warning('Outlook 批量注册完成，但没有成功注册任何账号');
+                    loadRecentRegistrationTasks();
                 }
             } else {
                 addLog('info', `[完成] 批量任务完成！成功: ${success}, 失败: ${failed}`);
                 if (success > 0) {
                     toast.success(`批量注册完成，成功 ${success} 个`);
                     loadRecentAccounts();
+                    loadRecentRegistrationTasks();
                 } else {
                     toast.warning('批量注册完成，但没有成功注册任何账号');
+                    loadRecentRegistrationTasks();
                 }
             }
         } else if (batchFinalStatus === 'failed') {
             addLog('error', '[错误] 批量任务执行失败');
             toast.error('批量任务执行失败');
+            loadRecentRegistrationTasks();
         } else if (batchFinalStatus === 'cancelled' || batchFinalStatus === 'cancelling') {
             addLog('warning', '[警告] 批量任务已取消');
+            loadRecentRegistrationTasks();
         }
     }
     return true;
@@ -1964,6 +2005,9 @@ function showTaskStatus(task) {
     elements.taskId.textContent = task.task_uuid.substring(0, 8) + '...';
     elements.taskEmail.textContent = task.email || task.email_address || '-';
     elements.taskService.textContent = task.email_service ? getServiceTypeText(task.email_service) : '-';
+    if (elements.taskProxyIp) {
+        elements.taskProxyIp.textContent = normalizeTaskProxyIp(task);
+    }
     rememberSingleTaskStart(task, task.task_progress || registrationStreamState.taskProgress);
     renderSingleTaskProgressSummary(task.task_progress || registrationStreamState.taskProgress, registrationStreamState.currentStep);
     renderTaskSteps(shouldRenderSingleTaskSteps(task) ? (task.steps || []) : []);
@@ -2199,6 +2243,63 @@ function formatDomainRate(rate, count, total) {
     return `${((count || 0) / total * 100).toFixed(2)}%`;
 }
 
+function getTaskStatusBadgeHtml(status) {
+    const normalized = String(status || '').trim().toLowerCase();
+    const mapping = {
+        pending: { text: '等待中', className: 'pending' },
+        running: { text: '运行中', className: 'running' },
+        completed: { text: '已完成', className: 'completed' },
+        failed: { text: '失败', className: 'failed' },
+        cancelled: { text: '已取消', className: 'disabled' },
+    };
+    const info = mapping[normalized] || { text: status || '未知', className: '' };
+    return `<span class="status-badge ${escapeHtml(info.className)}">${escapeHtml(info.text)}</span>`;
+}
+
+function renderRecentRegistrationTasks(tasks) {
+    if (!elements.recentRegistrationTasksTable) {
+        return;
+    }
+    const rows = Array.isArray(tasks) ? tasks : [];
+    if (rows.length === 0) {
+        elements.recentRegistrationTasksTable.innerHTML = `
+            <tr>
+                <td colspan="5">
+                    <div class="empty-state" style="padding: var(--spacing-md);">
+                        <div class="empty-state-icon">🧾</div>
+                        <div class="empty-state-title">暂无任务记录</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    elements.recentRegistrationTasksTable.innerHTML = rows.map((task) => `
+        <tr data-task-uuid="${escapeHtml(task.task_uuid || '')}">
+            <td>${escapeHtml(String(task.task_uuid || '').slice(0, 8) || '—')}...</td>
+            <td>${escapeHtml(task.email || task.email_address || '—')}</td>
+            <td>${escapeHtml(task.email_service_id != null ? String(task.email_service_id) : '—')}</td>
+            <td>${escapeHtml(normalizeTaskProxyIp(task))}</td>
+            <td>${getTaskStatusBadgeHtml(task.status)}</td>
+        </tr>
+    `).join('');
+}
+
+async function loadRecentRegistrationTasks() {
+    if (!elements.recentRegistrationTasksTable) {
+        return null;
+    }
+    try {
+        const data = await api.get('/registration/tasks?page=1&page_size=10');
+        renderRecentRegistrationTasks(data?.tasks || []);
+        return data;
+    } catch (error) {
+        console.error('加载最近任务失败:', error);
+        return null;
+    }
+}
+
 // 加载最近注册的账号
 async function loadRecentAccounts() {
     try {
@@ -2259,6 +2360,7 @@ function startAccountsPolling() {
     // 每30秒刷新一次账号列表
     accountsPollingInterval = setInterval(() => {
         loadRecentAccounts();
+        loadRecentRegistrationTasks();
     }, 30000);
 }
 
@@ -2362,7 +2464,7 @@ function appendLegacyLogLine(type, message, options = {}) {
     }
 
     const line = document.createElement('div');
-    line.className = `log-line ${type}`;
+    line.className = `log-line ${type}${isRateLimitText(message) ? ' rate-limit' : ''}`;
 
     const timestamp = new Date().toLocaleTimeString('zh-CN', {
         hour: '2-digit',
@@ -2370,7 +2472,7 @@ function appendLegacyLogLine(type, message, options = {}) {
         second: '2-digit'
     });
 
-    line.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}`;
+    line.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}${isRateLimitText(message) ? '<span class="failure-badge failure-badge-rate-limit">限流</span>' : ''}`;
     elements.consoleLog.appendChild(line);
 
     elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;

@@ -322,6 +322,11 @@ class RegistrationService:
                 service.task_manager.update_status(task_uuid, "running")
 
                 effective_pipeline_key = pipeline_key or task.pipeline_key or "current_pipeline"
+                effective_email_service_id = (
+                    email_service_id
+                    if email_service_id is not None
+                    else task.email_service_id
+                )
                 if task.pipeline_key != effective_pipeline_key:
                     task = crud.update_registration_task(
                         db,
@@ -371,7 +376,7 @@ class RegistrationService:
                         job_result = service.job_runner(
                             db=db,
                             email_service_type=email_service_type,
-                            email_service_id=email_service_id,
+                            email_service_id=effective_email_service_id,
                             proxy=actual_proxy_url,
                             email_service_config=email_service_config,
                             pipeline_key=effective_pipeline_key,
