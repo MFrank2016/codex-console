@@ -54,3 +54,16 @@ def test_support_pages_render_with_workspace_shell_and_components_assets():
             response = client.get(path)
             assert response.status_code == 200
             _assert_uses_shared_workspace_assets(response.text)
+
+
+def test_support_pages_use_shared_page_header_and_panel_shell():
+    for path in ["templates/email_services.html", "templates/settings.html", "templates/payment.html"]:
+        template = Path(path).read_text(encoding="utf-8")
+        assert "workspace-panel" in template
+        assert "page-head" in template or "page-header" in template
+        assert "support-page-shell" in template
+
+
+def test_support_page_danger_modal_defaults_focus_to_cancel():
+    template = Path("templates/settings.html").read_text(encoding="utf-8")
+    assert 'data-danger-default="cancel"' in template

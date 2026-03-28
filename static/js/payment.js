@@ -11,6 +11,21 @@ const COUNTRY_CURRENCY_MAP = {
 let selectedPlan = 'plus';
 let generatedLink = '';
 
+function showPaymentFeedback(message, level = 'info') {
+    const statusEl = document.getElementById('open-status');
+    if (statusEl) {
+        statusEl.textContent = String(message || '');
+    }
+
+    if (typeof toast?.[level] === 'function') {
+        toast[level](message);
+        return;
+    }
+    if (typeof ui?.showToast === 'function') {
+        ui.showToast(message, level);
+    }
+}
+
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
     loadAccounts();
@@ -56,7 +71,7 @@ function selectPlan(plan) {
 async function generateLink() {
     const accountId = document.getElementById('account-select').value;
     if (!accountId) {
-        ui.showToast('请先选择账号', 'warning');
+        showPaymentFeedback('请先选择账号', 'warning');
         return;
     }
 
@@ -88,13 +103,12 @@ async function generateLink() {
             generatedLink = data.link;
             document.getElementById('link-text').value = data.link;
             document.getElementById('link-box').classList.add('show');
-            document.getElementById('open-status').textContent = '';
-            ui.showToast('支付链接生成成功', 'success');
+            showPaymentFeedback('支付链接生成成功', 'success');
         } else {
-            ui.showToast(data.detail || '生成链接失败', 'error');
+            showPaymentFeedback(data.detail || '生成链接失败', 'error');
         }
     } catch (e) {
-        ui.showToast('请求失败: ' + e.message, 'error');
+        showPaymentFeedback('请求失败: ' + e.message, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = '生成支付链接'; }
     }
@@ -104,24 +118,23 @@ async function generateLink() {
 function copyLink() {
     if (!generatedLink) return;
     navigator.clipboard.writeText(generatedLink).then(() => {
-        ui.showToast('已复制到剪贴板', 'success');
+        showPaymentFeedback('已复制到剪贴板', 'success');
     }).catch(() => {
         const ta = document.getElementById('link-text');
         ta.select();
         document.execCommand('copy');
-        ui.showToast('已复制到剪贴板', 'success');
+        showPaymentFeedback('已复制到剪贴板', 'success');
     });
 }
 
 // 无痕打开浏览器（携带账号 cookie）
 async function openIncognito() {
     if (!generatedLink) {
-        ui.showToast('请先生成链接', 'warning');
+        showPaymentFeedback('请先生成链接', 'warning');
         return;
     }
     const accountId = document.getElementById('account-select').value;
-    const statusEl = document.getElementById('open-status');
-    statusEl.textContent = '正在打开...';
+    showPaymentFeedback('正在打开...', 'info');
     try {
         const body = { url: generatedLink };
         if (accountId) body.account_id = parseInt(accountId);
@@ -133,14 +146,11 @@ async function openIncognito() {
         });
         const data = await resp.json();
         if (data.success) {
-            statusEl.textContent = '已在无痕模式打开浏览器';
-            ui.showToast('无痕浏览器已打开', 'success');
+            showPaymentFeedback('已在无痕模式打开浏览器', 'success');
         } else {
-            statusEl.textContent = data.message || '未找到可用浏览器，请手动复制链接';
-            ui.showToast(data.message || '未找到浏览器', 'warning');
+            showPaymentFeedback(data.message || '未找到可用浏览器，请手动复制链接', 'warning');
         }
     } catch (e) {
-        statusEl.textContent = '请求失败: ' + e.message;
-        ui.showToast('请求失败', 'error');
+        showPaymentFeedback('请求失败: ' + e.message, 'error');
     }
 }

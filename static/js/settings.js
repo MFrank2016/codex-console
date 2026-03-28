@@ -101,6 +101,11 @@ const elements = {
     outlookSettingsForm: document.getElementById('outlook-settings-form'),
     // Web UI 访问控制
     webuiSettingsForm: document.getElementById('webui-settings-form'),
+    dangerConfirmModal: document.getElementById('danger-confirm-modal'),
+    dangerConfirmMessage: document.getElementById('danger-confirm-message'),
+    dangerConfirmBtn: document.getElementById('danger-confirm-btn'),
+    dangerCancelBtn: document.getElementById('danger-cancel-btn'),
+    closeDangerConfirmModal: document.getElementById('close-danger-confirm-modal'),
     // 邮箱后缀黑名单
     addEmailSuffixBlacklistBtn: document.getElementById('add-email-suffix-blacklist-btn'),
     emailSuffixBlacklistTable: document.getElementById('email-suffix-blacklist-table'),
@@ -141,6 +146,7 @@ const DYNAMIC_PROXY_TASK_GROUP_FIELDS = [
     ['generic_single', 'dynamicProxyGenericSingleAllocationStrategy'],
 ];
 let dynamicProxyAdvancedConfigLoaded = false;
+let dangerConfirmResolve = null;
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -155,6 +161,42 @@ document.addEventListener('DOMContentLoaded', () => {
     loadTmServices();
     initEventListeners();
 });
+
+function closeDangerModal(confirmed = false) {
+    if (!elements.dangerConfirmModal) {
+        if (dangerConfirmResolve) {
+            dangerConfirmResolve(confirmed);
+            dangerConfirmResolve = null;
+        }
+        return;
+    }
+
+    elements.dangerConfirmModal.classList.remove('active');
+    if (dangerConfirmResolve) {
+        dangerConfirmResolve(confirmed);
+        dangerConfirmResolve = null;
+    }
+}
+
+function openDangerModal(message) {
+    if (!elements.dangerConfirmModal) {
+        return Promise.resolve(confirm(message));
+    }
+
+    if (elements.dangerConfirmMessage) {
+        elements.dangerConfirmMessage.textContent = message;
+    }
+    elements.dangerConfirmModal.classList.add('active');
+
+    const defaultButton = elements.dangerCancelBtn;
+    if (defaultButton && typeof defaultButton.focus === 'function') {
+        defaultButton.focus();
+    }
+
+    return new Promise((resolve) => {
+        dangerConfirmResolve = resolve;
+    });
+}
 
 document.addEventListener('click', () => {
     document.querySelectorAll('.dropdown-menu.active').forEach(m => m.classList.remove('active'));
@@ -209,6 +251,23 @@ function initEventListeners() {
     // 清理数据
     if (elements.cleanupBtn) {
         elements.cleanupBtn.addEventListener('click', handleCleanup);
+    }
+
+    if (elements.dangerCancelBtn) {
+        elements.dangerCancelBtn.addEventListener('click', () => closeDangerModal(false));
+    }
+    if (elements.closeDangerConfirmModal) {
+        elements.closeDangerConfirmModal.addEventListener('click', () => closeDangerModal(false));
+    }
+    if (elements.dangerConfirmBtn) {
+        elements.dangerConfirmBtn.addEventListener('click', () => closeDangerModal(true));
+    }
+    if (elements.dangerConfirmModal) {
+        elements.dangerConfirmModal.addEventListener('click', (e) => {
+            if (e.target === elements.dangerConfirmModal) {
+                closeDangerModal(false);
+            }
+        });
     }
 
     // 添加邮箱服务
@@ -814,7 +873,7 @@ async function handleBackup() {
 
 // 清理数据
 async function handleCleanup() {
-    const confirmed = await confirm('确定要清理过期数据吗？此操作不可恢复。');
+    const confirmed = await openDangerModal('确定要清理过期数据吗？此操作不可恢复。');
     if (!confirmed) return;
 
     elements.cleanupBtn.disabled = true;

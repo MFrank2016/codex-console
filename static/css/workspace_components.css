@@ -537,6 +537,36 @@
 }
 
 /* ============================================
+   支撑域页面
+   ============================================ */
+
+.support-page-shell {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+.support-page-summary {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.support-page-summary .page-head-title {
+    margin: 0;
+}
+
+.support-page-summary .page-head-subtitle {
+    margin: 0;
+}
+
+.support-inline-status {
+    min-height: 20px;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+}
+
+/* ============================================
    模态框
    ============================================ */
 
