@@ -67,3 +67,10 @@ def test_support_pages_use_shared_page_header_and_panel_shell():
 def test_support_page_danger_modal_defaults_focus_to_cancel():
     template = Path("templates/settings.html").read_text(encoding="utf-8")
     assert 'data-danger-default="cancel"' in template
+
+
+def test_support_inline_status_regions_expose_accessible_roles():
+    payment_template = Path("templates/payment.html").read_text(encoding="utf-8")
+    assert 'id="open-status"' in payment_template
+    assert 'role="status"' in payment_template
+    assert 'aria-live="polite"' in payment_template

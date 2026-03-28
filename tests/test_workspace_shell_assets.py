@@ -53,6 +53,14 @@ def test_workspace_script_defines_sidebar_and_theme_helpers():
     assert "toggleWorkspaceTheme" in script
 
 
+def test_utils_toast_markup_exposes_accessible_roles():
+    script = Path("static/js/utils.js").read_text(encoding="utf-8")
+    assert "setAttribute('role', 'status')" in script
+    assert "setAttribute('role', type === 'error' ? 'alert' : 'status')" in script
+    assert "setAttribute('aria-live', 'polite')" in script
+    assert "setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite')" in script
+
+
 def test_dark_theme_defines_warm_surface_tokens_for_workspace_cards():
     stylesheet = Path("static/css/style.css").read_text(encoding="utf-8")
     match = re.search(r'\[data-theme="dark"]\s*\{(?P<body>.*?)\n\}', stylesheet, re.S)

@@ -16,12 +16,18 @@ class ToastManager {
     init() {
         this.container = document.createElement('div');
         this.container.className = 'toast-container';
+        this.container.setAttribute('role', 'status');
+        this.container.setAttribute('aria-live', 'polite');
+        this.container.setAttribute('aria-atomic', 'false');
         document.body.appendChild(this.container);
     }
 
     show(message, type = 'info', duration = 4000) {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
+        toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+        toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+        toast.setAttribute('aria-atomic', 'true');
 
         const icon = this.getIcon(type);
         toast.innerHTML = `
@@ -143,6 +149,7 @@ class LoadingManager {
         element.dataset.originalText = element.innerHTML;
         element.innerHTML = `<span class="loading-spinner"></span> ${text}`;
         element.disabled = true;
+        element.setAttribute('aria-busy', 'true');
         this.activeLoaders.add(element);
     }
 
@@ -158,6 +165,7 @@ class LoadingManager {
             delete element.dataset.originalText;
         }
         element.disabled = false;
+        element.setAttribute('aria-busy', 'false');
         this.activeLoaders.delete(element);
     }
 
