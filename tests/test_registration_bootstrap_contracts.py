@@ -110,8 +110,6 @@ def test_batch_registration_service_start_batch_owns_batch_state_and_proxy_warmu
 
 
 def test_outlook_batch_bootstrap_filters_registered_accounts_and_returns_dto(db_factory):
-    if not hasattr(BatchRegistrationService, "start_outlook_batch"):
-        pytest.xfail("Task 4 pending")
 
     with db_factory() as db:
         registered_email = "registered@example.com"
@@ -152,7 +150,6 @@ def test_outlook_batch_bootstrap_filters_registered_accounts_and_returns_dto(db_
             unregistered_service_two.id,
         ],
         skip_registered=True,
-        proxy=None,
         concurrency=2,
         use_proxy=False,
         proxy_task_group="outlook_batch",
@@ -161,6 +158,7 @@ def test_outlook_batch_bootstrap_filters_registered_accounts_and_returns_dto(db_
 
     assert isinstance(result, OutlookBatchBootstrapResult)
     assert result.batch_id == "outlook-batch-001"
+    assert result.total == 3
     assert result.skipped == 1
     assert isinstance(result.service_ids, tuple)
     assert result.service_ids == (

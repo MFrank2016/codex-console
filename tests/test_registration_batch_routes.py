@@ -12,6 +12,7 @@ from src.web.routes import registration as registration_routes
 
 from src.application.registration_bootstrap_dtos import (
     BatchBootstrapResult,
+    OutlookBatchBootstrapResult,
     RegistrationTaskSnapshot,
 )
 from src.database import crud
@@ -552,13 +553,19 @@ def test_start_batch_registration_keeps_queued_flow_when_proxy_pool_prepare_fail
     assert background.tasks[0].func is registration_routes.run_batch_registration
 
 
-def test_start_outlook_batch_registration_prepares_proxy_pool(route_db, batch_state, monkeypatch):
+def test_start_outlook_batch_registration_delegates_bootstrap_to_service(route_db, batch_state, monkeypatch):
     monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
     captured: dict = {}
 
     class FakeBatchService:
-        def prepare_batch_proxy_pool(self, **kwargs):
+        def start_outlook_batch(self, **kwargs):
             captured.update(kwargs)
+            return OutlookBatchBootstrapResult(
+                batch_id="outlook-batch-001",
+                total=len(kwargs["service_ids"]),
+                skipped=1,
+                service_ids=(kwargs["service_ids"][-1],),
+            )
 
     monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: FakeBatchService())
 
@@ -572,15 +579,24 @@ def test_start_outlook_batch_registration_prepares_proxy_pool(route_db, batch_st
             enabled=True,
         )
     )
+    route_db.add(
+        EmailServiceModel(
+            service_type="outlook",
+            name="acc-2",
+            config={"email": "user2@example.com"},
+            enabled=True,
+        )
+    )
     route_db.commit()
-    service = route_db.query(EmailServiceModel).first()
+    services = route_db.query(EmailServiceModel).order_by(EmailServiceModel.id.asc()).all()
     background = BackgroundTasks()
 
     response = asyncio.run(
         registration_routes.start_outlook_batch_registration(
             registration_routes.OutlookBatchRegistrationRequest(
-                service_ids=[service.id],
+                service_ids=[services[0].id, services[1].id],
                 use_proxy=True,
+                proxy="http://manual-outlook:8000",
                 concurrency=2,
                 dynamic_proxy_request_count=6,
                 dynamic_proxy_probe_url="https://probe.example.com/outlook",
@@ -590,14 +606,19 @@ def test_start_outlook_batch_registration_prepares_proxy_pool(route_db, batch_st
         )
     )
 
-    assert response.to_register == 1
-    assert captured["task_group"] == "outlook_batch"
+    assert captured["proxy_task_group"] == "outlook_batch"
     assert captured["concurrency"] == 2
-    assert captured["overrides"] == {
+    assert "proxy" not in captured
+    assert captured["proxy_overrides"] == {
         "dynamic_request_count": 6,
         "probe_url": "https://probe.example.com/outlook",
         "allocation_strategy": "strict_isolation",
     }
+    assert response.batch_id == "outlook-batch-001"
+    assert response.total == 2
+    assert response.skipped == 1
+    assert response.to_register == 1
+    assert response.service_ids == [services[1].id]
 
 
 def test_get_batch_status_includes_unlimited_metadata(batch_state):
@@ -1141,6 +1162,52 @@ def test_run_unlimited_batch_registration_propagates_child_task_exception_and_fi
     assert fake_task_manager.get_batch_status(batch_id)["finished"] is True
 
 
+def test_start_outlook_batch_registration_persists_skipped_into_batch_state(route_db, batch_state, monkeypatch):
+    monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
+
+    from src.database.models import EmailService as EmailServiceModel
+
+    route_db.add(
+        EmailServiceModel(
+            service_type="outlook",
+            name="registered-acc",
+            config={"email": "registered@example.com"},
+            enabled=True,
+        )
+    )
+    route_db.add(
+        EmailServiceModel(
+            service_type="outlook",
+            name="fresh-acc",
+            config={"email": "fresh@example.com"},
+            enabled=True,
+        )
+    )
+    route_db.commit()
+    services = route_db.query(EmailServiceModel).order_by(EmailServiceModel.id.asc()).all()
+
+    crud.create_account(route_db, email="registered@example.com", email_service="outlook")
+
+    background = BackgroundTasks()
+    response = asyncio.run(
+        registration_routes.start_outlook_batch_registration(
+            registration_routes.OutlookBatchRegistrationRequest(
+                service_ids=[services[0].id, services[1].id],
+                skip_registered=True,
+                use_proxy=False,
+            ),
+            background,
+        )
+    )
+
+    assert response.skipped == 1
+    assert registration_routes.batch_tasks[response.batch_id]["skipped"] == 1
+    assert registration_routes.batch_tasks[response.batch_id]["service_ids"] == [services[1].id]
+
+    status = asyncio.run(registration_routes.get_outlook_batch_status(response.batch_id))
+    assert status["skipped"] == 1
+
+
 def test_get_outlook_batch_status_includes_domain_stats_if_present(batch_state):
     registration_routes.batch_tasks["outlook-1"] = {
         "total": 2,
@@ -1180,7 +1247,6 @@ def test_run_outlook_batch_registration_does_not_finalize_ordinary_batch_stats(r
         registration_routes.run_outlook_batch_registration(
             batch_id="outlook-no-stats",
             service_ids=service_ids,
-            skip_registered=False,
             proxy=None,
             interval_min=0,
             interval_max=0,
@@ -1190,3 +1256,6 @@ def test_run_outlook_batch_registration_does_not_finalize_ordinary_batch_stats(r
     )
 
     assert crud.get_registration_batch_stat_by_batch_id(route_db, "outlook-no-stats") is None
+    batch_status = fake_task_manager.get_batch_status("outlook-no-stats")
+    assert isinstance(batch_status.get("task_uuids"), list)
+    assert len(batch_status["task_uuids"]) == len(service_ids)

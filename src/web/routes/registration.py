@@ -1345,7 +1345,6 @@ async def get_outlook_accounts_for_registration():
 async def run_outlook_batch_registration(
     batch_id: str,
     service_ids: List[int],
-    skip_registered: bool,
     proxy: Optional[str],
     interval_min: int,
     interval_max: int,
@@ -1365,7 +1364,6 @@ async def run_outlook_batch_registration(
     return await _build_batch_registration_service().run_outlook_batch_registration(
         batch_id=batch_id,
         service_ids=service_ids,
-        skip_registered=skip_registered,
         proxy=proxy,
         interval_min=interval_min,
         interval_max=interval_max,
@@ -1396,9 +1394,6 @@ async def start_outlook_batch_registration(
     - interval_min: 最小间隔秒数
     - interval_max: 最大间隔秒数
     """
-    from ...database.models import EmailService as EmailServiceModel
-    from ...database.models import Account
-
     # 验证参数
     if not request.service_ids:
         raise HTTPException(status_code=400, detail="请选择至少一个 Outlook 账户")
@@ -1414,79 +1409,31 @@ async def start_outlook_batch_registration(
     if request.dynamic_proxy_strategy and request.dynamic_proxy_strategy not in {"random", "exclusive", "consume_once", "strict_isolation"}:
         raise HTTPException(status_code=400, detail="动态代理策略无效")
 
-    # 过滤掉已注册的邮箱
-    actual_service_ids = request.service_ids
-    skipped_count = 0
-
-    if request.skip_registered:
-        actual_service_ids = []
-        with get_db() as db:
-            for service_id in request.service_ids:
-                service = db.query(EmailServiceModel).filter(
-                    EmailServiceModel.id == service_id
-                ).first()
-
-                if not service:
-                    continue
-
-                config = service.config or {}
-                email = config.get("email") or service.name
-
-                # 检查是否已注册
-                existing_account = db.query(Account).filter(
-                    Account.email == email
-                ).first()
-
-                if existing_account:
-                    skipped_count += 1
-                else:
-                    actual_service_ids.append(service_id)
-
-    if not actual_service_ids:
-        return OutlookBatchRegistrationResponse(
-            batch_id="",
-            total=len(request.service_ids),
-            skipped=skipped_count,
-            to_register=0,
-            service_ids=[]
-        )
-
-    # 创建批量任务
-    batch_id = str(uuid.uuid4())
     batch_service = _build_batch_registration_service()
     batch_proxy_overrides = _build_batch_proxy_overrides(request)
+    bootstrap = batch_service.start_outlook_batch(
+        service_ids=request.service_ids,
+        skip_registered=request.skip_registered,
+        concurrency=request.concurrency,
+        use_proxy=request.use_proxy,
+        proxy_task_group="outlook_batch",
+        proxy_overrides=batch_proxy_overrides,
+    )
 
-    # 初始化批量任务状态
-    batch_tasks[batch_id] = {
-        "total": len(actual_service_ids),
-        "completed": 0,
-        "success": 0,
-        "failed": 0,
-        "skipped": 0,
-        "cancelled": False,
-        "service_ids": actual_service_ids,
-        "current_index": 0,
-        "logs": [],
-        "finished": False
-    }
-
-    if request.use_proxy:
-        try:
-            batch_service.prepare_batch_proxy_pool(
-                batch_id=batch_id,
-                task_group="outlook_batch",
-                concurrency=request.concurrency,
-                overrides=batch_proxy_overrides,
-            )
-        except RuntimeError as exc:
-            logger.warning("Outlook 批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
+    if not bootstrap.service_ids:
+        return OutlookBatchRegistrationResponse(
+            batch_id="",
+            total=bootstrap.total,
+            skipped=bootstrap.skipped,
+            to_register=0,
+            service_ids=[],
+        )
 
     # 在后台运行批量注册
     background_tasks.add_task(
         run_outlook_batch_registration,
-        batch_id,
-        actual_service_ids,
-        request.skip_registered,
+        bootstrap.batch_id,
+        list(bootstrap.service_ids),
         request.proxy if request.use_proxy else None,
         request.interval_min,
         request.interval_max,
@@ -1504,11 +1451,11 @@ async def start_outlook_batch_registration(
     )
 
     return OutlookBatchRegistrationResponse(
-        batch_id=batch_id,
-        total=len(request.service_ids),
-        skipped=skipped_count,
-        to_register=len(actual_service_ids),
-        service_ids=actual_service_ids
+        batch_id=bootstrap.batch_id,
+        total=bootstrap.total,
+        skipped=bootstrap.skipped,
+        to_register=len(bootstrap.service_ids),
+        service_ids=list(bootstrap.service_ids),
     )
 
 

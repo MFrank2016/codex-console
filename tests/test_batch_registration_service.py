@@ -8,7 +8,7 @@ from src.application.proxy_dispatch_service import ResolvedProxyCandidate
 from src.application.registration_runs_service import RegistrationRunsService
 from src.core.time import utc_now_naive
 from src.database import crud
-from src.database.models import Base, RegistrationRunEvent
+from src.database.models import Account, Base, EmailService, RegistrationRunEvent
 from src.database.session import DatabaseSessionManager
 
 from tests.fakes import BatchFakeTaskManager as FakeTaskManager
@@ -34,6 +34,186 @@ def db_factory(temp_db):
         yield temp_db
 
     return _factory
+
+
+
+
+def test_batch_registration_service_start_outlook_batch_filters_registered_accounts(db_factory, temp_db):
+    from src.application.batch_registration_service import BatchRegistrationService
+
+    registered_email = "registered@example.com"
+    registered_service = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="registered",
+        config={"email": registered_email},
+    )
+    crud.create_account(
+        temp_db,
+        email=registered_email,
+        email_service="outlook",
+    )
+    unregistered_service_one = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="unregistered-1",
+        config={"email": "first@example.com"},
+    )
+    unregistered_service_two = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="unregistered-2",
+        config={"email": "second@example.com"},
+    )
+
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={},
+        uuid_factory=lambda: "outlook-batch-001",
+    )
+
+    result = service.start_outlook_batch(
+        service_ids=[
+            registered_service.id,
+            unregistered_service_one.id,
+            unregistered_service_two.id,
+        ],
+        skip_registered=True,
+        concurrency=2,
+        use_proxy=False,
+        proxy_task_group="outlook_batch",
+        proxy_overrides={},
+    )
+
+    assert result.batch_id == "outlook-batch-001"
+    assert result.total == 3
+    assert result.skipped == 1
+    assert result.service_ids == (
+        unregistered_service_one.id,
+        unregistered_service_two.id,
+    )
+
+def test_filter_outlook_service_ids_uses_batched_queries(db_factory, temp_db, monkeypatch):
+    from src.application.batch_registration_service import BatchRegistrationService
+
+    svc1 = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="one",
+        config={"email": "one@example.com"},
+    )
+    svc2 = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="two",
+        config={"email": "two@example.com"},
+    )
+    svc3 = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="three",
+        config={"email": "three@example.com"},
+    )
+    crud.create_account(temp_db, email="two@example.com", email_service="outlook")
+
+    service_query_calls = 0
+    account_query_calls = 0
+    original_query = temp_db.query
+
+    def tracked_query(*entities, **kwargs):
+        nonlocal service_query_calls, account_query_calls
+        if len(entities) == 1 and entities[0] is EmailService:
+            service_query_calls += 1
+        if len(entities) == 1 and entities[0] is Account.email:
+            account_query_calls += 1
+        return original_query(*entities, **kwargs)
+
+    monkeypatch.setattr(temp_db, "query", tracked_query)
+
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={},
+    )
+
+    actual_ids, skipped = service._filter_outlook_service_ids(
+        service_ids=[svc1.id, svc2.id, svc3.id],
+        skip_registered=True,
+    )
+
+    assert service_query_calls == 1
+    assert account_query_calls == 1
+    assert skipped == 1
+    assert actual_ids == [svc1.id, svc3.id]
+
+
+@pytest.mark.anyio
+async def test_outlook_bootstrap_fields_survive_second_init(db_factory, temp_db):
+    from src.application.batch_registration_service import BatchRegistrationService
+
+    registered_email = "registered-survive@example.com"
+    registered_service = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="registered-survive",
+        config={"email": registered_email},
+    )
+    crud.create_account(temp_db, email=registered_email, email_service="outlook")
+    fresh_service = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="fresh-survive",
+        config={"email": "fresh-survive@example.com"},
+    )
+
+    async def fake_runner(task_uuid, *args, **kwargs):
+        runs = RegistrationRunsService(temp_db)
+        run = runs.create_run(task_uuid=task_uuid, batch_id="outlook-preserve", trigger_source="batch")
+        crud.update_registration_task(
+            temp_db,
+            task_uuid,
+            status="completed",
+            pipeline_status="completed",
+            completed_at=utc_now_naive(),
+        )
+        runs.mark_completed(run.id)
+
+    task_manager = FakeTaskManager()
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        batch_tasks_store={},
+        registration_task_runner=fake_runner,
+        uuid_factory=lambda: "outlook-preserve",
+    )
+
+    bootstrap = service.start_outlook_batch(
+        service_ids=[registered_service.id, fresh_service.id],
+        skip_registered=True,
+        concurrency=1,
+        use_proxy=False,
+        proxy_task_group="outlook_batch",
+        proxy_overrides={},
+    )
+
+    await service.run_outlook_batch_registration(
+        batch_id=bootstrap.batch_id,
+        service_ids=list(bootstrap.service_ids),
+        proxy=None,
+        interval_min=0,
+        interval_max=0,
+        concurrency=1,
+        mode="parallel",
+    )
+
+    state = service.batch_tasks[bootstrap.batch_id]
+    assert state["skipped"] == 1
+    assert state["service_ids"] == [fresh_service.id]
+
+    status = task_manager.get_batch_status(bootstrap.batch_id)
+    assert status["skipped"] == 1
+    assert status["service_ids"] == [fresh_service.id]
 
 
 def test_batch_registration_service_build_summary_uses_bulk_run_lookup(
