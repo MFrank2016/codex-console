@@ -318,6 +318,69 @@ def test_registration_service_does_not_replay_terminal_run_events_on_repeat_exec
     assert task_manager.get_status(task_uuid)["status"] == "completed"
 
 
+def test_registration_service_fallback_handles_queued_checkpoint_tuple_when_initial_create_run_raises(
+    db_factory,
+    temp_db,
+    monkeypatch,
+):
+    from src.application.registration_runs_service import RegistrationRunsService
+    from src.application.registration_service import RegistrationService
+
+    task_uuid = "task-fallback-queued-checkpoint-tuple"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid, pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+    original_create_run = RegistrationRunsService.create_run
+    state = {"raised": False}
+
+    def flaky_create_run(self, *, task_uuid, batch_id, trigger_source, commit=RegistrationRunsService.DEFAULT_COMMIT):
+        if not state["raised"]:
+            state["raised"] = True
+            raise RuntimeError("queued-checkpoint-create-run-boom")
+        return original_create_run(
+            self,
+            task_uuid=task_uuid,
+            batch_id=batch_id,
+            trigger_source=trigger_source,
+            commit=commit,
+        )
+
+    monkeypatch.setattr(RegistrationRunsService, "create_run", flaky_create_run)
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=lambda **kwargs: pytest.fail("job_runner 不应在该场景执行"),
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    fresh_session = sessionmaker(bind=temp_db.get_bind())()
+    try:
+        run, events = _load_run_and_events(fresh_session, task_uuid)
+        persisted_task = crud.get_registration_task_by_uuid(fresh_session, task_uuid)
+    finally:
+        fresh_session.close()
+
+    assert persisted_task is not None
+    assert persisted_task.status == "failed"
+    assert persisted_task.pipeline_status == "failed"
+    assert persisted_task.error_message == "queued-checkpoint-create-run-boom"
+    assert result.task is not None
+    assert result.task.status == "failed"
+    assert result.run is not None
+    assert result.run.status == "failed"
+    assert run.status == "failed"
+    assert [event.message for event in events] == ["queued", "failed"]
+    assert task_manager.get_status(task_uuid)["status"] == "failed"
+    assert task_manager._closed_streams == [(task_uuid, "failed")]
+
+
 def test_registration_service_default_run_persistence_survives_fresh_session(db_factory, temp_db):
     from src.application.registration_runs_service import RegistrationRunsService
     from src.application.registration_service import RegistrationService

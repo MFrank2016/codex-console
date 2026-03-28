@@ -564,7 +564,7 @@ class RegistrationService:
                     runs_service = RegistrationRunsService(db)
                     run = runs_service.get_run_by_task_uuid(task_uuid)
                     if run is None:
-                        run = _commit_queued_checkpoint(runs_service)
+                        run, _ = _commit_queued_checkpoint(runs_service)
                     if run is not None and run.status not in runs_service.TERMINAL_STATUSES:
                         persisted_task = crud.update_registration_task(
                             db,
