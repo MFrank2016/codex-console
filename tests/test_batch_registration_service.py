@@ -11,6 +11,8 @@ from src.database import crud
 from src.database.models import Base, RegistrationRunEvent
 from src.database.session import DatabaseSessionManager
 
+from tests.fakes import BatchFakeTaskManager as FakeTaskManager
+
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -32,72 +34,6 @@ def db_factory(temp_db):
         yield temp_db
 
     return _factory
-
-
-class FakeTaskManager:
-    def __init__(self):
-        self._batch_status = {}
-        self._batch_logs = {}
-        self._task_status = {}
-        self._task_logs = {}
-        self._cancelled = set()
-        self._closed_streams = []
-        self._loop = None
-
-    def set_loop(self, loop):
-        self._loop = loop
-
-    def get_loop(self):
-        return self._loop
-
-    def init_batch(self, batch_id, total, **kwargs):
-        self._batch_status[batch_id] = {
-            "status": "running",
-            "total": total,
-            "completed": 0,
-            "success": 0,
-            "failed": 0,
-            "current_index": 0,
-            "finished": False,
-            **kwargs,
-        }
-
-    def update_batch_status(self, batch_id, **kwargs):
-        self._batch_status.setdefault(batch_id, {}).update(kwargs)
-
-    def get_batch_status(self, batch_id):
-        return self._batch_status.get(batch_id)
-
-    def add_batch_log(self, batch_id, message):
-        self._batch_logs.setdefault(batch_id, []).append(message)
-
-    def get_batch_logs(self, batch_id):
-        return list(self._batch_logs.get(batch_id, []))
-
-    def update_status(self, task_uuid, status, **kwargs):
-        self._task_status.setdefault(task_uuid, {}).update({"status": status, **kwargs})
-
-    def add_log(self, task_uuid, message):
-        self._task_logs.setdefault(task_uuid, []).append(message)
-
-    def get_logs(self, task_uuid):
-        return list(self._task_logs.get(task_uuid, []))
-
-    def clear_task_steps(self, task_uuid):
-        return None
-
-    def close_task_stream(self, task_uuid, final_status):
-        return None
-
-    def is_batch_cancelled(self, batch_id):
-        return batch_id in self._cancelled or self._batch_status.get(batch_id, {}).get("cancelled", False)
-
-    def cancel_batch(self, batch_id):
-        self._cancelled.add(batch_id)
-        self._batch_status.setdefault(batch_id, {})["cancelled"] = True
-
-    def close_batch_stream(self, batch_id, final_status):
-        self._closed_streams.append((batch_id, final_status))
 
 
 def test_batch_registration_service_build_summary_uses_bulk_run_lookup(

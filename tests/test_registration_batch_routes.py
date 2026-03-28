@@ -10,6 +10,10 @@ from src.core.time import utc_now_naive
 from src.web import task_manager as task_manager_module
 from src.web.routes import registration as registration_routes
 
+from src.application.registration_bootstrap_dtos import (
+    BatchBootstrapResult,
+    RegistrationTaskSnapshot,
+)
 from src.database import crud
 from src.database.models import Base
 from src.database.session import DatabaseSessionManager
@@ -127,6 +131,47 @@ def test_start_batch_registration_persists_pipeline_key_for_each_task(route_db, 
         task = crud.get_registration_task(route_db, item.task_uuid)
         assert task is not None
         assert task.pipeline_key == "codexgen_pipeline"
+
+
+def test_start_batch_registration_delegates_bootstrap_to_service(route_db, batch_state, monkeypatch):
+    bootstrap_result = BatchBootstrapResult(
+        batch_id="batch-from-service",
+        task_snapshots=[RegistrationTaskSnapshot(id=1, task_uuid="task-1", status="pending")],
+        is_unlimited=False,
+    )
+
+    class FakeBatchService:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def prepare_batch_proxy_pool(self, **kwargs):
+            raise AssertionError("route should not call old bootstrap path")
+
+        def create_batch_tasks(self, *, count, proxy, pipeline_key):
+            raise AssertionError("route should not call old bootstrap path")
+
+        def start_batch(self, **kwargs):
+            self.calls.append(kwargs)
+            return bootstrap_result
+
+    fake_service = FakeBatchService()
+    monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: fake_service)
+    background = BackgroundTasks()
+
+    assert registration_routes.batch_tasks == {}
+
+    response = asyncio.run(
+        registration_routes.start_batch_registration(
+            registration_routes.BatchRegistrationRequest(count=1, concurrency=1, mode="pipeline"),
+            background,
+        )
+    )
+
+    assert isinstance(response, registration_routes.BatchRegistrationResponse)
+    assert response.batch_id == "batch-from-service"
+    assert fake_service.calls, "route should delegate bootstrapping to service"
+    assert fake_service.calls[0]["count"] == 1
+    assert registration_routes.batch_tasks == {}
 
 
 def test_start_batch_registration_serializes_tasks_with_fresh_db_sessions(tmp_path, batch_state, monkeypatch):

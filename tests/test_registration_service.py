@@ -10,6 +10,8 @@ from src.database import crud
 from src.database.models import Base, RegistrationRun
 from src.database.session import DatabaseSessionManager
 
+from tests.fakes import RegistrationFakeTaskManager as FakeTaskManager
+
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -33,8 +35,6 @@ def db_factory(temp_db):
     return _factory
 
 
-
-
 def _load_run_and_events(session, task_uuid: str):
     from src.application.registration_runs_service import RegistrationRunsService
 
@@ -43,78 +43,6 @@ def _load_run_and_events(session, task_uuid: str):
     assert run is not None
     events = runs_service.get_events(run.id)
     return run, events
-
-class FakeTaskManager:
-    def __init__(self):
-        self._task_status = {}
-        self._task_steps = {}
-        self._task_progress = {}
-        self._task_cancelled = {}
-        self._logs = {}
-        self._stream_events = {}
-        self._closed_streams = []
-        self._loop = None
-
-    def set_loop(self, loop):
-        self._loop = loop
-
-    def get_loop(self):
-        return self._loop
-
-    def is_cancelled(self, task_uuid):
-        return self._task_cancelled.get(task_uuid, False)
-
-    def update_status(self, task_uuid, status, **kwargs):
-        self._task_status.setdefault(task_uuid, {}).update({"status": status, **kwargs})
-
-    def get_status(self, task_uuid):
-        return self._task_status.get(task_uuid)
-
-    def close_task_stream(self, task_uuid, final_status):
-        self._closed_streams.append((task_uuid, final_status))
-
-    def add_log(self, task_uuid, message):
-        self._logs.setdefault(task_uuid, []).append(message)
-        self._stream_events.setdefault(task_uuid, []).append(
-            {
-                "kind": "log_appended",
-                "payload": {
-                    "entry": {
-                        "message": message,
-                        "stream": f"task:{task_uuid}",
-                        "seq": None,
-                    }
-                },
-            }
-        )
-
-    def get_logs(self, task_uuid):
-        return list(self._logs.get(task_uuid, []))
-
-    def get_stream_events(self, task_uuid):
-        return list(self._stream_events.get(task_uuid, []))
-
-    def create_log_callback(self, task_uuid, prefix="", batch_id=""):
-        def _callback(message: str):
-            full = f"{prefix} {message}" if prefix else message
-            self.add_log(task_uuid, full)
-
-        return _callback
-
-    def clear_task_steps(self, task_uuid):
-        self._task_steps.pop(task_uuid, None)
-        self._task_progress.pop(task_uuid, None)
-
-    def set_task_steps(self, task_uuid, steps, *, task_progress=None):
-        self._task_steps[task_uuid] = list(steps or [])
-        if task_progress is None:
-            self._task_progress.pop(task_uuid, None)
-        else:
-            self._task_progress[task_uuid] = dict(task_progress)
-
-    @property
-    def executor(self):
-        return None
 
 
 def test_registration_service_emits_step_snapshot_and_closes_stream(db_factory, temp_db):
