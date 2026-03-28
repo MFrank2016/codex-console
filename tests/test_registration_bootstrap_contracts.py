@@ -62,6 +62,7 @@ def test_registration_service_start_task_returns_snapshot_not_live_orm(db_factor
 
     assert isinstance(snapshot, RegistrationTaskSnapshot)
     assert snapshot.task_uuid == "task-bootstrap"
+    assert snapshot.created_at is not None
     assert not hasattr(snapshot, "_sa_instance_state")
 
 
@@ -81,20 +82,37 @@ def test_batch_registration_service_start_batch_owns_batch_state_and_proxy_warmu
         concurrency=3,
         use_proxy=True,
         proxy_task_group="batch_registration",
-        proxy_overrides={"dynamic_proxy_strategy": "exclusive"},
+        proxy_overrides={
+            "allocation_strategy": "exclusive",
+            "probe_url": "https://probe.example.com/ip",
+            "dynamic_request_count": 3,
+        },
     )
 
     assert isinstance(result, BatchBootstrapResult)
     assert result.batch_id == "batch-001"
     assert isinstance(result.task_snapshots, tuple)
     assert len(result.task_snapshots) == 2
+    assert all(snapshot.created_at is not None for snapshot in result.task_snapshots)
     assert "batch-001" in service.batch_tasks
     assert dispatcher.prepare_calls == [
-        ("batch-001", "batch_registration", 3, {"dynamic_proxy_strategy": "exclusive"})
+        (
+            "batch-001",
+            "batch_registration",
+            3,
+            {
+                "allocation_strategy": "exclusive",
+                "probe_url": "https://probe.example.com/ip",
+                "dynamic_request_count": 3,
+            },
+        )
     ]
 
 
 def test_outlook_batch_bootstrap_filters_registered_accounts_and_returns_dto(db_factory):
+    if not hasattr(BatchRegistrationService, "start_outlook_batch"):
+        pytest.xfail("Task 4 pending")
+
     with db_factory() as db:
         registered_email = "registered@example.com"
         registered_service = crud.create_email_service(

@@ -91,6 +91,7 @@ class RegistrationService:
                 id=task.id,
                 task_uuid=task.task_uuid,
                 status=task.status,
+                created_at=task.created_at.isoformat() if task.created_at else None,
                 proxy=task.proxy,
                 pipeline_key=task.pipeline_key,
                 email_service_id=task.email_service_id,

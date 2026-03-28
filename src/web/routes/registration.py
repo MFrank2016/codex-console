@@ -314,6 +314,7 @@ def snapshot_to_response(snapshot: RegistrationTaskSnapshot) -> RegistrationTask
         id=snapshot.id,
         task_uuid=snapshot.task_uuid,
         status=snapshot.status,
+        created_at=snapshot.created_at,
         email_service_id=snapshot.email_service_id,
         pipeline_key=snapshot.pipeline_key,
         proxy=snapshot.proxy,
@@ -865,26 +866,21 @@ async def start_batch_registration(
     if request.dynamic_proxy_strategy and request.dynamic_proxy_strategy not in {"random", "exclusive", "consume_once", "strict_isolation"}:
         raise HTTPException(status_code=400, detail="动态代理策略无效")
 
-    is_unlimited = request.count == 0
-
-    # 创建批量任务
-    batch_id = str(uuid.uuid4())
     batch_service = _build_batch_registration_service()
     batch_proxy_overrides = _build_batch_proxy_overrides(request)
-    batch_proxy_overrides = _build_batch_proxy_overrides(request)
+    bootstrap = batch_service.start_batch(
+        count=request.count,
+        proxy=request.proxy if request.use_proxy else None,
+        pipeline_key=request.pipeline_key,
+        concurrency=request.concurrency,
+        use_proxy=request.use_proxy,
+        proxy_task_group="batch_registration" if request.count else "unlimited_registration",
+        proxy_overrides=batch_proxy_overrides,
+    )
+    batch_id = bootstrap.batch_id
+    is_unlimited = bootstrap.is_unlimited
 
     if is_unlimited:
-        if request.use_proxy:
-            try:
-                batch_service.prepare_batch_proxy_pool(
-                    batch_id=batch_id,
-                    task_group="unlimited_registration",
-                    concurrency=request.concurrency,
-                    overrides=batch_proxy_overrides,
-                )
-            except RuntimeError as exc:
-                logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
-        _init_batch_state(batch_id, [], is_unlimited=True, total=0)
         background_tasks.add_task(
             run_unlimited_batch_registration,
             batch_id,
@@ -914,23 +910,7 @@ async def start_batch_registration(
             tasks=[],
         )
 
-    if request.use_proxy:
-        try:
-            batch_service.prepare_batch_proxy_pool(
-                batch_id=batch_id,
-                task_group="batch_registration",
-                concurrency=request.concurrency,
-                overrides=batch_proxy_overrides,
-            )
-        except RuntimeError as exc:
-            logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
-
-    tasks = batch_service.create_batch_tasks(
-        count=request.count,
-        proxy=request.proxy if request.use_proxy else None,
-        pipeline_key=request.pipeline_key,
-    )
-    task_uuids = [task.task_uuid for task in tasks]
+    task_uuids = [snapshot.task_uuid for snapshot in bootstrap.task_snapshots]
 
     # 在后台运行批量注册
     background_tasks.add_task(
@@ -961,7 +941,7 @@ async def start_batch_registration(
         batch_id=batch_id,
         count=request.count,
         is_unlimited=False,
-        tasks=[task_to_response(t) for t in tasks if t]
+        tasks=[snapshot_to_response(snapshot) for snapshot in bootstrap.task_snapshots]
     )
 
 

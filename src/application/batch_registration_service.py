@@ -11,6 +11,10 @@ from typing import Any, Callable
 from ..core.registration_batch_metrics import apply_task_outcome, build_domain_stats
 from ..core.registration_batch_stats import finalize_batch_statistics
 from ..core.time import utc_now_naive
+from .registration_bootstrap_dtos import (
+    BatchBootstrapResult,
+    RegistrationTaskSnapshot,
+)
 from ..database import crud
 from ..database.models import RegistrationRun, RegistrationTask
 from .proxy_dispatch_service import ProxyDispatchService, ResolvedProxyCandidate
@@ -54,6 +58,7 @@ class BatchRegistrationService:
         batch_statistics_finalizer: Callable[..., Any] = finalize_batch_statistics,
         proxy_dispatcher: ProxyDispatchService | None = None,
         utc_now_provider: Callable[[], Any] = utc_now_naive,
+        uuid_factory: Callable[[], str] | None = None,
     ):
         self.db_factory = db_factory
         if task_manager is None:
@@ -74,6 +79,85 @@ class BatchRegistrationService:
         self.batch_statistics_finalizer = batch_statistics_finalizer
         self.proxy_dispatcher = proxy_dispatcher
         self.utc_now_provider = utc_now_provider
+        # 仅用于 bootstrap 阶段的 batch_id 生成；任务 task_uuid 仍独立生成。
+        self.uuid_factory = uuid_factory or (lambda: str(uuid.uuid4()))
+
+    def _task_to_snapshot(self, task: RegistrationTask) -> RegistrationTaskSnapshot:
+        return RegistrationTaskSnapshot(
+            id=task.id,
+            task_uuid=task.task_uuid,
+            status=task.status,
+            created_at=task.created_at.isoformat() if task.created_at else None,
+            proxy=task.proxy,
+            pipeline_key=task.pipeline_key,
+            email_service_id=task.email_service_id,
+        )
+
+    def _prepare_proxy_pool_with_fallback(
+        self,
+        *,
+        batch_id: str,
+        task_group: str,
+        concurrency: int,
+        overrides: dict[str, Any] | None,
+    ) -> None:
+        try:
+            self.prepare_batch_proxy_pool(
+                batch_id=batch_id,
+                task_group=task_group,
+                concurrency=concurrency,
+                overrides=overrides or {},
+            )
+        except RuntimeError as exc:
+            logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
+
+    def start_batch(
+        self,
+        *,
+        count: int,
+        proxy: str | None,
+        pipeline_key: str | None,
+        concurrency: int,
+        use_proxy: bool,
+        proxy_task_group: str,
+        proxy_overrides: dict[str, Any],
+    ) -> BatchBootstrapResult:
+        batch_id = self.uuid_factory()
+
+        if count == 0:
+            if use_proxy:
+                self._prepare_proxy_pool_with_fallback(
+                    batch_id=batch_id,
+                    task_group=proxy_task_group,
+                    concurrency=concurrency,
+                    overrides=proxy_overrides,
+                )
+            self.init_batch_state(batch_id, [], is_unlimited=True, total=0)
+            return BatchBootstrapResult(
+                batch_id=batch_id,
+                task_snapshots=(),
+                is_unlimited=True,
+            )
+
+        if use_proxy:
+            self._prepare_proxy_pool_with_fallback(
+                batch_id=batch_id,
+                task_group=proxy_task_group,
+                concurrency=concurrency,
+                overrides=proxy_overrides,
+            )
+
+        tasks = self.create_batch_tasks(
+            count=count,
+            proxy=proxy,
+            pipeline_key=pipeline_key,
+        )
+        self.init_batch_state(batch_id, [task.task_uuid for task in tasks])
+        return BatchBootstrapResult(
+            batch_id=batch_id,
+            task_snapshots=[self._task_to_snapshot(task) for task in tasks],
+            is_unlimited=False,
+        )
 
     def create_batch_tasks(
         self,

@@ -14,6 +14,7 @@ class RegistrationTaskSnapshot:
     id: int
     task_uuid: str
     status: str
+    created_at: str | None = None
     proxy: str | None = None
     pipeline_key: str | None = None
     email_service_id: int | None = None

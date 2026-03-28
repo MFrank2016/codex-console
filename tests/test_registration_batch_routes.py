@@ -127,6 +127,7 @@ def test_start_registration_delegates_bootstrap_to_start_task(route_db, batch_st
                 proxy=kwargs["proxy"],
                 pipeline_key=kwargs["pipeline_key"],
                 email_service_id=kwargs["email_service_id"],
+                created_at="2026-03-29T00:00:00",
             )
 
     fake_service = FakeRegistrationService()
@@ -150,6 +151,7 @@ def test_start_registration_delegates_bootstrap_to_start_task(route_db, batch_st
     assert response.status == "pending"
     assert response.pipeline_key == "current_pipeline"
     assert response.email_service_id == 12
+    assert response.created_at == "2026-03-29T00:00:00"
 
 
 def test_start_batch_registration_persists_pipeline_key_for_each_task(route_db, batch_state, monkeypatch):
@@ -173,6 +175,7 @@ def test_start_batch_registration_persists_pipeline_key_for_each_task(route_db, 
         task = crud.get_registration_task(route_db, item.task_uuid)
         assert task is not None
         assert task.pipeline_key == "codexgen_pipeline"
+        assert item.created_at is not None
 
 
 def test_start_batch_registration_delegates_bootstrap_to_service(route_db, batch_state, monkeypatch):
@@ -462,14 +465,22 @@ def test_start_batch_registration_prepares_proxy_pool_with_overrides(route_db, b
     captured: dict = {}
 
     class FakeBatchService:
-        def prepare_batch_proxy_pool(self, **kwargs):
+        def start_batch(self, **kwargs):
             captured.update(kwargs)
-
-        def create_batch_tasks(self, *, count, proxy, pipeline_key):
-            return [
-                crud.create_registration_task(route_db, task_uuid=f"prepared-task-{idx}", proxy=proxy, pipeline_key=pipeline_key)
-                for idx in range(count)
-            ]
+            return BatchBootstrapResult(
+                batch_id="prepared-batch",
+                task_snapshots=tuple(
+                    RegistrationTaskSnapshot(
+                        id=idx + 1,
+                        task_uuid=f"prepared-task-{idx}",
+                        status="pending",
+                        proxy=kwargs["proxy"],
+                        pipeline_key=kwargs["pipeline_key"],
+                    )
+                    for idx in range(kwargs["count"])
+                ),
+                is_unlimited=False,
+            )
 
     monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: FakeBatchService())
     background = BackgroundTasks()
@@ -490,10 +501,10 @@ def test_start_batch_registration_prepares_proxy_pool_with_overrides(route_db, b
     )
 
     assert response.count == 2
-    assert captured["batch_id"] == response.batch_id
-    assert captured["task_group"] == "batch_registration"
+    assert response.batch_id == "prepared-batch"
+    assert captured["proxy_task_group"] == "batch_registration"
     assert captured["concurrency"] == 3
-    assert captured["overrides"] == {
+    assert captured["proxy_overrides"] == {
         "dynamic_request_count": 9,
         "probe_url": "https://probe.example.com/ip",
         "allocation_strategy": "exclusive",
@@ -504,14 +515,21 @@ def test_start_batch_registration_keeps_queued_flow_when_proxy_pool_prepare_fail
     monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
 
     class FakeBatchService:
-        def prepare_batch_proxy_pool(self, **kwargs):
-            raise RuntimeError("insufficient proxy candidates for batch pool")
-
-        def create_batch_tasks(self, *, count, proxy, pipeline_key):
-            return [
-                crud.create_registration_task(route_db, task_uuid=f"proxy-fallback-task-{idx}", proxy=proxy, pipeline_key=pipeline_key)
-                for idx in range(count)
-            ]
+        def start_batch(self, **kwargs):
+            return BatchBootstrapResult(
+                batch_id="proxy-fallback-batch",
+                task_snapshots=tuple(
+                    RegistrationTaskSnapshot(
+                        id=idx + 1,
+                        task_uuid=f"proxy-fallback-task-{idx}",
+                        status="pending",
+                        proxy=kwargs["proxy"],
+                        pipeline_key=kwargs["pipeline_key"],
+                    )
+                    for idx in range(kwargs["count"])
+                ),
+                is_unlimited=False,
+            )
 
     monkeypatch.setattr(registration_routes, "_build_batch_registration_service", lambda: FakeBatchService())
     background = BackgroundTasks()
