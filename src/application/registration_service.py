@@ -280,14 +280,49 @@ class RegistrationService:
             except Exception as exc:
                 logger.warning("任务 %s 写入步骤快照失败: %s", task_uuid, exc)
 
+        def _commit_queued_checkpoint(runs_service: RegistrationRunsService) -> RegistrationRun:
+            run = runs_service.create_run(
+                task_uuid=task_uuid,
+                batch_id=batch_id or None,
+                trigger_source="batch" if batch_id else "manual",
+                commit=False,
+            )
+            runs_service.append_event(run.id, level="info", message="queued", commit=True)
+            return run
+
+        def _commit_execution_start_checkpoint(
+            runs_service: RegistrationRunsService,
+            run_id: int,
+        ) -> None:
+            runs_service.mark_started(run_id, commit=False)
+            runs_service.mark_running(run_id, commit=False)
+            runs_service.append_event(run_id, level="info", message="running", commit=True)
+
+        def _commit_terminal_checkpoint(
+            runs_service: RegistrationRunsService,
+            run_id: int,
+            *,
+            status: str,
+            error_message: str | None = None,
+        ) -> None:
+            if status == "completed":
+                runs_service.mark_completed(run_id, commit=False)
+                level = "info"
+            elif status == "failed":
+                runs_service.mark_failed(run_id, error_message=error_message, commit=False)
+                level = "error"
+            elif status == "cancelled":
+                runs_service.mark_cancelled(run_id, error_message=error_message, commit=False)
+                level = "warning"
+            else:
+                raise ValueError(f"unsupported terminal checkpoint status: {status}")
+
+            runs_service.append_event(run_id, level=level, message=status, commit=True)
+
         try:
             with service.db_factory() as db:
                 runs_service = RegistrationRunsService(db)
-                run = runs_service.create_run(
-                    task_uuid=task_uuid,
-                    batch_id=batch_id or None,
-                    trigger_source="batch" if batch_id else "manual",
-                )
+                run = _commit_queued_checkpoint(runs_service)
 
                 if service.task_manager.is_cancelled(task_uuid):
                     logger.info("任务 %s 已取消，跳过执行", task_uuid)
@@ -298,8 +333,12 @@ class RegistrationService:
                         pipeline_status="cancelled",
                         completed_at=now(),
                     )
-                    runs_service.mark_cancelled(run.id, error_message="cancelled")
-                    runs_service.append_event(run.id, level="warning", message="cancelled")
+                    _commit_terminal_checkpoint(
+                        runs_service,
+                        run.id,
+                        status="cancelled",
+                        error_message="cancelled",
+                    )
                     service.task_manager.update_status(task_uuid, "cancelled")
                     _close_task_stream("cancelled")
                     return service.build_result_for_task(task_uuid, db=db)
@@ -313,12 +352,17 @@ class RegistrationService:
                 )
                 if task is None:
                     logger.error("任务不存在: %s", task_uuid)
-                    runs_service.mark_failed(run.id, error_message="task missing")
-                    runs_service.append_event(run.id, level="error", message="failed")
+                    _commit_terminal_checkpoint(
+                        runs_service,
+                        run.id,
+                        status="failed",
+                        error_message="task missing",
+                    )
+                    service.task_manager.update_status(task_uuid, "failed", error="task missing")
+                    _close_task_stream("failed")
                     return service.build_result_for_task(task_uuid, db=db)
 
-                runs_service.mark_running(run.id)
-                runs_service.append_event(run.id, level="info", message="running")
+                _commit_execution_start_checkpoint(runs_service, run.id)
                 service.task_manager.update_status(task_uuid, "running")
 
                 effective_pipeline_key = pipeline_key or task.pipeline_key or "current_pipeline"
@@ -358,8 +402,12 @@ class RegistrationService:
                         completed_at=now(),
                         error_message=error_message,
                     )
-                    runs_service.mark_failed(run.id, error_message=error_message)
-                    runs_service.append_event(run.id, level="error", message="failed")
+                    _commit_terminal_checkpoint(
+                        runs_service,
+                        run.id,
+                        status="failed",
+                        error_message=error_message,
+                    )
                     service.task_manager.update_status(task_uuid, "failed", error=error_message)
                     _close_task_stream("failed")
                     return service.build_result_for_task(task_uuid, db=db)
@@ -447,8 +495,7 @@ class RegistrationService:
                             "account_id": job_result.account_id,
                         },
                     )
-                    runs_service.mark_completed(run.id)
-                    runs_service.append_event(run.id, level="info", message="completed")
+                    _commit_terminal_checkpoint(runs_service, run.id, status="completed")
                     service.task_manager.update_status(task_uuid, "completed", email=job_result.email)
                     _close_task_stream("completed")
                 else:
@@ -460,8 +507,12 @@ class RegistrationService:
                         completed_at=now(),
                         error_message=job_result.error_message,
                     )
-                    runs_service.mark_failed(run.id, error_message=job_result.error_message)
-                    runs_service.append_event(run.id, level="error", message="failed")
+                    _commit_terminal_checkpoint(
+                        runs_service,
+                        run.id,
+                        status="failed",
+                        error_message=job_result.error_message,
+                    )
                     service.task_manager.update_status(task_uuid, "failed", error=job_result.error_message)
                     _close_task_stream("failed")
 
@@ -473,11 +524,7 @@ class RegistrationService:
                     runs_service = RegistrationRunsService(db)
                     run = runs_service.get_run_by_task_uuid(task_uuid)
                     if run is None:
-                        run = runs_service.create_run(
-                            task_uuid=task_uuid,
-                            batch_id=batch_id or None,
-                            trigger_source="batch" if batch_id else "manual",
-                        )
+                        run = _commit_queued_checkpoint(runs_service)
                     crud.update_registration_task(
                         db,
                         task_uuid,
@@ -486,8 +533,12 @@ class RegistrationService:
                         completed_at=now(),
                         error_message=str(exc),
                     )
-                    runs_service.mark_failed(run.id, error_message=str(exc))
-                    runs_service.append_event(run.id, level="error", message="failed")
+                    _commit_terminal_checkpoint(
+                        runs_service,
+                        run.id,
+                        status="failed",
+                        error_message=str(exc),
+                    )
             except Exception:
                 logger.exception("注册任务异常后写回失败: %s", task_uuid)
 

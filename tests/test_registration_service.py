@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from src.application.proxy_dispatch_service import ResolvedProxyCandidate
 from src.core.registration_job import RegistrationJobResult
 from src.database import crud
-from src.database.models import Base
+from src.database.models import Base, RegistrationRun
 from src.database.session import DatabaseSessionManager
 
 
@@ -32,6 +32,17 @@ def db_factory(temp_db):
 
     return _factory
 
+
+
+
+def _load_run_and_events(session, task_uuid: str):
+    from src.application.registration_runs_service import RegistrationRunsService
+
+    runs_service = RegistrationRunsService(session)
+    run = runs_service.get_run_by_task_uuid(task_uuid)
+    assert run is not None
+    events = runs_service.get_events(run.id)
+    return run, events
 
 class FakeTaskManager:
     def __init__(self):
@@ -245,7 +256,7 @@ def test_registration_service_creates_run_records_and_terminal_status(db_factory
     assert result.run.status == "completed"
     assert result.run.started_at is not None
     assert result.run.completed_at is not None
-    assert [event.message for event in result.events] == ["running", "completed"]
+    assert [event.message for event in result.events] == ["queued", "running", "completed"]
     assert task_manager.get_status("task-1")["status"] == "completed"
     assert "job-started" in task_manager.get_logs("task-1")
 
@@ -291,6 +302,125 @@ def test_registration_service_default_run_persistence_survives_fresh_session(db_
     finally:
         fresh_session.close()
 
+
+
+def test_registration_service_commits_queued_checkpoint_before_job_runner(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    task_uuid = "task-queued-before-job-runner"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid, pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+    observed = {}
+
+    def fake_job_runner(**kwargs):
+        fresh_session = sessionmaker(bind=temp_db.get_bind())()
+        try:
+            run, events = _load_run_and_events(fresh_session, task_uuid)
+            observed["status"] = run.status
+            observed["events"] = [event.message for event in events]
+        finally:
+            fresh_session.close()
+
+        return RegistrationJobResult(
+            success=True,
+            account_id=404,
+            email="queued-checkpoint@example.com",
+            result_payload={"success": True, "email": "queued-checkpoint@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    assert observed["status"] == "running"
+    assert observed["events"][0] == "queued"
+    assert observed["events"][:2] == ["queued", "running"]
+
+
+
+def test_registration_service_persists_run_events_in_owner_defined_order(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    task_uuid = "task-owner-event-order"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid, pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        return RegistrationJobResult(
+            success=True,
+            account_id=505,
+            email="owner-order@example.com",
+            result_payload={"success": True, "email": "owner-order@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    assert [event.message for event in result.events] == ["queued", "running", "completed"]
+
+
+
+def test_registration_service_marks_failed_once_when_job_runner_raises(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    task_uuid = "task-job-runner-raises"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid, pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        raise RuntimeError("job-runner-boom")
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    result = service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    fresh_session = sessionmaker(bind=temp_db.get_bind())()
+    try:
+        run, events = _load_run_and_events(fresh_session, task_uuid)
+        run_count = fresh_session.query(RegistrationRun).filter(RegistrationRun.task_uuid == task_uuid).count()
+    finally:
+        fresh_session.close()
+
+    assert run_count == 1
+    assert result.task is not None
+    assert result.task.status == "failed"
+    assert result.run is not None
+    assert result.run.status == "failed"
+    assert [event.message for event in events] == ["queued", "running", "failed"]
+    assert [event.message for event in events].count("failed") == 1
+    assert task_manager.get_status(task_uuid)["status"] == "failed"
+    assert task_manager._closed_streams == [(task_uuid, "failed")]
 
 
 def test_registration_service_keeps_legacy_registration_task_in_sync(db_factory, temp_db):
