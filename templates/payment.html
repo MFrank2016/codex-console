@@ -57,11 +57,11 @@
                     <div class="card-body">
                         <!-- 套餐选择 -->
                         <div class="plan-cards">
-                            <div class="plan-card selected" id="plan-plus" onclick="selectPlan('plus')">
+                            <div class="plan-card selected" id="plan-plus" data-plan="plus">
                                 <h3>Plus</h3>
                                 <p>个人订阅，$20/月</p>
                             </div>
-                            <div class="plan-card" id="plan-team" onclick="selectPlan('team')">
+                            <div class="plan-card" id="plan-team" data-plan="team">
                                 <h3>Team</h3>
                                 <p>团队订阅，按座位计费</p>
                             </div>
@@ -79,7 +79,7 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="country-select">计费国家</label>
-                                <select id="country-select" onchange="onCountryChange()">
+                                <select id="country-select">
                                     <option value="SG">新加坡 (SGD)</option>
                                     <option value="US">美国 (USD)</option>
                                     <option value="TR">土耳其 (TRY)</option>
@@ -122,7 +122,7 @@
 
                         <!-- 操作区 -->
                         <div class="form-actions">
-                            <button class="btn btn-primary" onclick="generateLink()">生成支付链接</button>
+                            <button class="btn btn-primary" id="generate-link-btn" type="button">生成支付链接</button>
                         </div>
 
                         <!-- 链接结果 -->
@@ -130,8 +130,8 @@
                             <label>支付链接</label>
                             <textarea class="link-text" id="link-text" readonly></textarea>
                             <div class="form-actions" style="margin-top:10px">
-                                <button class="btn btn-secondary" onclick="copyLink()">复制链接</button>
-                                <button class="btn btn-primary" onclick="openIncognito()">无痕打开浏览器</button>
+                                <button class="btn btn-secondary" id="copy-link-btn" type="button">复制链接</button>
+                                <button class="btn btn-primary" id="open-incognito-btn" type="button">无痕打开浏览器</button>
                             </div>
                             <p class="hint support-inline-status" id="open-status" role="status" aria-live="polite"></p>
                         </div>
