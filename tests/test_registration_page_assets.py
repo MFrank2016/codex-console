@@ -478,6 +478,8 @@ function createMockElement(id = '') {{
     querySelector() {{ return null; }},
     insertAdjacentElement() {{}},
     blur() {{}},
+    click() {{}},
+    remove() {{}},
   }};
 }}
 
@@ -490,6 +492,8 @@ function getElement(id) {{
 }}
 
 const domListeners = {{}};
+const body = createMockElement('body');
+body.appendChild = () => {{}};
 const document = {{
   activeElement: null,
   getElementById(id) {{ return getElement(id); }},
@@ -497,13 +501,20 @@ const document = {{
   querySelector() {{ return null; }},
   addEventListener(type, handler) {{ domListeners[type] = handler; }},
   createElement() {{ return createMockElement(); }},
+  body,
 }};
 
 const context = {{
   console,
   URLSearchParams,
   document,
-  window: {{ location: {{ protocol: 'http:', host: 'localhost' }} }},
+  window: {{
+    location: {{ protocol: 'http:', host: 'localhost' }},
+    URL: {{
+      createObjectURL() {{ return 'blob:test'; }},
+      revokeObjectURL() {{}},
+    }},
+  }},
   navigator: {{ clipboard: {{ writeText: async () => {{}} }} }},
   localStorage: {{ getItem() {{ return null; }}, setItem() {{}}, removeItem() {{}} }},
   setTimeout,
@@ -517,25 +528,51 @@ const context = {{
     number(value) {{ return String(value ?? 0); }},
     date(value) {{ return value ? String(value) : '-'; }},
   }},
+  __apiPosts: [],
+  __fetchCalls: [],
   api: {{
     async get(path) {{
       if (path.includes('/accounts?')) return {{ total: 0, accounts: [] }};
       if (path === '/accounts/stats/summary') return {{ total: 0, by_status: {{ active: 0, expired: 0, failed: 0 }} }};
       return {{}};
     }},
-    async post() {{ return {{ success: true }}; }},
+    async post(path, payload) {{
+      context.__apiPosts.push([String(path), payload ?? null]);
+      if (path === '/accounts/batch-delete') {{
+        return {{ deleted_count: 2 }};
+      }}
+      if (path === '/payment/accounts/batch-check-subscription') {{
+        return {{ success_count: (payload?.ids || []).length, failed_count: 0 }};
+      }}
+      return {{ success: true }};
+    }},
     async patch() {{ return {{ success: true }}; }},
     async delete() {{ return {{ success: true }}; }},
   }},
   __toasts: [],
   toast: {{
-    info(message) {{ context.__toasts.push(String(message)); }},
-    success() {{}},
-    warning() {{}},
-    error() {{}},
+    info(message) {{ context.__toasts.push(['info', String(message)]); }},
+    success(message) {{ context.__toasts.push(['success', String(message)]); }},
+    warning(message) {{ context.__toasts.push(['warning', String(message)]); }},
+    error(message) {{ context.__toasts.push(['error', String(message)]); }},
   }},
   confirm: async () => true,
-  fetch: async () => ({{ ok: true, json: async () => ({{}}), blob: async () => ({{}}), headers: {{ get() {{ return null; }} }} }}),
+  fetch: async (url, options = {{}}) => {{
+    context.__fetchCalls.push([
+      String(url),
+      options?.body ? JSON.parse(options.body) : null,
+    ]);
+    return {{
+      ok: true,
+      json: async () => ({{}}),
+      blob: async () => ({{}}),
+      headers: {{
+        get(name) {{
+          return name === 'Content-Disposition' ? 'attachment; filename=test.json' : null;
+        }},
+      }},
+    }};
+  }},
 }};
 context.global = context;
 context.globalThis = context;
@@ -546,6 +583,9 @@ vm.runInContext(
 ;globalThis.__accountsTestExports = {{
     initEventListeners,
     updatePagination,
+    updateBatchButtons,
+    buildBatchPayload,
+    exportAccounts,
     elements,
     setState(state) {{
       if ('currentPage' in state) currentPage = state.currentPage;
@@ -553,22 +593,32 @@ vm.runInContext(
       if ('totalAccounts' in state) totalAccounts = state.totalAccounts;
       if ('isLoading' in state) isLoading = state.isLoading;
     }},
+    setCurrentFilters(state) {{
+      currentFilters = {{ ...currentFilters, ...state }};
+    }},
+    setSelectionState(state) {{
+      if ('selectedAccounts' in state) selectedAccounts = new Set(state.selectedAccounts);
+      if ('selectAllPages' in state) selectAllPages = state.selectAllPages;
+    }},
     getState() {{ return {{ currentPage, pageSize, totalAccounts, isLoading }}; }},
     replaceLoadAccounts(fn) {{ loadAccounts = fn; }},
+    replaceLoadStats(fn) {{ loadStats = fn; }},
     getToasts() {{ return [...globalThis.__toasts]; }},
+    getApiPosts() {{ return JSON.parse(JSON.stringify(globalThis.__apiPosts)); }},
+    getFetchCalls() {{ return JSON.parse(JSON.stringify(globalThis.__fetchCalls)); }},
   }};`,
   context,
 );
 
 const exported = context.__accountsTestExports;
 
-function trigger(type, element, event = {{}}) {{
+async function trigger(type, element, event = {{}}) {{
   if (element._listeners[type]) {{
-    element._listeners[type](event);
+    return await element._listeners[type](event);
   }}
 }}
 
-function runScenario() {{
+async function runScenario() {{
   const input = exported.elements.pageJumpInput;
   const button = exported.elements.pageJumpBtn;
 
@@ -581,10 +631,10 @@ function runScenario() {{
       exported.initEventListeners();
 
       input.value = '3';
-      trigger('click', button);
+      await trigger('click', button);
 
       input.value = '4';
-      trigger('keydown', input, {{ key: 'Enter', preventDefault() {{ enterPrevented = true; }} }});
+      await trigger('keydown', input, {{ key: 'Enter', preventDefault() {{ enterPrevented = true; }} }});
 
       return {{
         hasClickListener: Boolean(button._listeners.click),
@@ -601,10 +651,10 @@ function runScenario() {{
       exported.initEventListeners();
 
       input.value = '999';
-      trigger('click', button);
+      await trigger('click', button);
 
       input.value = '5';
-      trigger('click', button);
+      await trigger('click', button);
 
       return {{
         currentPage: exported.getState().currentPage,
@@ -619,7 +669,7 @@ function runScenario() {{
       exported.initEventListeners();
 
       input.value = '1.9';
-      trigger('click', button);
+      await trigger('click', button);
 
       return {{
         currentPage: exported.getState().currentPage,
@@ -634,7 +684,7 @@ function runScenario() {{
       exported.initEventListeners();
 
       input.value = '1e2';
-      trigger('click', button);
+      await trigger('click', button);
 
       return {{
         currentPage: exported.getState().currentPage,
@@ -671,13 +721,95 @@ function runScenario() {{
         maxAfterFocused,
       }};
     }}
+    case 'refresh_button_click_triggers_stats_and_list_reload': {{
+      let loadAccountsCalls = 0;
+      let loadStatsCalls = 0;
+      exported.replaceLoadAccounts(() => {{ loadAccountsCalls += 1; }});
+      exported.replaceLoadStats(() => {{ loadStatsCalls += 1; }});
+      exported.initEventListeners();
+
+      await trigger('click', exported.elements.refreshBtn);
+
+      return {{
+        hasClickListener: Boolean(exported.elements.refreshBtn._listeners.click),
+        loadAccountsCalls,
+        loadStatsCalls,
+        toasts: exported.getToasts(),
+      }};
+    }}
+    case 'batch_check_subscription_posts_selected_ids_and_reload': {{
+      let loadAccountsCalls = 0;
+      exported.replaceLoadAccounts(() => {{ loadAccountsCalls += 1; }});
+      exported.setSelectionState({{ selectedAccounts: [11, 12], selectAllPages: false }});
+      exported.initEventListeners();
+
+      await trigger('click', exported.elements.batchCheckSubBtn);
+
+      return {{
+        hasClickListener: Boolean(exported.elements.batchCheckSubBtn._listeners.click),
+        apiPosts: exported.getApiPosts(),
+        loadAccountsCalls,
+        buttonDisabled: exported.elements.batchCheckSubBtn.disabled,
+        buttonText: exported.elements.batchCheckSubBtn.textContent,
+        toasts: exported.getToasts(),
+      }};
+    }}
+    case 'batch_delete_select_all_uses_primary_cpa_filter_and_resets_buttons': {{
+      let loadAccountsCalls = 0;
+      let loadStatsCalls = 0;
+      exported.replaceLoadAccounts(() => {{ loadAccountsCalls += 1; }});
+      exported.replaceLoadStats(() => {{ loadStatsCalls += 1; }});
+      exported.setState({{ totalAccounts: 23 }});
+      exported.setCurrentFilters({{
+        status: 'active',
+        email_service: 'tempmail',
+        search: 'needle',
+        primary_cpa_service_id: '7',
+      }});
+      exported.setSelectionState({{ selectedAccounts: [11, 12], selectAllPages: true }});
+      exported.updateBatchButtons();
+      exported.initEventListeners();
+
+      await trigger('click', exported.elements.batchDeleteBtn);
+
+      return {{
+        apiPosts: exported.getApiPosts(),
+        loadAccountsCalls,
+        loadStatsCalls,
+        buttonDisabled: exported.elements.batchDeleteBtn.disabled,
+        buttonText: exported.elements.batchDeleteBtn.textContent,
+        toasts: exported.getToasts(),
+      }};
+    }}
+    case 'export_accounts_select_all_uses_primary_cpa_filter': {{
+      exported.setState({{ totalAccounts: 23 }});
+      exported.setCurrentFilters({{
+        status: 'active',
+        email_service: 'tempmail',
+        search: 'needle',
+        primary_cpa_service_id: '7',
+      }});
+      exported.setSelectionState({{ selectedAccounts: [11, 12], selectAllPages: true }});
+      exported.updateBatchButtons();
+
+      await exported.exportAccounts('json');
+
+      return {{
+        fetchCalls: exported.getFetchCalls(),
+        toasts: exported.getToasts(),
+      }};
+    }}
     default:
       throw new Error(`Unknown scenario: ${{scenarioName}}`);
   }}
 }}
 
-const result = runScenario();
-process.stdout.write(JSON.stringify(result));
+runScenario().then((result) => {{
+  process.stdout.write(JSON.stringify(result));
+}}).catch((error) => {{
+  console.error(error);
+  process.exitCode = 1;
+}});
 """
     completed = subprocess.run(["node", "-e", node_script], check=True, capture_output=True, text=True)
     return json.loads(completed.stdout)
@@ -696,21 +828,21 @@ def test_accounts_script_clamps_jump_range_and_avoids_duplicate_reload():
     result = run_accounts_js_scenario("jump_clamps_and_avoids_duplicate_reload")
     assert result["currentPage"] == 5
     assert result["loadCalls"] == 1
-    assert any("页码超出范围" in message for message in result["toasts"])
+    assert any("页码超出范围" in message for _, message in result["toasts"])
 
 
 def test_accounts_script_rejects_decimal_jump_input_without_coercion():
     result = run_accounts_js_scenario("jump_rejects_decimal")
     assert result["currentPage"] == 3
     assert result["loadCalls"] == 0
-    assert any("请输入有效页码" in message for message in result["toasts"])
+    assert any("请输入有效页码" in message for _, message in result["toasts"])
 
 
 def test_accounts_script_rejects_scientific_notation_jump_input_without_coercion():
     result = run_accounts_js_scenario("jump_rejects_scientific_notation")
     assert result["currentPage"] == 3
     assert result["loadCalls"] == 0
-    assert any("请输入有效页码" in message for message in result["toasts"])
+    assert any("请输入有效页码" in message for _, message in result["toasts"])
 
 
 def test_accounts_script_disables_prev_next_and_jump_when_list_is_empty():
@@ -726,6 +858,64 @@ def test_accounts_script_update_pagination_does_not_override_focused_input_and_s
     assert result["focusedValue"] == "42"
     assert result["blurredValue"] == "4"
     assert result["maxAfterFocused"] == "5"
+
+
+def test_accounts_script_refresh_button_reloads_stats_and_list():
+    result = run_accounts_js_scenario("refresh_button_click_triggers_stats_and_list_reload")
+    assert result["hasClickListener"] is True
+    assert result["loadAccountsCalls"] == 1
+    assert result["loadStatsCalls"] == 1
+    assert ["info", "已刷新"] in result["toasts"]
+
+
+def test_accounts_script_batch_check_subscription_posts_selected_ids_and_reloads():
+    result = run_accounts_js_scenario("batch_check_subscription_posts_selected_ids_and_reload")
+    assert result["hasClickListener"] is True
+    assert result["apiPosts"] == [[
+        "/payment/accounts/batch-check-subscription",
+        {"ids": [11, 12]},
+    ]]
+    assert result["loadAccountsCalls"] == 1
+    assert result["buttonDisabled"] is False
+    assert result["buttonText"] == "🔍 检测 (2)"
+    assert ["success", "成功: 2"] in result["toasts"]
+
+
+def test_accounts_script_batch_delete_select_all_uses_primary_cpa_filter_and_resets_buttons():
+    result = run_accounts_js_scenario("batch_delete_select_all_uses_primary_cpa_filter_and_resets_buttons")
+    assert result["apiPosts"] == [[
+        "/accounts/batch-delete",
+        {
+            "ids": [],
+            "select_all": True,
+            "status_filter": "active",
+            "email_service_filter": "tempmail",
+            "search_filter": "needle",
+            "primary_cpa_service_id_filter": "7",
+        },
+    ]]
+    assert result["loadAccountsCalls"] == 1
+    assert result["loadStatsCalls"] == 1
+    assert result["buttonDisabled"] is True
+    assert result["buttonText"] == "🗑️ 批量删除"
+    assert ["success", "成功删除 2 个账号"] in result["toasts"]
+
+
+def test_accounts_script_export_accounts_select_all_uses_primary_cpa_filter():
+    result = run_accounts_js_scenario("export_accounts_select_all_uses_primary_cpa_filter")
+    assert result["fetchCalls"] == [[
+        "/api/accounts/export/json",
+        {
+            "ids": [],
+            "select_all": True,
+            "status_filter": "active",
+            "email_service_filter": "tempmail",
+            "search_filter": "needle",
+            "primary_cpa_service_id_filter": "7",
+        },
+    ]]
+    assert ["info", "正在导出 23 个账号..."] in result["toasts"]
+    assert ["success", "导出成功"] in result["toasts"]
 
 
 def test_web_app_registers_registration_workbench_page_route():

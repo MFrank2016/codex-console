@@ -55,6 +55,7 @@ class BatchCheckSubscriptionRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
 
 
 # ============== 支付链接生成 ==============
@@ -136,7 +137,8 @@ def batch_check_subscription(request: BatchCheckSubscriptionRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
         for account_id in ids:
             account = db.query(Account).filter(Account.id == account_id).first()

@@ -52,6 +52,10 @@ def test_mark_subscription_sets_naive_subscription_time_for_paid_account(tmp_pat
         verify_session.close()
 
 
+def test_batch_check_subscription_request_model_includes_primary_cpa_service_id_filter():
+    assert "primary_cpa_service_id_filter" in payment_routes.BatchCheckSubscriptionRequest.model_fields
+
+
 def test_batch_check_subscription_sets_naive_subscription_time_for_successful_check(tmp_path, monkeypatch):
     manager = _build_temp_session_manager(tmp_path)
     monkeypatch.setattr(session_module, "_db_manager", manager)
@@ -175,6 +179,53 @@ def test_batch_check_subscription_clears_subscription_time_when_result_is_free(t
         assert persisted.subscription_at is None
     finally:
         verify_session.close()
+
+
+def test_batch_check_subscription_forwards_primary_cpa_service_id_filter(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+
+    captured = {}
+
+    def fake_resolve_account_ids(
+        db,
+        ids,
+        select_all=False,
+        status_filter=None,
+        email_service_filter=None,
+        search_filter=None,
+        primary_cpa_service_id_filter=None,
+    ):
+        captured["ids"] = ids
+        captured["select_all"] = select_all
+        captured["status_filter"] = status_filter
+        captured["email_service_filter"] = email_service_filter
+        captured["search_filter"] = search_filter
+        captured["primary_cpa_service_id_filter"] = primary_cpa_service_id_filter
+        return []
+
+    monkeypatch.setattr(payment_routes, "resolve_account_ids", fake_resolve_account_ids)
+
+    response = payment_routes.batch_check_subscription(
+        payment_routes.BatchCheckSubscriptionRequest(
+            ids=[],
+            select_all=True,
+            status_filter="active",
+            email_service_filter="tempmail",
+            search_filter="keyword",
+            primary_cpa_service_id_filter=9,
+        )
+    )
+
+    assert response == {"success_count": 0, "failed_count": 0, "details": []}
+    assert captured == {
+        "ids": [],
+        "select_all": True,
+        "status_filter": "active",
+        "email_service_filter": "tempmail",
+        "search_filter": "keyword",
+        "primary_cpa_service_id_filter": 9,
+    }
 
 
 def test_open_browser_incognito_rejects_blank_url_after_trim():

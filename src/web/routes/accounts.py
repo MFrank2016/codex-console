@@ -2,9 +2,11 @@
 账号管理 API 路由
 """
 import io
+import inspect
 import json
 import logging
 import zipfile
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Body
@@ -48,11 +50,28 @@ def _build_proxy_dispatch_service() -> ProxyDispatchService:
 
 def _get_proxy(request_proxy: Optional[str] = None) -> Optional[str]:
     """通过统一代理调度层为账号操作选择代理。"""
-    candidate = _build_proxy_dispatch_service().resolve_single_proxy(
-        task_group="generic_single",
-        explicit_proxy=request_proxy,
-        overrides={},
-    )
+    dispatch_service = _build_proxy_dispatch_service()
+    resolver = dispatch_service.resolve_single_proxy
+
+    try:
+        signature = inspect.signature(resolver)
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature is not None and "use_proxy" in signature.parameters:
+        candidate = resolver(
+            task_group="generic_single",
+            explicit_proxy=request_proxy,
+            overrides={},
+            use_proxy=True,
+        )
+    else:
+        candidate = resolver(
+            task_group="generic_single",
+            explicit_proxy=request_proxy,
+            overrides={},
+        )
+
     return candidate.proxy_url if candidate is not None else None
 
 
@@ -104,6 +123,7 @@ class BatchDeleteRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
 
 
 class BatchUpdateRequest(BaseModel):
@@ -121,6 +141,7 @@ def resolve_account_ids(
     status_filter: Optional[str] = None,
     email_service_filter: Optional[str] = None,
     search_filter: Optional[str] = None,
+    primary_cpa_service_id_filter: Optional[int] = None,
 ) -> List[int]:
     """当 select_all=True 时查询全部符合条件的 ID，否则直接返回传入的 ids"""
     if not select_all:
@@ -135,6 +156,8 @@ def resolve_account_ids(
         query = query.filter(
             (Account.email.ilike(pattern)) | (Account.account_id.ilike(pattern))
         )
+    if primary_cpa_service_id_filter is not None:
+        query = query.filter(Account.primary_cpa_service_id == primary_cpa_service_id_filter)
     return [row[0] for row in query.all()]
 
 
@@ -299,7 +322,8 @@ async def batch_delete_accounts(request: BatchDeleteRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
         deleted_count = 0
         errors = []
@@ -353,6 +377,7 @@ class BatchExportRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
 
 
 @router.post("/export/json")
@@ -361,7 +386,8 @@ async def export_accounts_json(request: BatchExportRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
         accounts = db.query(Account).filter(Account.id.in_(ids)).all()
 
@@ -407,7 +433,8 @@ async def export_accounts_csv(request: BatchExportRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
         accounts = db.query(Account).filter(Account.id.in_(ids)).all()
 
@@ -495,7 +522,8 @@ async def export_accounts_sub2api(request: BatchExportRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
         accounts = db.query(Account).filter(Account.id.in_(ids)).all()
 
@@ -524,7 +552,8 @@ async def export_accounts_cpa(request: BatchExportRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
         accounts = db.query(Account).filter(Account.id.in_(ids)).all()
 
@@ -602,6 +631,7 @@ class BatchRefreshRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
 
 
 class TokenValidateRequest(BaseModel):
@@ -617,6 +647,7 @@ class BatchValidateRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
 
 
 @router.post("/batch-refresh")
@@ -633,7 +664,8 @@ async def batch_refresh_tokens(request: BatchRefreshRequest, background_tasks: B
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
 
     for account_id in ids:
@@ -684,7 +716,8 @@ async def batch_validate_tokens(request: BatchValidateRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
 
     for account_id in ids:
@@ -739,6 +772,7 @@ class BatchCPAUploadRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
     cpa_service_id: Optional[int] = None  # 指定 CPA 服务 ID，不传则使用全局配置
 
 
@@ -762,7 +796,8 @@ async def batch_upload_accounts_to_cpa(request: BatchCPAUploadRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
 
     results = batch_upload_to_cpa(ids, proxy, api_url=cpa_api_url, api_token=cpa_api_token)
@@ -827,6 +862,7 @@ class BatchSub2ApiUploadRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
     service_id: Optional[int] = None  # 指定 Sub2API 服务 ID，不传则使用第一个启用的
     concurrency: int = 3
     priority: int = 50
@@ -859,7 +895,8 @@ async def batch_upload_accounts_to_sub2api(request: BatchSub2ApiUploadRequest):
     with get_db() as db:
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
 
     results = batch_upload_to_sub2api(
@@ -926,6 +963,7 @@ class BatchUploadTMRequest(BaseModel):
     status_filter: Optional[str] = None
     email_service_filter: Optional[str] = None
     search_filter: Optional[str] = None
+    primary_cpa_service_id_filter: Optional[int] = None
     service_id: Optional[int] = None
 
 
@@ -948,7 +986,8 @@ async def batch_upload_accounts_to_tm(request: BatchUploadTMRequest):
 
         ids = resolve_account_ids(
             db, request.ids, request.select_all,
-            request.status_filter, request.email_service_filter, request.search_filter
+            request.status_filter, request.email_service_filter, request.search_filter,
+            request.primary_cpa_service_id_filter,
         )
 
     results = batch_upload_to_team_manager(ids, api_url, api_key)

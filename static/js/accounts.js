@@ -770,6 +770,8 @@ async function deleteAccount(id, email) {
         await api.delete(`/accounts/${id}`);
         toast.success('账号已删除');
         selectedAccounts.delete(id);
+        updateBatchButtons();
+        renderSelectAllBanner();
         loadStats();
         loadAccounts();
     } catch (error) {
@@ -790,6 +792,8 @@ async function handleBatchDelete() {
         toast.success(`成功删除 ${result.deleted_count} 个账号`);
         selectedAccounts.clear();
         selectAllPages = false;
+        updateBatchButtons();
+        renderSelectAllBanner();
         loadStats();
         loadAccounts();
     } catch (error) {
