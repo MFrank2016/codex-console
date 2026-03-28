@@ -352,11 +352,11 @@ async function loadCustomServices() {
                 <td>
                     <div style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
                         <button class="btn btn-secondary btn-sm" onclick="editCustomService(${service.id}, '${service._subType}')">编辑</button>
+                        <button class="btn btn-secondary btn-sm" onclick="testService(${service.id})">测试</button>
                         <div class="dropdown" style="position:relative;">
                             <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleEmailMoreMenu(this)">更多</button>
                             <div class="dropdown-menu" style="min-width:80px;">
                                 <a href="#" class="dropdown-item" onclick="event.preventDefault();closeEmailMoreMenu(this);toggleService(${service.id}, ${!service.enabled})">${service.enabled ? '禁用' : '启用'}</a>
-                                <a href="#" class="dropdown-item" onclick="event.preventDefault();closeEmailMoreMenu(this);testService(${service.id})">测试</a>
                             </div>
                         </div>
                         <button class="btn btn-danger btn-sm" onclick="deleteService(${service.id}, '${escapeHtml(service.name)}')">删除</button>

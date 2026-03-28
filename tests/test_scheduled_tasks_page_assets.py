@@ -107,6 +107,12 @@ def test_scheduled_tasks_script_describes_refill_pipeline_default_value():
     assert "默认使用 codexgen_pipeline，可切换为 current_pipeline" in script
 
 
+def test_scheduled_tasks_script_renders_retry_action_when_plan_list_load_fails():
+    script = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
+    assert "重新加载计划列表" in script
+    assert "window.loadPlans()" in script or "loadPlans()" in script
+
+
 def test_scheduled_tasks_script_contains_config_editor_mode_and_serialization_hooks():
     script = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
     assert "function renderConfigEntries(" in script

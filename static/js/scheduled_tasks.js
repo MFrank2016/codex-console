@@ -850,6 +850,9 @@ async function loadPlans() {
                         <div class="empty-state-icon">❌</div>
                         <div class="empty-state-title">加载失败</div>
                         <div class="empty-state-description">${escapeHtml(error.message || '请求失败')}</div>
+                        <div style="margin-top: var(--spacing-sm);">
+                            <button class="btn btn-secondary btn-sm" type="button" onclick="window.loadPlans()">重新加载计划列表</button>
+                        </div>
                     </div>
                 </td>
             </tr>

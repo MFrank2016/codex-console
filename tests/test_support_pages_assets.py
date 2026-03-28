@@ -60,8 +60,25 @@ def test_support_pages_use_shared_page_header_and_panel_shell():
     for path in ["templates/email_services.html", "templates/settings.html", "templates/payment.html"]:
         template = Path(path).read_text(encoding="utf-8")
         assert "workspace-panel" in template
-        assert "page-head" in template or "page-header" in template
         assert "support-page-shell" in template
+    email_template = Path("templates/email_services.html").read_text(encoding="utf-8")
+    assert "page-head" in email_template or "page-header" in email_template
+
+
+def test_settings_and_payment_templates_no_longer_repeat_support_summary_titles():
+    settings_template = Path("templates/settings.html").read_text(encoding="utf-8")
+    payment_template = Path("templates/payment.html").read_text(encoding="utf-8")
+
+    assert "系统设置支撑台" not in settings_template
+    assert "支付支撑台" not in payment_template
+    assert "support-page-summary" not in settings_template
+    assert "support-page-summary" not in payment_template
+
+
+def test_email_services_custom_service_rows_expose_direct_test_action():
+    script = Path("static/js/email_services.js").read_text(encoding="utf-8")
+    assert "测试</button>" in script
+    assert "onclick=\"testService(" in script or "testService(${service.id})" in script
 
 
 def test_support_page_danger_modal_defaults_focus_to_cancel():

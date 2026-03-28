@@ -19,6 +19,7 @@ from ...database import crud
 from ...database.models import Account
 
 logger = logging.getLogger(__name__)
+TRANSIENT_ACCOUNT_FAILURE_REASONS = {"refresh_failed", "token_invalid"}
 
 
 @dataclass
@@ -279,6 +280,25 @@ class TokenRefreshManager:
             return False, f"验证异常: {str(e)}"
 
 
+def _mark_account_failed_state(account: Account, *, reason: str) -> None:
+    now = utc_now_naive()
+    account.status = "failed"
+    account.invalidated_at = now
+    account.invalid_reason = reason
+    account.updated_at = now
+
+
+def _clear_transient_account_failure_state(account: Account) -> None:
+    if account.invalid_reason not in TRANSIENT_ACCOUNT_FAILURE_REASONS and account.status != "failed":
+        return
+
+    account.invalidated_at = None
+    account.invalid_reason = None
+    if account.status == "failed":
+        account.status = "active"
+    account.updated_at = utc_now_naive()
+
+
 def refresh_account_token(account_id: int, proxy_url: Optional[str] = None) -> TokenRefreshResult:
     """
     刷新指定账号的 Token 并更新数据库
@@ -312,6 +332,13 @@ def refresh_account_token(account_id: int, proxy_url: Optional[str] = None) -> T
                 update_data["expires_at"] = result.expires_at
 
             crud.update_account(db, account_id, **update_data)
+            account = crud.get_account_by_id(db, account_id)
+            if account:
+                _clear_transient_account_failure_state(account)
+                db.commit()
+        else:
+            _mark_account_failed_state(account, reason="refresh_failed")
+            db.commit()
 
         return result
 
@@ -336,4 +363,10 @@ def validate_account_token(account_id: int, proxy_url: Optional[str] = None) -> 
             return False, "账号没有 access_token"
 
         manager = TokenRefreshManager(proxy_url=proxy_url)
-        return manager.validate_token(account.access_token)
+        is_valid, error = manager.validate_token(account.access_token)
+        if is_valid:
+            _clear_transient_account_failure_state(account)
+        else:
+            _mark_account_failed_state(account, reason="token_invalid")
+        db.commit()
+        return is_valid, error

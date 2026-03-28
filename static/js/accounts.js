@@ -13,6 +13,7 @@ let selectAllPages = false;  // 是否选中了全部页
 let currentFilters = { status: '', email_service: '', search: '', primary_cpa_service_id: '' };  // 当前筛选条件
 let detailDrawerRestoreTarget = null;
 let detailDrawerInteractionsBound = false;
+let activeAccountDrawerId = null;
 
 // DOM 元素
 const elements = {
@@ -117,6 +118,7 @@ function closeAccountDrawer() {
     if (detailDrawerRestoreTarget && typeof detailDrawerRestoreTarget.focus === 'function') {
         detailDrawerRestoreTarget.focus();
     }
+    activeAccountDrawerId = null;
 }
 
 // 事件监听
@@ -289,8 +291,22 @@ function getInvalidReasonText(reason) {
     const reasonMap = {
         cpa_cleanup: 'CPA 清理淘汰',
         refresh_failed: '刷新失败',
+        token_invalid: 'Token 失效',
     };
     return reasonMap[reason] || reason || '-';
+}
+
+async function reloadAccountDataViews(options = {}) {
+    const detailAccountId = Number.parseInt(
+        String(options.detailAccountId ?? activeAccountDrawerId ?? ''),
+        10,
+    );
+
+    await Promise.all([loadStats(), loadAccounts()]);
+
+    if (Number.isInteger(detailAccountId) && detailAccountId > 0) {
+        await viewAccount(detailAccountId);
+    }
 }
 
 function renderInvalidationColumns(invalidatedAt, invalidReason, primaryCpaServiceId) {
@@ -651,7 +667,7 @@ async function refreshToken(id) {
 
         if (result.success) {
             toast.success('Token刷新成功');
-            loadAccounts();
+            await reloadAccountDataViews({ detailAccountId: id });
         } else {
             toast.error('刷新失败: ' + (result.error || '未知错误'));
         }
@@ -674,7 +690,7 @@ async function handleBatchRefresh() {
     try {
         const result = await api.post('/accounts/batch-refresh', buildBatchPayload());
         toast.success(`成功刷新 ${result.success_count} 个，失败 ${result.failed_count} 个`);
-        loadAccounts();
+        await reloadAccountDataViews();
     } catch (error) {
         toast.error('批量刷新失败: ' + error.message);
     } finally {
@@ -692,7 +708,7 @@ async function handleBatchValidate() {
     try {
         const result = await api.post('/accounts/batch-validate', buildBatchPayload());
         toast.info(`有效: ${result.valid_count}，无效: ${result.invalid_count}`);
-        loadAccounts();
+        await reloadAccountDataViews();
     } catch (error) {
         toast.error('批量验证失败: ' + error.message);
     } finally {
@@ -705,6 +721,7 @@ async function viewAccount(id) {
     try {
         const account = await api.get(`/accounts/${id}`);
         const tokens = await api.get(`/accounts/${id}/tokens`);
+        activeAccountDrawerId = id;
 
         const drawerHtml = `
             <div class="info-grid">
@@ -830,8 +847,8 @@ async function deleteAccount(id, email) {
         selectedAccounts.delete(id);
         updateBatchButtons();
         renderSelectAllBanner();
-        loadStats();
-        loadAccounts();
+        closeAccountDrawer();
+        await reloadAccountDataViews();
     } catch (error) {
         toast.error('删除失败: ' + error.message);
     }
@@ -852,8 +869,8 @@ async function handleBatchDelete() {
         selectAllPages = false;
         updateBatchButtons();
         renderSelectAllBanner();
-        loadStats();
-        loadAccounts();
+        closeAccountDrawer();
+        await reloadAccountDataViews();
     } catch (error) {
         toast.error('删除失败: ' + error.message);
     }
@@ -1096,7 +1113,7 @@ async function markSubscription(id) {
             subscription_type: type.trim().toLowerCase()
         });
         toast.success('订阅状态已更新');
-        loadAccounts();
+        await reloadAccountDataViews({ detailAccountId: id });
     } catch (e) {
         toast.error('标记失败: ' + e.message);
     }
@@ -1117,7 +1134,7 @@ async function handleBatchCheckSubscription() {
         let message = `成功: ${result.success_count}`;
         if (result.failed_count > 0) message += `, 失败: ${result.failed_count}`;
         toast.success(message);
-        loadAccounts();
+        await reloadAccountDataViews();
     } catch (e) {
         toast.error('批量检测失败: ' + e.message);
     } finally {

@@ -149,7 +149,7 @@ const locationState = {{
 }};
 
 function applyScenarioSearch() {{
-  if (['scheduled_scope_bootstrap', 'safe_row_rendering', 'filter_and_pagination', 'log_modal_and_stop'].includes(scenarioName)) {{
+  if (['scheduled_scope_bootstrap', 'safe_row_rendering', 'filter_and_pagination', 'log_modal_and_stop', 'runs_load_failure'].includes(scenarioName)) {{
     locationState.search = '?scope=scheduled&plan_id=52&source=scheduled-tasks';
     return;
   }}
@@ -180,6 +180,9 @@ const context = {{
     async get(path) {{
       logs.apiGetPaths.push(String(path));
       if (path.startsWith('/scheduled-runs?')) {{
+        if (scenarioName === 'runs_load_failure') {{
+          throw new Error('upstream unavailable');
+        }}
         const url = new URL(`http://localhost${{path}}`);
         const page = Number.parseInt(url.searchParams.get('page') || '1', 10);
         if (scenarioName === 'safe_row_rendering') {{

@@ -17,3 +17,21 @@ def test_accounts_drawer_accessibility_contract():
         "escape_closes_drawer": True,
         "focus_returned_to_trigger": True,
     }
+
+
+def test_accounts_actions_reload_stats_list_and_open_drawer_views():
+    result = run_accounts_js_scenario("refresh_action_reloads_account_views")
+    assert "/accounts/1/refresh" in result["api_post_paths"]
+    assert result["api_get_paths"].count("/accounts/stats/summary") >= 2
+    assert any(path.startswith("/accounts?page=1&page_size=20") for path in result["api_get_paths"])
+    assert result["api_get_paths"].count("/accounts/1") >= 2
+    assert result["api_get_paths"].count("/accounts/1/tokens") >= 2
+
+
+def test_accounts_batch_subscription_check_reloads_stats_list_and_drawer_views():
+    result = run_accounts_js_scenario("batch_subscription_check_reloads_account_views")
+    assert result["api_post_paths"] == ["/payment/accounts/batch-check-subscription"]
+    assert result["api_get_paths"].count("/accounts/stats/summary") >= 2
+    assert any(path.startswith("/accounts?page=1&page_size=20") for path in result["api_get_paths"])
+    assert result["api_get_paths"].count("/accounts/1") >= 2
+    assert result["api_get_paths"].count("/accounts/1/tokens") >= 2

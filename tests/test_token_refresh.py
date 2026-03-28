@@ -210,3 +210,118 @@ def test_validate_account_token_handles_missing_account_and_missing_access_token
 
     no_access_token_result = token_refresh_module.validate_account_token(account_id, proxy_url="http://proxy.local:8000")
     assert no_access_token_result == (False, "账号没有 access_token")
+
+
+def test_refresh_account_token_marks_refresh_failure_and_clears_transient_invalid_state_on_success(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+
+    session = manager.SessionLocal()
+    try:
+        account = crud.create_account(
+            session,
+            email="refresh-state@example.com",
+            email_service="tempmail",
+            refresh_token="refresh-token",
+            access_token="old-access-token",
+        )
+        account_id = account.id
+    finally:
+        session.close()
+
+    monkeypatch.setattr(
+        token_refresh_module.TokenRefreshManager,
+        "refresh_account",
+        lambda self, account: TokenRefreshResult(success=False, error_message="boom"),
+    )
+
+    failed = token_refresh_module.refresh_account_token(account_id, proxy_url="http://proxy.local:8000")
+    assert failed.success is False
+
+    verify_session = manager.SessionLocal()
+    try:
+        persisted = crud.get_account_by_id(verify_session, account_id)
+        assert persisted is not None
+        assert persisted.status == "failed"
+        assert persisted.invalid_reason == "refresh_failed"
+        assert persisted.invalidated_at is not None
+    finally:
+        verify_session.close()
+
+    monkeypatch.setattr(
+        token_refresh_module.TokenRefreshManager,
+        "refresh_account",
+        lambda self, account: TokenRefreshResult(
+            success=True,
+            access_token="updated-access-token",
+            refresh_token="updated-refresh-token",
+            expires_at=utc_now_naive() + timedelta(hours=1),
+        ),
+    )
+
+    refreshed = token_refresh_module.refresh_account_token(account_id, proxy_url="http://proxy.local:8000")
+    assert refreshed.success is True
+
+    verify_session = manager.SessionLocal()
+    try:
+        persisted = crud.get_account_by_id(verify_session, account_id)
+        assert persisted is not None
+        assert persisted.status == "active"
+        assert persisted.invalid_reason is None
+        assert persisted.invalidated_at is None
+        assert persisted.last_refresh is not None
+    finally:
+        verify_session.close()
+
+
+def test_validate_account_token_persists_invalid_reason_and_clears_it_after_recovery(tmp_path, monkeypatch):
+    manager = _build_temp_session_manager(tmp_path)
+    monkeypatch.setattr(session_module, "_db_manager", manager)
+
+    session = manager.SessionLocal()
+    try:
+        account = crud.create_account(
+            session,
+            email="validate-state@example.com",
+            email_service="tempmail",
+            access_token="access-token",
+        )
+        account_id = account.id
+    finally:
+        session.close()
+
+    monkeypatch.setattr(
+        token_refresh_module.TokenRefreshManager,
+        "validate_token",
+        lambda self, access_token: (False, "Token 无效或已过期"),
+    )
+    invalid_result = token_refresh_module.validate_account_token(account_id, proxy_url="http://proxy.local:8000")
+    assert invalid_result == (False, "Token 无效或已过期")
+
+    verify_session = manager.SessionLocal()
+    try:
+        persisted = crud.get_account_by_id(verify_session, account_id)
+        assert persisted is not None
+        assert persisted.status == "failed"
+        assert persisted.invalid_reason == "token_invalid"
+        assert persisted.invalidated_at is not None
+    finally:
+        verify_session.close()
+
+    monkeypatch.setattr(
+        token_refresh_module.TokenRefreshManager,
+        "validate_token",
+        lambda self, access_token: (True, None),
+    )
+    valid_result = token_refresh_module.validate_account_token(account_id, proxy_url="http://proxy.local:8000")
+    assert valid_result == (True, None)
+
+    verify_session = manager.SessionLocal()
+    try:
+        persisted = crud.get_account_by_id(verify_session, account_id)
+        assert persisted is not None
+        assert persisted.status == "active"
+        assert persisted.invalid_reason is None
+        assert persisted.invalidated_at is None
+    finally:
+        verify_session.close()

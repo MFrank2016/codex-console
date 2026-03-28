@@ -680,6 +680,29 @@ function switchWorkbenchView(nextView = 'config') {
     return normalizedView;
 }
 
+function setRunningWorkbenchMode(nextMode = 'idle') {
+    const allowedModes = ['idle', 'single', 'batch'];
+    const normalizedMode = allowedModes.includes(nextMode) ? nextMode : 'idle';
+
+    if (elements.workbenchShell) {
+        elements.workbenchShell.dataset.runningMode = normalizedMode;
+    }
+    if (elements.registrationSingleProgress) {
+        elements.registrationSingleProgress.hidden = normalizedMode === 'batch';
+    }
+    if (elements.registrationBatchSummary) {
+        elements.registrationBatchSummary.hidden = normalizedMode === 'single';
+    }
+    if (elements.registrationLogConsole) {
+        elements.registrationLogConsole.classList.toggle(
+            'registration-log-console--immersive',
+            normalizedMode !== 'idle',
+        );
+    }
+
+    return normalizedMode;
+}
+
 function initWorkbenchTabs() {
     [
         ['config', elements.workbenchTabConfig],
@@ -692,6 +715,7 @@ function initWorkbenchTabs() {
         });
     });
 
+    setRunningWorkbenchMode('idle');
     switchWorkbenchView(activeWorkbenchView);
 }
 
@@ -1426,6 +1450,8 @@ async function handleSingleRegistration(requestData) {
     currentBatch = null;
     activeBatchId = null;
     resetRegistrationStreamViewState();
+    switchWorkbenchView('running');
+    setRunningWorkbenchMode('single');
 
     addLog('info', '[系统] 正在启动注册任务...');
 
@@ -1897,6 +1923,8 @@ async function handleBatchRegistration(requestData) {
     currentTask = null;
     activeTaskUuid = null;
     resetRegistrationStreamViewState();
+    switchWorkbenchView('running');
+    setRunningWorkbenchMode('batch');
 
     const count = isUnlimitedRegistrationMode()
         ? 0
@@ -2100,6 +2128,7 @@ function stopBatchPolling() {
 
 // 显示任务状态
 function showTaskStatus(task) {
+    setRunningWorkbenchMode('single');
     elements.taskStatusRow.style.display = 'grid';
     elements.batchProgressSection.style.display = 'none';
     elements.taskStatusBadge.style.display = 'inline-flex';
@@ -2219,6 +2248,7 @@ function renderSingleTaskProgressSummary(taskProgress, currentStep) {
 
 // 显示批量状态
 function showBatchStatus(batch) {
+    setRunningWorkbenchMode('batch');
     const isUnlimited = !!(batch && (batch.is_unlimited || batch.count === 0));
 
     elements.batchProgressSection.style.display = 'block';
@@ -2628,6 +2658,7 @@ function resetButtons() {
     disconnectWebSocket();
     disconnectBatchWebSocket();
     // 注意：不重置 isOutlookBatchMode，因为用户可能想继续使用 Outlook 批量模式
+    setRunningWorkbenchMode('idle');
 }
 
 // HTML 转义

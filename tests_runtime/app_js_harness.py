@@ -644,6 +644,24 @@ async function runScenario() {{
         recent_hidden_after_click: !!getElement('registration-workbench-view-recent').hidden,
       }};
     }}
+    case 'single_running_presentation': {{
+      await exported.handleSingleRegistration({{ email_service_type: 'tempmail', pipeline_key: 'current_pipeline' }});
+      return {{
+        active_view: String(getElement('registration-workbench-shell').dataset.activeView || ''),
+        single_panel_hidden: !!getElement('registration-single-progress').hidden,
+        batch_panel_hidden: !!getElement('registration-batch-summary').hidden,
+        log_panel_immersive: getElement('registration-log-console').classList.contains('registration-log-console--immersive'),
+      }};
+    }}
+    case 'batch_running_presentation': {{
+      await exported.handleBatchRegistration({{ email_service_type: 'tempmail', pipeline_key: 'current_pipeline', count: 5 }});
+      return {{
+        active_view: String(getElement('registration-workbench-shell').dataset.activeView || ''),
+        single_panel_hidden: !!getElement('registration-single-progress').hidden,
+        batch_panel_hidden: !!getElement('registration-batch-summary').hidden,
+        log_panel_immersive: getElement('registration-log-console').classList.contains('registration-log-console--immersive'),
+      }};
+    }}
     case 'batch_mode_persists_after_reset': {{
       const regMode = getElement('reg-mode');
       regMode.value = 'batch';

@@ -9,7 +9,7 @@
             margin-bottom: 20px;
         }
         .plan-card {
-            border: 2px solid var(--border-color);
+            border: 2px solid var(--border);
             border-radius: 8px;
             padding: 20px;
             cursor: pointer;
@@ -37,9 +37,9 @@
             font-family: var(--font-mono);
             font-size: 0.8rem;
             padding: 10px;
-            border: 1px solid var(--border-color);
+            border: 1px solid var(--border);
             border-radius: 6px;
-            background: var(--bg-secondary);
+            background: var(--surface-hover);
             color: var(--text-primary);
             resize: vertical;
             min-height: 80px;
@@ -49,11 +49,7 @@
 {% endblock %}
 
 {% block page_content %}
-<div class="config-workbench-grid support-page-shell">
-    <section class="workspace-panel page-head support-page-summary">
-        <h2 class="page-head-title">支付支撑台</h2>
-        <p class="page-head-subtitle">按套餐、国家与账号上下文生成支付链接，并反馈打开状态。</p>
-    </section>
+<div class="workspace-side-stack support-page-shell">
     <section class="workspace-panel"><div class="card">
                     <div class="card-header">
                         <h3>选择套餐</h3>

@@ -121,3 +121,10 @@ def test_run_center_js_opens_log_modal_and_can_stop_run():
     assert "nightly refill" in result["log_status_html"]
     assert "line one" in result["log_console_html"]
     assert result["stop_button_hidden"] is False
+
+
+def test_run_center_js_renders_retry_action_when_run_list_load_fails():
+    result = run_run_center_js_scenario("runs_load_failure")
+    assert result["table_html"]
+    assert "运行记录加载失败" in result["table_html"]
+    assert "重新加载运行记录" in result["table_html"]

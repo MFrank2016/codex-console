@@ -52,6 +52,10 @@
   align-items: start;
 }
 
+.registration-workbench-layout--running {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .registration-layout-config {
   display: flex;
   flex-direction: column;
@@ -120,6 +124,14 @@
 
 .feedback-panel-log .console-log {
   height: 420px;
+}
+
+.registration-log-console--immersive .card {
+  min-height: 560px;
+}
+
+.registration-log-console--immersive .console-log {
+  height: 560px;
 }
 
 .single-progress-card {

@@ -153,6 +153,17 @@ def test_registration_workbench_stylesheet_stretches_console_log_for_taller_log_
     assert "height: 420px" in stylesheet
 
 
+def test_registration_running_view_removes_tips_sidebar_and_keeps_log_full_width():
+    template = Path("templates/index.html").read_text(encoding="utf-8")
+    stylesheet = Path("static/css/registration_workbench.css").read_text(encoding="utf-8")
+
+    assert "运行提示" not in template
+    assert "registration-running-side" not in template
+    assert ".registration-workbench-layout--running" in stylesheet
+    assert "registration-log-console--immersive" in stylesheet
+    assert "height: 560px" in stylesheet
+
+
 def test_app_js_switches_registration_workbench_views():
     result = run_app_js_scenario("switch_workbench_view")
     assert result == {
@@ -187,6 +198,26 @@ def test_app_js_posts_count_zero_for_unlimited_mode():
 def test_app_js_posts_selected_pipeline_key_for_batch_request():
     result = run_app_js_scenario("pipeline_batch_request")
     assert result["request_payload"]["pipeline_key"] == "codexgen_pipeline"
+
+
+def test_app_js_single_registration_only_shows_single_panel_in_running_view():
+    result = run_app_js_scenario("single_running_presentation")
+    assert result == {
+        "active_view": "running",
+        "single_panel_hidden": False,
+        "batch_panel_hidden": True,
+        "log_panel_immersive": True,
+    }
+
+
+def test_app_js_batch_registration_only_shows_batch_panel_in_running_view():
+    result = run_app_js_scenario("batch_running_presentation")
+    assert result == {
+        "active_view": "running",
+        "single_panel_hidden": True,
+        "batch_panel_hidden": False,
+        "log_panel_immersive": True,
+    }
 
 
 def test_app_js_keeps_batch_submission_after_reset_when_ui_mode_still_batch():

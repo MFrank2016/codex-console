@@ -381,6 +381,9 @@
                             <div class="empty-state-icon">❌</div>
                             <div class="empty-state-title">运行记录加载失败</div>
                             <div class="empty-state-description">${escapeHtml(error?.message || '请求失败')}</div>
+                            <div style="margin-top: var(--spacing-sm);">
+                                <button class="btn btn-secondary btn-sm" type="button" onclick="window.runCenterPage && window.runCenterPage.loadRuns()">重新加载运行记录</button>
+                            </div>
                         </div>
                     </td>
                 </tr>
