@@ -75,7 +75,40 @@ def test_registration_repository_create_run_does_not_commit_implicitly(temp_db):
     assert repository.get_run(created.id) is None
 
 
-def test_registration_repository_bulk_lookup_returns_latest_rows_by_task_uuid(temp_db):
+def test_registration_repository_get_run_by_task_uuid_uses_latest_id_desc_order():
+    class _FakeQuery:
+        def __init__(self):
+            self.order_by_clause = None
+            self.result = object()
+
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def order_by(self, clause):
+            self.order_by_clause = clause
+            return self
+
+        def first(self):
+            return self.result
+
+    class _FakeSession:
+        def __init__(self, query_obj):
+            self.query_obj = query_obj
+
+        def query(self, _model):
+            return self.query_obj
+
+    fake_query = _FakeQuery()
+    repository = RegistrationRepository(_FakeSession(fake_query))
+
+    loaded = repository.get_run_by_task_uuid("task-ordered")
+
+    assert loaded is fake_query.result
+    assert fake_query.order_by_clause is not None
+    assert "DESC" in str(fake_query.order_by_clause).upper()
+
+
+def test_registration_repository_bulk_lookup_returns_keyed_rows_by_task_uuid(temp_db):
     repository = RegistrationRepository(temp_db)
     first = repository.create_run(task_uuid="task-repo-2a", batch_id="batch-a", trigger_source="manual")
     second = repository.create_run(task_uuid="task-repo-2b", batch_id="batch-b", trigger_source="manual")
@@ -108,3 +141,14 @@ def test_registration_repository_refuses_to_override_terminal_status(temp_db):
     assert updated is not None
     assert updated.status == "completed"
     assert updated.error_message in (None, "")
+
+
+def test_registration_repository_append_event_rejects_orphan_run_id(temp_db):
+    repository = RegistrationRepository(temp_db)
+
+    with pytest.raises(ValueError, match="run_id=999999"):
+        repository.append_event(
+            run_id=999999,
+            level="info",
+            message="orphan event",
+        )

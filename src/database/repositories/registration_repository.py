@@ -23,7 +23,12 @@ class RegistrationRepository:
         return self.session.query(RegistrationRun).filter(RegistrationRun.id == run_id).first()
 
     def get_run_by_task_uuid(self, task_uuid: str) -> RegistrationRun | None:
-        return self.session.query(RegistrationRun).filter(RegistrationRun.task_uuid == task_uuid).first()
+        return (
+            self.session.query(RegistrationRun)
+            .filter(RegistrationRun.task_uuid == task_uuid)
+            .order_by(RegistrationRun.id.desc())
+            .first()
+        )
 
     def list_latest_runs_by_task_uuids(self, task_uuids: list[str]) -> dict[str, RegistrationRun]:
         ordered_task_uuids = list(dict.fromkeys(task_uuids))
