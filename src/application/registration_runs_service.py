@@ -53,19 +53,23 @@ class RegistrationRunsService:
 
     def mark_started(self, run_id: int, *, commit: bool = False):
         run = self.get_run(run_id)
-        if run is None or run.status in self.TERMINAL_STATUSES:
-            return run
+        if run is None:
+            return None
+        if run.status in self.TERMINAL_STATUSES:
+            return self._persist(run, commit=commit)
         if run.started_at is not None:
-            return run
+            return self._persist(run, commit=commit)
         run = self.repository.update_run(run_id, started_at=utc_now_naive())
         return self._persist(run, commit=commit)
 
     def mark_running(self, run_id: int, *, commit: bool = False):
         run = self.get_run(run_id)
-        if run is None or run.status in self.TERMINAL_STATUSES:
-            return run
+        if run is None:
+            return None
+        if run.status in self.TERMINAL_STATUSES:
+            return self._persist(run, commit=commit)
         if run.status == "running" and run.started_at is not None:
-            return run
+            return self._persist(run, commit=commit)
         started_at = run.started_at or utc_now_naive()
         run = self.repository.update_status_if_not_terminal(
             run_id,
@@ -76,8 +80,10 @@ class RegistrationRunsService:
 
     def mark_completed(self, run_id: int, *, commit: bool = False):
         run = self.get_run(run_id)
-        if run is None or run.status in self.TERMINAL_STATUSES:
-            return run
+        if run is None:
+            return None
+        if run.status in self.TERMINAL_STATUSES:
+            return self._persist(run, commit=commit)
         run = self.repository.update_status_if_not_terminal(
             run_id,
             status="completed",
@@ -89,8 +95,10 @@ class RegistrationRunsService:
 
     def mark_failed(self, run_id: int, *, error_message: str | None = None, commit: bool = False):
         run = self.get_run(run_id)
-        if run is None or run.status in self.TERMINAL_STATUSES:
-            return run
+        if run is None:
+            return None
+        if run.status in self.TERMINAL_STATUSES:
+            return self._persist(run, commit=commit)
         run = self.repository.update_status_if_not_terminal(
             run_id,
             status="failed",
@@ -102,8 +110,10 @@ class RegistrationRunsService:
 
     def mark_cancelled(self, run_id: int, *, error_message: str | None = None, commit: bool = False):
         run = self.get_run(run_id)
-        if run is None or run.status in self.TERMINAL_STATUSES:
-            return run
+        if run is None:
+            return None
+        if run.status in self.TERMINAL_STATUSES:
+            return self._persist(run, commit=commit)
         run = self.repository.update_status_if_not_terminal(
             run_id,
             status="cancelled",

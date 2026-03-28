@@ -102,6 +102,20 @@ def test_registration_runs_service_mark_started_is_idempotent(temp_db):
     assert second.status == "pending"
 
 
+def test_registration_runs_service_mark_started_noop_commit_true_commits_boundary(temp_db):
+    service = RegistrationRunsService(temp_db)
+
+    run = service.create_run(task_uuid="task-started-commit-boundary", batch_id=None, trigger_source="manual", commit=True)
+    service.mark_started(run.id, commit=False)
+    service.mark_started(run.id, commit=True)
+    temp_db.rollback()
+
+    loaded = service.get_run(run.id)
+    assert loaded is not None
+    assert loaded.status == "pending"
+    assert loaded.started_at is not None
+
+
 def test_registration_runs_service_terminal_status_is_immutable(temp_db):
     service = RegistrationRunsService(temp_db)
 
@@ -117,6 +131,21 @@ def test_registration_runs_service_terminal_status_is_immutable(temp_db):
     assert updated.completed_at == completed.completed_at
     assert updated.started_at == completed.started_at
     assert updated.error_message in (None, "")
+
+
+def test_registration_runs_service_terminal_noop_commit_true_commits_boundary(temp_db):
+    service = RegistrationRunsService(temp_db)
+
+    run = service.create_run(task_uuid="task-terminal-commit-boundary", batch_id=None, trigger_source="manual", commit=True)
+    service.mark_completed(run.id, commit=False)
+    service.mark_failed(run.id, error_message="late-failed", commit=True)
+    temp_db.rollback()
+
+    loaded = service.get_run(run.id)
+    assert loaded is not None
+    assert loaded.status == "completed"
+    assert loaded.completed_at is not None
+    assert loaded.error_message in (None, "")
 
 
 def test_registration_runs_service_get_run_by_task_uuid(temp_db):
