@@ -303,6 +303,71 @@ def test_registration_service_default_run_persistence_survives_fresh_session(db_
         fresh_session.close()
 
 
+def test_registration_service_keeps_completed_terminal_state_when_result_build_raises(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    task_uuid = "task-terminal-idempotent-after-result-build-error"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid, pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        return RegistrationJobResult(
+            success=True,
+            account_id=606,
+            email="terminal-stable@example.com",
+            result_payload={"success": True, "email": "terminal-stable@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+    original_build_result_for_task = service.build_result_for_task
+    state = {"raised": False}
+
+    def flaky_build_result_for_task(task_uuid_arg, *, db=None, job_result=None):
+        if (
+            not state["raised"]
+            and db is not None
+            and job_result is not None
+            and job_result.success
+        ):
+            state["raised"] = True
+            raise RuntimeError("build-result-after-terminal-boom")
+        return original_build_result_for_task(task_uuid_arg, db=db, job_result=job_result)
+
+    service.build_result_for_task = flaky_build_result_for_task
+
+    result = service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    fresh_session = sessionmaker(bind=temp_db.get_bind())()
+    try:
+        run, events = _load_run_and_events(fresh_session, task_uuid)
+        persisted_task = crud.get_registration_task_by_uuid(fresh_session, task_uuid)
+    finally:
+        fresh_session.close()
+
+    assert persisted_task is not None
+    assert persisted_task.status == "completed"
+    assert persisted_task.pipeline_status == "completed"
+    assert run.status == "completed"
+    assert [event.message for event in events] == ["queued", "started", "running", "completed"]
+    assert [event.message for event in events].count("failed") == 0
+    assert result.task is not None
+    assert result.task.status == "completed"
+    assert result.run is not None
+    assert result.run.status == "completed"
+    assert task_manager.get_status(task_uuid)["status"] == "completed"
+    assert task_manager._closed_streams == [(task_uuid, "completed")]
+
+
 
 def test_registration_service_commits_queued_checkpoint_before_job_runner(db_factory, temp_db):
     from src.application.registration_service import RegistrationService

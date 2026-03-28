@@ -305,20 +305,27 @@ class RegistrationService:
             *,
             status: str,
             error_message: str | None = None,
-        ) -> None:
+        ) -> RegistrationRun | None:
+            run = runs_service.get_run(run_id)
+            if run is None:
+                return None
+            if run.status in runs_service.TERMINAL_STATUSES:
+                return run
+
             if status == "completed":
-                runs_service.mark_completed(run_id, commit=False)
+                run = runs_service.mark_completed(run_id, commit=False)
                 level = "info"
             elif status == "failed":
-                runs_service.mark_failed(run_id, error_message=error_message, commit=False)
+                run = runs_service.mark_failed(run_id, error_message=error_message, commit=False)
                 level = "error"
             elif status == "cancelled":
-                runs_service.mark_cancelled(run_id, error_message=error_message, commit=False)
+                run = runs_service.mark_cancelled(run_id, error_message=error_message, commit=False)
                 level = "warning"
             else:
                 raise ValueError(f"unsupported terminal checkpoint status: {status}")
 
             runs_service.append_event(run_id, level=level, message=status, commit=True)
+            return run
 
         try:
             with service.db_factory() as db:
@@ -520,31 +527,50 @@ class RegistrationService:
                 return service.build_result_for_task(task_uuid, db=db, job_result=job_result)
         except Exception as exc:
             logger.exception("注册任务异常: %s", task_uuid)
+            persisted_task = None
+            final_status = "failed"
+            final_error = str(exc)
             try:
                 with service.db_factory() as db:
                     runs_service = RegistrationRunsService(db)
                     run = runs_service.get_run_by_task_uuid(task_uuid)
                     if run is None:
                         run = _commit_queued_checkpoint(runs_service)
-                    crud.update_registration_task(
-                        db,
-                        task_uuid,
-                        status="failed",
-                        pipeline_status="failed",
-                        completed_at=now(),
-                        error_message=str(exc),
-                    )
-                    _commit_terminal_checkpoint(
-                        runs_service,
-                        run.id,
-                        status="failed",
-                        error_message=str(exc),
-                    )
+                    if run is not None and run.status not in runs_service.TERMINAL_STATUSES:
+                        persisted_task = crud.update_registration_task(
+                            db,
+                            task_uuid,
+                            status="failed",
+                            pipeline_status="failed",
+                            completed_at=now(),
+                            error_message=str(exc),
+                        )
+                        run = _commit_terminal_checkpoint(
+                            runs_service,
+                            run.id,
+                            status="failed",
+                            error_message=str(exc),
+                        ) or run
+                    else:
+                        persisted_task = crud.get_registration_task_by_uuid(db, task_uuid)
+
+                    if run is not None and run.status in runs_service.TERMINAL_STATUSES:
+                        final_status = run.status
+                        final_error = run.error_message or final_error
+                    elif persisted_task is not None and persisted_task.status in runs_service.TERMINAL_STATUSES:
+                        final_status = persisted_task.status
             except Exception:
                 logger.exception("注册任务异常后写回失败: %s", task_uuid)
 
-            service.task_manager.update_status(task_uuid, "failed", error=str(exc))
-            _close_task_stream("failed")
+            status_snapshot = getattr(self.task_manager, "get_status", lambda _task_uuid: None)(task_uuid) or {}
+            if status_snapshot.get("status") not in RegistrationRunsService.TERMINAL_STATUSES:
+                extra: dict[str, Any] = {}
+                if final_status == "failed" and final_error:
+                    extra["error"] = final_error
+                if final_status == "completed" and persisted_task is not None and persisted_task.email_address:
+                    extra["email"] = persisted_task.email_address
+                self.task_manager.update_status(task_uuid, final_status, **extra)
+                _close_task_stream(final_status)
             failed_result = RegistrationJobResult(success=False, error_message=str(exc))
             return service.build_result_for_task(task_uuid, job_result=failed_result)
 
