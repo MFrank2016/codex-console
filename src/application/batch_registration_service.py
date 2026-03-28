@@ -273,13 +273,12 @@ class BatchRegistrationService:
     def build_summary(self, batch_id: str, *, task_uuids: list[str] | None = None) -> BatchExecutionSummary:
         state = self.batch_tasks.get(batch_id, {})
         effective_task_uuids = list(task_uuids or state.get("task_uuids", []))
-        runs: list[RegistrationRun] = []
-        with self.db_factory() as db:
-            runs_service = RegistrationRunsService(db)
-            for task_uuid in effective_task_uuids:
-                run = runs_service.get_run_by_task_uuid(task_uuid)
-                if run is not None:
-                    runs.append(run)
+        runs_by_task_uuid = self._list_latest_runs_by_task_uuids(effective_task_uuids)
+        runs = [
+            runs_by_task_uuid[task_uuid]
+            for task_uuid in effective_task_uuids
+            if task_uuid in runs_by_task_uuid
+        ]
 
         return BatchExecutionSummary(
             batch_id=batch_id,
@@ -297,10 +296,19 @@ class BatchRegistrationService:
             runs=runs,
         )
 
+    def _list_latest_runs_by_task_uuids(self, task_uuids: list[str]) -> dict[str, RegistrationRun]:
+        ordered_task_uuids = list(dict.fromkeys(task_uuids))
+        if not ordered_task_uuids:
+            return {}
+
+        with self.db_factory() as db:
+            runs_service = RegistrationRunsService(db)
+            return runs_service.repository.list_latest_runs_by_task_uuids(ordered_task_uuids)
+
     def _load_outcome_status(self, task_uuid: str) -> str | None:
         with self.db_factory() as db:
             runs_service = RegistrationRunsService(db)
-            run = runs_service.get_run_by_task_uuid(task_uuid)
+            run = runs_service.repository.list_latest_runs_by_task_uuids([task_uuid]).get(task_uuid)
             if run is not None:
                 return run.status
             task = crud.get_registration_task(db, task_uuid)
@@ -370,10 +378,13 @@ class BatchRegistrationService:
             if task is None:
                 return
             runs_service = RegistrationRunsService(db)
-            run = runs_service.get_run_by_task_uuid(task_uuid)
-            if run is None:
-                run = runs_service.create_run(task_uuid=task_uuid, batch_id=batch_id, trigger_source="batch")
-            crud.update_registration_task(
+            run = runs_service.create_run(
+                task_uuid=task_uuid,
+                batch_id=batch_id,
+                trigger_source="batch",
+                commit=False,
+            )
+            crud.update_registration_task_fields(
                 db,
                 task_uuid,
                 status="failed",
@@ -381,8 +392,8 @@ class BatchRegistrationService:
                 completed_at=self.utc_now_provider(),
                 error_message=error_message,
             )
-            runs_service.mark_failed(run.id, error_message=error_message)
-            runs_service.append_event(run.id, level="error", message="failed")
+            runs_service.mark_failed(run.id, error_message=error_message, commit=False)
+            runs_service.append_event(run.id, level="error", message="failed", commit=True)
 
         if hasattr(self.task_manager, "update_status"):
             self.task_manager.update_status(task_uuid, "failed", error=error_message)

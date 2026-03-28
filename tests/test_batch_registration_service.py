@@ -8,7 +8,7 @@ from src.application.proxy_dispatch_service import ResolvedProxyCandidate
 from src.application.registration_runs_service import RegistrationRunsService
 from src.core.time import utc_now_naive
 from src.database import crud
-from src.database.models import Base
+from src.database.models import Base, RegistrationRunEvent
 from src.database.session import DatabaseSessionManager
 
 
@@ -98,6 +98,133 @@ class FakeTaskManager:
 
     def close_batch_stream(self, batch_id, final_status):
         self._closed_streams.append((batch_id, final_status))
+
+
+def test_batch_registration_service_build_summary_uses_bulk_run_lookup(
+    db_factory, temp_db, monkeypatch
+):
+    from src.application.batch_registration_service import BatchRegistrationService
+    from src.database.repositories.registration_repository import RegistrationRepository
+
+    batch_id = "batch-summary-bulk"
+    task_uuids: list[str] = []
+    expected_run_ids: list[int] = []
+    for idx in range(3):
+        task_uuid = f"summary-task-{idx}"
+        crud.create_registration_task(temp_db, task_uuid=task_uuid)
+        run = RegistrationRunsService(temp_db).create_run(
+            task_uuid=task_uuid,
+            batch_id=batch_id,
+            trigger_source="batch",
+        )
+        task_uuids.append(task_uuid)
+        expected_run_ids.append(run.id)
+
+    bulk_calls: list[list[str]] = []
+    original_bulk_lookup = RegistrationRepository.list_latest_runs_by_task_uuids
+
+    def track_bulk_lookup(self, ordered_task_uuids):
+        bulk_calls.append(list(ordered_task_uuids))
+        return original_bulk_lookup(self, ordered_task_uuids)
+
+    def fail_on_single_lookup(self, task_uuid):
+        raise AssertionError(f"unexpected per-task run lookup: {task_uuid}")
+
+    monkeypatch.setattr(
+        RegistrationRepository,
+        "list_latest_runs_by_task_uuids",
+        track_bulk_lookup,
+    )
+    monkeypatch.setattr(
+        RegistrationRunsService,
+        "get_run_by_task_uuid",
+        fail_on_single_lookup,
+    )
+
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={},
+    )
+    service.init_batch_state(batch_id, task_uuids)
+
+    summary = service.build_summary(batch_id)
+
+    assert bulk_calls == [task_uuids]
+    assert [run.task_uuid for run in summary.runs] == task_uuids
+    assert [run.id for run in summary.runs] == expected_run_ids
+
+
+def test_batch_registration_service_proxy_pool_failure_persists_failed_run_and_event(
+    db_factory, temp_db, monkeypatch
+):
+    from src.application.batch_registration_service import BatchRegistrationService
+
+    task_uuid = "proxy-failure-task"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+
+    commit_calls: list[tuple[str, bool]] = []
+    original_create_run = RegistrationRunsService.create_run
+    original_mark_failed = RegistrationRunsService.mark_failed
+    original_append_event = RegistrationRunsService.append_event
+
+    def fail_on_single_lookup(self, task_uuid):
+        raise AssertionError(f"unexpected single run lookup for {task_uuid}")
+
+    def track_create_run(self, *args, **kwargs):
+        commit_calls.append(("create_run", kwargs.get("commit")))
+        return original_create_run(self, *args, **kwargs)
+
+    def track_mark_failed(self, *args, **kwargs):
+        commit_calls.append(("mark_failed", kwargs.get("commit")))
+        return original_mark_failed(self, *args, **kwargs)
+
+    def track_append_event(self, *args, **kwargs):
+        commit_calls.append(("append_event", kwargs.get("commit")))
+        return original_append_event(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        RegistrationRunsService,
+        "get_run_by_task_uuid",
+        fail_on_single_lookup,
+    )
+    monkeypatch.setattr(RegistrationRunsService, "create_run", track_create_run)
+    monkeypatch.setattr(RegistrationRunsService, "mark_failed", track_mark_failed)
+    monkeypatch.setattr(RegistrationRunsService, "append_event", track_append_event)
+
+    task_manager = FakeTaskManager()
+    service = BatchRegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        batch_tasks_store={},
+    )
+
+    service._mark_proxy_pool_failure(
+        batch_id="batch-proxy-failure",
+        task_uuid=task_uuid,
+        error_message="batch proxy pool exhausted: batch-proxy-failure",
+    )
+
+    run = RegistrationRunsService(temp_db).repository.get_run_by_task_uuid(task_uuid)
+    assert run is not None
+    assert run.status == "failed"
+    assert run.batch_id == "batch-proxy-failure"
+    assert run.error_message == "batch proxy pool exhausted: batch-proxy-failure"
+
+    events = (
+        temp_db.query(RegistrationRunEvent)
+        .filter(RegistrationRunEvent.run_id == run.id)
+        .order_by(RegistrationRunEvent.id.asc())
+        .all()
+    )
+    assert [(event.level, event.message) for event in events] == [("error", "failed")]
+    assert commit_calls == [
+        ("create_run", False),
+        ("mark_failed", False),
+        ("append_event", True),
+    ]
+    assert task_manager._task_status[task_uuid]["status"] == "failed"
+    assert "batch proxy pool exhausted" in task_manager.get_logs(task_uuid)[0]
 
 
 @pytest.mark.anyio
