@@ -133,6 +133,14 @@ const TASK_CONFIG_SCHEMAS = {
             readonly_key: true,
         },
         {
+            key: 'pipeline_key',
+            key_description: '补号使用的注册流水线',
+            value_type: 'string',
+            default_value: 'codexgen_pipeline',
+            value_description: '默认使用 codexgen_pipeline，可切换为 current_pipeline',
+            readonly_key: true,
+        },
+        {
             key: 'email_service_type',
             key_description: '注册使用的邮箱服务类型',
             value_type: 'string',

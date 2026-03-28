@@ -88,6 +88,22 @@ def test_validate_refill_config_rejects_non_positive_concurrency():
         )
 
 
+def test_validate_refill_config_rejects_unsupported_pipeline_key():
+    with pytest.raises(ValueError, match="pipeline_key"):
+        validate_plan_payload(
+            task_type="cpa_refill",
+            trigger_type="interval",
+            config={
+                "target_valid_count": 50,
+                "max_refill_count": 10,
+                "max_consecutive_failures": 3,
+                "pipeline_key": "unknown_pipeline",
+            },
+            interval_value=1,
+            interval_unit="hours",
+        )
+
+
 def test_validate_cleanup_config_rejects_negative_max_probe_count():
     with pytest.raises(ValueError, match="max_probe_count"):
         validate_plan_payload(

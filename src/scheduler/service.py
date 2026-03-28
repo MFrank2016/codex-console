@@ -7,6 +7,7 @@ from croniter import croniter
 
 SUPPORTED_TRIGGER_TYPES = {"cron", "interval"}
 SUPPORTED_INTERVAL_UNITS = {"minutes", "hours"}
+SUPPORTED_REFILL_PIPELINE_KEYS = {"current_pipeline", "codexgen_pipeline"}
 
 
 def _validate_optional_non_negative_int(config: dict[str, Any], key: str) -> None:
@@ -38,6 +39,20 @@ def _validate_optional_positive_int(config: dict[str, Any], key: str) -> None:
 
     if parsed <= 0:
         raise ValueError(f"{key} must be a positive integer")
+
+
+def _validate_optional_pipeline_key(config: dict[str, Any], key: str) -> None:
+    if key not in config:
+        return
+
+    raw_value = str(config.get(key) or "").strip()
+    if not raw_value:
+        return
+
+    if raw_value not in SUPPORTED_REFILL_PIPELINE_KEYS:
+        raise ValueError(
+            f"{key} must be one of {', '.join(sorted(SUPPORTED_REFILL_PIPELINE_KEYS))}"
+        )
 
 
 def validate_trigger_payload(
@@ -94,3 +109,4 @@ def validate_plan_payload(
         if not config.get("max_consecutive_failures"):
             raise ValueError("max_consecutive_failures is required")
         _validate_optional_positive_int(config, "concurrency")
+        _validate_optional_pipeline_key(config, "pipeline_key")

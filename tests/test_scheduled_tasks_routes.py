@@ -220,6 +220,29 @@ def test_create_scheduled_plan_route_rejects_invalid_refill_config(client, seede
     assert "max_consecutive_failures" in response.json()["detail"]
 
 
+def test_create_scheduled_plan_route_rejects_invalid_refill_pipeline_key(client, seeded_scheduled_data):
+    response = client.post(
+        "/api/scheduled-plans",
+        json={
+            "name": "invalid refill pipeline",
+            "task_type": "cpa_refill",
+            "cpa_service_id": seeded_scheduled_data["secondary_service"].id,
+            "trigger_type": "cron",
+            "cron_expression": "0 8 * * *",
+            "config": {
+                "target_valid_count": 50,
+                "max_refill_count": 10,
+                "max_consecutive_failures": 3,
+                "pipeline_key": "unknown_pipeline",
+            },
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "pipeline_key" in response.json()["detail"]
+
+
 def test_manual_run_route_rejects_when_plan_is_currently_running(client, seeded_scheduled_data):
     plan_id = seeded_scheduled_data["plan"].id
     client.app.state.scheduler_engine._plan_locks.add(plan_id)

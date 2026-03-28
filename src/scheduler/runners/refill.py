@@ -17,6 +17,8 @@ AUTO_DISABLE_REASON = "consecutive_failures_reached"
 _PROGRESS_EVERY = 20
 _DEFAULT_REFILL_CONCURRENCY = 5
 _MAX_REFILL_CONCURRENCY = 50
+_DEFAULT_REFILL_PIPELINE_KEY = "codexgen_pipeline"
+_SUPPORTED_REFILL_PIPELINE_KEYS = {"current_pipeline", "codexgen_pipeline"}
 
 
 def _parse_int(value: Any, default: int = 0) -> int:
@@ -40,12 +42,20 @@ def _resolve_refill_concurrency(value: Any) -> int:
     return min(parsed, _MAX_REFILL_CONCURRENCY)
 
 
+def _resolve_refill_pipeline_key(value: Any) -> str:
+    pipeline_key = str(value or "").strip()
+    if pipeline_key in _SUPPORTED_REFILL_PIPELINE_KEYS:
+        return pipeline_key
+    return _DEFAULT_REFILL_PIPELINE_KEY
+
+
 def _run_refill_registration_attempt(
     *,
     email_service_type: str,
     email_service_id: int | None,
     email_service_config: dict[str, Any] | None,
     proxy: str | None,
+    pipeline_key: str,
 ):
     with get_db() as db:
         return run_registration_job(
@@ -54,6 +64,7 @@ def _run_refill_registration_attempt(
             email_service_id=email_service_id,
             proxy=proxy,
             email_service_config=email_service_config,
+            pipeline_key=pipeline_key,
             auto_upload=False,
         )
 
@@ -149,6 +160,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
             max_refill_count = max(0, _parse_int(config.get("max_refill_count"), 0))
             max_consecutive_failures = max(1, _parse_int(config.get("max_consecutive_failures"), 1))
             concurrency = _resolve_refill_concurrency(config.get("concurrency"))
+            pipeline_key = _resolve_refill_pipeline_key(config.get("pipeline_key"))
             email_service_type = str(config.get("email_service_type") or "tempmail")
             email_service_id = config.get("email_service_id")
             email_service_config = config.get("email_service_config")
@@ -163,6 +175,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
 
         append_run_log(run_id, f"refill runner start (plan_id={plan_id})", level="INFO")
         append_run_log(run_id, f"refill concurrency resolved (concurrency={concurrency})", level="INFO")
+        append_run_log(run_id, f"refill pipeline resolved (pipeline_key={pipeline_key})", level="INFO")
 
         current_valid_count = count_valid_accounts(service_payload)
         refill_target = _resolve_refill_target(
@@ -206,6 +219,7 @@ def run_refill_plan(*, plan_id: int, run_id: int) -> dict[str, Any]:
                         email_service_id=email_service_id,
                         email_service_config=email_service_config,
                         proxy=proxy,
+                        pipeline_key=pipeline_key,
                     )
                     for _ in range(batch_size)
                 ]

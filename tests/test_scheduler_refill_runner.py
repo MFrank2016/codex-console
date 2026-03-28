@@ -285,3 +285,53 @@ def test_refill_runner_honors_explicit_concurrency_limit(temp_db, monkeypatch):
 
     assert summary["uploaded_success"] == 3
     assert state["max_active"] == 1
+
+
+def test_refill_runner_defaults_pipeline_key_to_codexgen_pipeline(temp_db, monkeypatch):
+    _, plan, run = _create_refill_plan_and_run(
+        temp_db,
+        target_valid_count=1,
+        max_refill_count=1,
+        max_consecutive_failures=3,
+    )
+    captured: list[dict] = []
+
+    monkeypatch.setattr(refill_runner, "count_valid_accounts", lambda *a, **k: 0)
+
+    def _run_registration_job(**kwargs):
+        captured.append(kwargs)
+        return RegistrationJobResult(success=True, account_id=101)
+
+    monkeypatch.setattr(refill_runner, "run_registration_job", _run_registration_job)
+    monkeypatch.setattr(refill_runner, "upload_account_to_bound_cpa", lambda **_: (True, "ok"))
+
+    summary = run_refill_plan(plan_id=plan.id, run_id=run.id)
+
+    assert summary["uploaded_success"] == 1
+    assert captured[0]["pipeline_key"] == "codexgen_pipeline"
+
+
+def test_refill_runner_honors_explicit_pipeline_key_override(temp_db, monkeypatch):
+    _, plan, run = _create_refill_plan_and_run(
+        temp_db,
+        target_valid_count=1,
+        max_refill_count=1,
+        max_consecutive_failures=3,
+    )
+    plan.config = {**(plan.config or {}), "pipeline_key": "current_pipeline"}
+    temp_db.commit()
+    captured: list[dict] = []
+
+    monkeypatch.setattr(refill_runner, "count_valid_accounts", lambda *a, **k: 0)
+
+    def _run_registration_job(**kwargs):
+        captured.append(kwargs)
+        return RegistrationJobResult(success=True, account_id=202)
+
+    monkeypatch.setattr(refill_runner, "run_registration_job", _run_registration_job)
+    monkeypatch.setattr(refill_runner, "upload_account_to_bound_cpa", lambda **_: (True, "ok"))
+
+    summary = run_refill_plan(plan_id=plan.id, run_id=run.id)
+
+    assert summary["uploaded_success"] == 1
+    assert captured[0]["pipeline_key"] == "current_pipeline"
