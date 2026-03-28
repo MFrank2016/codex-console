@@ -80,14 +80,14 @@ def test_registration_repository_bulk_lookup_returns_latest_rows_by_task_uuid(te
     first = repository.create_run(task_uuid="task-repo-2a", batch_id="batch-a", trigger_source="manual")
     second = repository.create_run(task_uuid="task-repo-2b", batch_id="batch-b", trigger_source="manual")
 
-    rows = repository.list_latest_runs_by_task_uuids(
+    rows_by_task_uuid = repository.list_latest_runs_by_task_uuids(
         ["task-repo-2a", "task-repo-2b", "task-repo-2a", "task-missing"]
     )
-    by_task_uuid = {row.task_uuid: row for row in rows}
 
-    assert set(by_task_uuid.keys()) == {"task-repo-2a", "task-repo-2b"}
-    assert by_task_uuid["task-repo-2a"].id == first.id
-    assert by_task_uuid["task-repo-2b"].id == second.id
+    assert isinstance(rows_by_task_uuid, dict)
+    assert set(rows_by_task_uuid.keys()) == {"task-repo-2a", "task-repo-2b"}
+    assert rows_by_task_uuid["task-repo-2a"].id == first.id
+    assert rows_by_task_uuid["task-repo-2b"].id == second.id
 
 
 def test_registration_repository_refuses_to_override_terminal_status(temp_db):

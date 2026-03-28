@@ -25,10 +25,10 @@ class RegistrationRepository:
     def get_run_by_task_uuid(self, task_uuid: str) -> RegistrationRun | None:
         return self.session.query(RegistrationRun).filter(RegistrationRun.task_uuid == task_uuid).first()
 
-    def list_latest_runs_by_task_uuids(self, task_uuids: list[str]) -> list[RegistrationRun]:
+    def list_latest_runs_by_task_uuids(self, task_uuids: list[str]) -> dict[str, RegistrationRun]:
         ordered_task_uuids = list(dict.fromkeys(task_uuids))
         if not ordered_task_uuids:
-            return []
+            return {}
 
         latest_ids_subquery = (
             self.session.query(func.max(RegistrationRun.id).label("latest_id"))
@@ -41,9 +41,12 @@ class RegistrationRepository:
             .join(latest_ids_subquery, RegistrationRun.id == latest_ids_subquery.c.latest_id)
             .all()
         )
-        position = {task_uuid: index for index, task_uuid in enumerate(ordered_task_uuids)}
-        rows.sort(key=lambda row: position.get(row.task_uuid, len(position)))
-        return rows
+        rows_by_task_uuid = {row.task_uuid: row for row in rows}
+        return {
+            task_uuid: rows_by_task_uuid[task_uuid]
+            for task_uuid in ordered_task_uuids
+            if task_uuid in rows_by_task_uuid
+        }
 
     def update_run(self, run_id: int, **kwargs) -> RegistrationRun | None:
         row = self.get_run(run_id)
@@ -108,7 +111,7 @@ def get_registration_run_by_task_uuid(session: Session, task_uuid: str) -> Regis
     return _repository(session).get_run_by_task_uuid(task_uuid)
 
 
-def list_latest_runs_by_task_uuids(session: Session, task_uuids: list[str]) -> list[RegistrationRun]:
+def list_latest_runs_by_task_uuids(session: Session, task_uuids: list[str]) -> dict[str, RegistrationRun]:
     return _repository(session).list_latest_runs_by_task_uuids(task_uuids)
 
 
