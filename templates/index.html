@@ -446,6 +446,117 @@
             </div>
         </article>
 
+        <article id="registration-failure-summary" class="workspace-panel feedback-panel">
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h3>📉 失败分析</h3>
+                        <p class="panel-subtitle">查看最近失败尝试、错误分布与代理 / 邮箱后缀画像。</p>
+                    </div>
+                    <button type="button" id="refresh-failure-analysis-btn" class="btn btn-secondary btn-sm">刷新</button>
+                </div>
+                <div class="card-body">
+                    <div class="failure-summary-grid">
+                        <div class="metric-card">
+                            <span class="metric-label">失败尝试</span>
+                            <strong id="failure-total-attempts" class="metric-value">0</strong>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">今日失败</span>
+                            <strong id="failure-today-attempts" class="metric-value">0</strong>
+                        </div>
+                        <div class="metric-card failure-top-card">
+                            <span class="metric-label">Top 邮箱后缀</span>
+                            <ul id="failure-top-email-suffixes" class="failure-top-list">
+                                <li>—</li>
+                            </ul>
+                        </div>
+                        <div class="metric-card failure-top-card">
+                            <span class="metric-label">Top 错误码</span>
+                            <ul id="failure-top-error-codes" class="failure-top-list">
+                                <li>—</li>
+                            </ul>
+                        </div>
+                        <div class="metric-card failure-top-card">
+                            <span class="metric-label">Top 代理 IP</span>
+                            <ul id="failure-top-proxy-ips" class="failure-top-list">
+                                <li>—</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <form id="registration-failure-filter-form" class="filter-panel failure-filter-panel">
+                        <div class="filter-panel-grid failure-filter-grid">
+                            <div class="form-group">
+                                <label for="failure-filter-pipeline-key">流水线</label>
+                                <select id="failure-filter-pipeline-key" name="pipeline_key">
+                                    <option value="">全部</option>
+                                    <option value="current_pipeline">current_pipeline</option>
+                                    <option value="codexgen_pipeline">codexgen_pipeline</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="failure-filter-registration-mode">注册模式</label>
+                                <select id="failure-filter-registration-mode" name="registration_mode">
+                                    <option value="">全部</option>
+                                    <option value="single">single</option>
+                                    <option value="batch">batch</option>
+                                    <option value="unlimited">unlimited</option>
+                                    <option value="outlook_batch">outlook_batch</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="failure-filter-email-suffix">邮箱后缀</label>
+                                <input type="text" id="failure-filter-email-suffix" name="email_suffix" placeholder="如 blocked.test">
+                            </div>
+                            <div class="form-group">
+                                <label for="failure-filter-error-keyword">错误关键词</label>
+                                <input type="text" id="failure-filter-error-keyword" name="error_keyword" placeholder="如 registration_disallowed">
+                            </div>
+                            <div class="form-group">
+                                <label for="failure-filter-failed-from">失败开始</label>
+                                <input type="datetime-local" id="failure-filter-failed-from" name="failed_from">
+                            </div>
+                            <div class="form-group">
+                                <label for="failure-filter-failed-to">失败结束</label>
+                                <input type="datetime-local" id="failure-filter-failed-to" name="failed_to">
+                            </div>
+                        </div>
+                        <div class="filter-panel-actions">
+                            <button type="submit" class="btn btn-primary btn-sm">应用筛选</button>
+                        </div>
+                    </form>
+
+                    <div class="table-shell failure-analysis-table">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>失败时间</th>
+                                    <th>邮箱</th>
+                                    <th>后缀</th>
+                                    <th>模式</th>
+                                    <th>代理 IP</th>
+                                    <th>错误码</th>
+                                    <th>详情</th>
+                                </tr>
+                            </thead>
+                            <tbody id="registration-failure-table-body">
+                                <tr>
+                                    <td colspan="7">暂无失败记录</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="pagination pagination-panel failure-pagination-row">
+                        <button type="button" id="failure-prev-page-btn" class="btn btn-secondary btn-sm">上一页</button>
+                        <span id="failure-page-indicator">1 / 1</span>
+                        <button type="button" id="failure-next-page-btn" class="btn btn-secondary btn-sm">下一页</button>
+                    </div>
+                </div>
+            </div>
+        </article>
+
         <article id="registration-log-console" class="workspace-panel feedback-panel feedback-panel-log">
             <div class="card" id="console-card">
                 <div class="card-header">
@@ -466,6 +577,19 @@
                 </div>
             </div>
         </article>
+
+        <dialog id="registration-failure-detail-dialog" class="failure-detail-dialog">
+            <div class="failure-detail-dialog-body">
+                <div class="failure-detail-dialog-header">
+                    <div>
+                        <h3 id="registration-failure-detail-title">失败详情</h3>
+                        <p id="registration-failure-detail-meta" class="panel-subtitle">—</p>
+                    </div>
+                    <button type="button" id="registration-failure-detail-close-btn" class="btn btn-secondary btn-sm">关闭</button>
+                </div>
+                <pre id="registration-failure-detail-text">—</pre>
+            </div>
+        </dialog>
     </section>
 </div>
 {% endblock %}

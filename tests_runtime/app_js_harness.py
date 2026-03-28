@@ -102,6 +102,7 @@ function createMockElement(id = '') {{
     tagName: 'DIV',
     style: {{}},
     dataset: {{}},
+    open: false,
     disabled: false,
     checked: false,
     value: '',
@@ -146,6 +147,12 @@ function createMockElement(id = '') {{
     }},
     querySelector() {{
       return null;
+    }},
+    showModal() {{
+      this.open = true;
+    }},
+    close() {{
+      this.open = false;
     }},
     remove() {{}},
     reset() {{
@@ -352,6 +359,50 @@ const context = {{
     }},
     async get(path) {{
       logs.apiGetPaths.push(path);
+      const parsedUrl = new URL(path, 'http://localhost');
+      const pathname = parsedUrl.pathname;
+      const searchParams = parsedUrl.searchParams;
+
+      if (pathname === '/registration/failures/summary') {{
+        return {{
+          total_failed_attempts: 12,
+          today_failed_attempts: 3,
+          top_email_suffixes: [
+            {{ value: searchParams.get('pipeline_key') || 'blocked.test', count: 8 }},
+            {{ value: 'other.test', count: 4 }},
+          ],
+          top_error_codes: [
+            {{ value: 'registration_disallowed', count: 9 }},
+            {{ value: 'proxy_error', count: 3 }},
+          ],
+          top_proxy_ips: [
+            {{ value: '1.1.1.1', count: 5 }},
+            {{ value: 'unknown', count: 2 }},
+          ],
+        }};
+      }}
+
+      if (pathname === '/registration/failures') {{
+        return {{
+          total: 12,
+          items: [
+            {{
+              id: 1,
+              task_uuid: 'task-failure-01',
+              attempt_no: 1,
+              pipeline_key: searchParams.get('pipeline_key') || 'current_pipeline',
+              registration_mode: 'batch',
+              email: 'tester@blocked.test',
+              email_suffix: 'blocked.test',
+              proxy_ip: '1.1.1.1',
+              error_code: 'registration_disallowed',
+              error_detail: 'blocked by upstream',
+              failed_at: '2026-03-28T10:00:00Z',
+              extra_json: {{ step: 'create_account_profile' }},
+            }},
+          ],
+        }};
+      }}
 
       if (scenarioName === 'single_task_log_event_immediate_append' && path === '/registration/tasks/task-single-01') {{
         return new Promise(() => {{}});
@@ -476,7 +527,7 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  buildRegistrationFailureQueryParams,\n  loadRegistrationFailureAnalysis,\n  loadRegistrationFailureSummary,\n  loadRegistrationFailureList,\n  renderRegistrationFailureRows,\n  openRegistrationFailureDetail,\n  openRegistrationFailureDetailByIndex,\n  closeRegistrationFailureDetail,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  elements,\n}};`,
   context,
 );
 
@@ -1332,6 +1383,47 @@ async function runScenario() {{
         scroll_top_after_disable_and_append: scrollTopAfterDisableAndAppend,
         scroll_top_after_reenable_and_append: Number(consoleRoot.scrollTop || 0),
         checkbox_checked_after_reenable: autoScrollInput.checked === true,
+      }};
+    }}
+    case 'load_registration_failures': {{
+      getElement('failure-filter-pipeline-key').value = 'codexgen_pipeline';
+      getElement('failure-filter-registration-mode').value = 'batch';
+      getElement('failure-filter-email-suffix').value = 'blocked.test';
+      getElement('failure-filter-error-keyword').value = 'registration_disallowed';
+
+      await exported.loadRegistrationFailureAnalysis();
+
+      return {{
+        api_get_paths: logs.apiGetPaths.slice(),
+        summary_total_text: getElement('failure-total-attempts').textContent,
+        table_html: getElement('registration-failure-table-body').innerHTML,
+        page_indicator: getElement('failure-page-indicator').textContent,
+      }};
+    }}
+    case 'render_registration_failure_rows': {{
+      const malicious = '<script>alert(1)</script>@blocked.test';
+      exported.renderRegistrationFailureRows([
+        {{
+          id: 1,
+          task_uuid: 'task-failure-evil',
+          attempt_no: 1,
+          pipeline_key: 'codexgen_pipeline',
+          registration_mode: 'batch',
+          email: malicious,
+          email_suffix: 'blocked.test',
+          proxy_ip: '1.1.1.1',
+          error_code: 'registration_disallowed',
+          error_detail: malicious,
+          failed_at: '2026-03-28T10:00:00Z',
+          extra_json: {{ html: malicious }},
+        }},
+      ]);
+      exported.openRegistrationFailureDetailByIndex(0);
+
+      return {{
+        table_html: getElement('registration-failure-table-body').innerHTML,
+        detail_dialog_open: getElement('registration-failure-detail-dialog').open === true,
+        detail_uses_text_content: getElement('registration-failure-detail-text').dataset.renderMode === 'textContent',
       }};
     }}
     case 'single_task_ws_handshake_timeout_falls_back_to_polling': {{

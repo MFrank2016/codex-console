@@ -31,6 +31,13 @@ let availableServices = {
     duck_mail: { available: false, services: [] },
     freemail: { available: false, services: [] }
 };
+const registrationFailureState = {
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    filters: {},
+    items: [],
+};
 
 // WebSocket 相关变量
 let webSocket = null;
@@ -468,6 +475,7 @@ const elements = {
     registrationConfigPanel: document.getElementById('registration-config-panel'),
     registrationSingleProgress: document.getElementById('registration-single-progress'),
     registrationBatchSummary: document.getElementById('registration-batch-summary'),
+    registrationFailureSummary: document.getElementById('registration-failure-summary'),
     registrationLogConsole: document.getElementById('registration-log-console'),
 
     form: document.getElementById('registration-form'),
@@ -512,6 +520,29 @@ const elements = {
     batchRemaining: document.getElementById('batch-remaining'),
     batchConsecutiveFailures: document.getElementById('batch-consecutive-failures'),
     batchDomainStats: document.getElementById('batch-domain-stats'),
+    // 失败分析
+    refreshFailureAnalysisBtn: document.getElementById('refresh-failure-analysis-btn'),
+    registrationFailureFilterForm: document.getElementById('registration-failure-filter-form'),
+    failureFilterPipelineKey: document.getElementById('failure-filter-pipeline-key'),
+    failureFilterRegistrationMode: document.getElementById('failure-filter-registration-mode'),
+    failureFilterEmailSuffix: document.getElementById('failure-filter-email-suffix'),
+    failureFilterErrorKeyword: document.getElementById('failure-filter-error-keyword'),
+    failureFilterFailedFrom: document.getElementById('failure-filter-failed-from'),
+    failureFilterFailedTo: document.getElementById('failure-filter-failed-to'),
+    failureTotalAttempts: document.getElementById('failure-total-attempts'),
+    failureTodayAttempts: document.getElementById('failure-today-attempts'),
+    failureTopEmailSuffixes: document.getElementById('failure-top-email-suffixes'),
+    failureTopErrorCodes: document.getElementById('failure-top-error-codes'),
+    failureTopProxyIps: document.getElementById('failure-top-proxy-ips'),
+    registrationFailureTableBody: document.getElementById('registration-failure-table-body'),
+    failurePrevPageBtn: document.getElementById('failure-prev-page-btn'),
+    failureNextPageBtn: document.getElementById('failure-next-page-btn'),
+    failurePageIndicator: document.getElementById('failure-page-indicator'),
+    registrationFailureDetailDialog: document.getElementById('registration-failure-detail-dialog'),
+    registrationFailureDetailTitle: document.getElementById('registration-failure-detail-title'),
+    registrationFailureDetailMeta: document.getElementById('registration-failure-detail-meta'),
+    registrationFailureDetailText: document.getElementById('registration-failure-detail-text'),
+    registrationFailureDetailCloseBtn: document.getElementById('registration-failure-detail-close-btn'),
     // 已注册账号
     recentAccountsTable: document.getElementById('recent-accounts-table'),
     refreshAccountsBtn: document.getElementById('refresh-accounts-btn'),
@@ -554,6 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderRegistrationStreamStatus();
     loadAvailableServices();
     loadRecentAccounts();
+    initRegistrationFailureAnalysis();
     startAccountsPolling();
     initVisibilityReconnect();
     restoreActiveTask();
@@ -674,6 +706,41 @@ function initEventListeners() {
         toast.info('已刷新');
     });
 
+    if (elements.refreshFailureAnalysisBtn) {
+        elements.refreshFailureAnalysisBtn.addEventListener('click', () => {
+            loadRegistrationFailureAnalysis();
+        });
+    }
+
+    if (elements.registrationFailureFilterForm) {
+        elements.registrationFailureFilterForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            registrationFailureState.page = 1;
+            await loadRegistrationFailureAnalysis();
+        });
+    }
+
+    if (elements.failurePrevPageBtn) {
+        elements.failurePrevPageBtn.addEventListener('click', async () => {
+            if (registrationFailureState.page <= 1) return;
+            registrationFailureState.page -= 1;
+            await loadRegistrationFailureList();
+        });
+    }
+
+    if (elements.failureNextPageBtn) {
+        elements.failureNextPageBtn.addEventListener('click', async () => {
+            const totalPages = getRegistrationFailureTotalPages();
+            if (registrationFailureState.page >= totalPages) return;
+            registrationFailureState.page += 1;
+            await loadRegistrationFailureList();
+        });
+    }
+
+    if (elements.registrationFailureDetailCloseBtn) {
+        elements.registrationFailureDetailCloseBtn.addEventListener('click', closeRegistrationFailureDetail);
+    }
+
     // 并发模式切换
     elements.concurrencyMode.addEventListener('change', () => {
         handleConcurrencyModeChange(elements.concurrencyMode, elements.concurrencyHint, elements.intervalGroup);
@@ -681,6 +748,255 @@ function initEventListeners() {
     elements.outlookConcurrencyMode.addEventListener('change', () => {
         handleConcurrencyModeChange(elements.outlookConcurrencyMode, elements.outlookConcurrencyHint, elements.outlookIntervalGroup);
     });
+}
+
+function initRegistrationFailureAnalysis() {
+    if (!elements.registrationFailureSummary) {
+        return;
+    }
+    updateRegistrationFailurePagination();
+    loadRegistrationFailureAnalysis();
+}
+
+function normalizeRegistrationFailureFilterValue(value) {
+    const text = String(value ?? '').trim();
+    return text || '';
+}
+
+function collectRegistrationFailureFilters() {
+    return {
+        pipeline_key: normalizeRegistrationFailureFilterValue(elements.failureFilterPipelineKey?.value),
+        registration_mode: normalizeRegistrationFailureFilterValue(elements.failureFilterRegistrationMode?.value),
+        email_suffix: normalizeRegistrationFailureFilterValue(elements.failureFilterEmailSuffix?.value),
+        error_keyword: normalizeRegistrationFailureFilterValue(elements.failureFilterErrorKeyword?.value),
+        failed_from: normalizeRegistrationFailureFilterValue(elements.failureFilterFailedFrom?.value),
+        failed_to: normalizeRegistrationFailureFilterValue(elements.failureFilterFailedTo?.value),
+    };
+}
+
+function appendRegistrationFailureQueryParam(params, key, value) {
+    const normalized = normalizeRegistrationFailureFilterValue(value);
+    if (!normalized) {
+        return;
+    }
+    params.set(key, normalized);
+}
+
+function buildRegistrationFailureQueryParams(options = {}) {
+    const includePage = options.includePage !== false;
+    const params = new URLSearchParams();
+    const filters = collectRegistrationFailureFilters();
+    registrationFailureState.filters = { ...filters };
+
+    appendRegistrationFailureQueryParam(params, 'pipeline_key', filters.pipeline_key);
+    appendRegistrationFailureQueryParam(params, 'registration_mode', filters.registration_mode);
+    appendRegistrationFailureQueryParam(params, 'email_suffix', filters.email_suffix);
+    appendRegistrationFailureQueryParam(params, 'error_keyword', filters.error_keyword);
+    appendRegistrationFailureQueryParam(params, 'failed_from', filters.failed_from);
+    appendRegistrationFailureQueryParam(params, 'failed_to', filters.failed_to);
+
+    if (includePage) {
+        params.set('page', String(registrationFailureState.page || 1));
+        params.set('page_size', String(registrationFailureState.pageSize || 20));
+    }
+    return params.toString();
+}
+
+function getRegistrationFailureTotalPages() {
+    const total = Number(registrationFailureState.total || 0);
+    const pageSize = Number(registrationFailureState.pageSize || 20);
+    if (!Number.isFinite(total) || total <= 0) {
+        return 1;
+    }
+    return Math.max(1, Math.ceil(total / pageSize));
+}
+
+function renderRegistrationFailureTopList(element, rows) {
+    if (!element) {
+        return;
+    }
+    const items = Array.isArray(rows) ? rows : [];
+    if (items.length === 0) {
+        element.innerHTML = '<li>—</li>';
+        return;
+    }
+    element.innerHTML = items.map((row) => `
+        <li>${escapeHtml(row?.value || 'unknown')} · ${Number.isFinite(Number(row?.count)) ? Number(row.count) : 0}</li>
+    `).join('');
+}
+
+function renderRegistrationFailureSummary(summary) {
+    const payload = summary || {};
+    if (elements.failureTotalAttempts) {
+        elements.failureTotalAttempts.textContent = String(payload.total_failed_attempts ?? 0);
+    }
+    if (elements.failureTodayAttempts) {
+        elements.failureTodayAttempts.textContent = String(payload.today_failed_attempts ?? 0);
+    }
+    renderRegistrationFailureTopList(elements.failureTopEmailSuffixes, payload.top_email_suffixes);
+    renderRegistrationFailureTopList(elements.failureTopErrorCodes, payload.top_error_codes);
+    renderRegistrationFailureTopList(elements.failureTopProxyIps, payload.top_proxy_ips);
+}
+
+function updateRegistrationFailurePagination() {
+    const totalPages = getRegistrationFailureTotalPages();
+    const currentPage = Math.min(Math.max(1, Number(registrationFailureState.page || 1)), totalPages);
+    registrationFailureState.page = currentPage;
+    if (elements.failurePageIndicator) {
+        elements.failurePageIndicator.textContent = `${currentPage} / ${totalPages}`;
+    }
+    if (elements.failurePrevPageBtn) {
+        elements.failurePrevPageBtn.disabled = currentPage <= 1;
+    }
+    if (elements.failureNextPageBtn) {
+        elements.failureNextPageBtn.disabled = currentPage >= totalPages;
+    }
+}
+
+function formatRegistrationFailureTimestamp(value) {
+    if (!value) {
+        return '—';
+    }
+    const formatted = typeof format?.date === 'function' ? format.date(value) : String(value);
+    return escapeHtml(formatted || '—');
+}
+
+function buildRegistrationFailureDetailMeta(item) {
+    const parts = [
+        item?.email || '—',
+        item?.proxy_ip || item?.proxy || '—',
+        item?.failed_at || item?.created_at || '—',
+    ];
+    return parts.join(' · ');
+}
+
+function buildRegistrationFailureDetailText(item) {
+    const detail = String(item?.error_detail || '—');
+    const sections = [`错误详情\n${detail}`];
+    if (item?.extra_json && Object.keys(item.extra_json).length > 0) {
+        sections.push(`扩展上下文\n${JSON.stringify(item.extra_json, null, 2)}`);
+    }
+    return sections.join('\n\n');
+}
+
+function openRegistrationFailureDetail(detail) {
+    if (!elements.registrationFailureDetailDialog || !elements.registrationFailureDetailText) {
+        return;
+    }
+    const item = typeof detail === 'string' ? { error_detail: detail } : (detail || {});
+    if (elements.registrationFailureDetailTitle) {
+        elements.registrationFailureDetailTitle.textContent = `失败详情 · ${item.error_code || 'unknown'}`;
+    }
+    if (elements.registrationFailureDetailMeta) {
+        elements.registrationFailureDetailMeta.textContent = buildRegistrationFailureDetailMeta(item);
+    }
+    elements.registrationFailureDetailText.dataset.renderMode = 'textContent';
+    elements.registrationFailureDetailText.textContent = buildRegistrationFailureDetailText(item);
+    if (elements.registrationFailureDetailDialog.open === true) {
+        return;
+    }
+    if (typeof elements.registrationFailureDetailDialog.showModal === 'function') {
+        elements.registrationFailureDetailDialog.showModal();
+    } else {
+        elements.registrationFailureDetailDialog.open = true;
+    }
+}
+
+function closeRegistrationFailureDetail() {
+    if (!elements.registrationFailureDetailDialog) {
+        return;
+    }
+    if (typeof elements.registrationFailureDetailDialog.close === 'function') {
+        elements.registrationFailureDetailDialog.close();
+    } else {
+        elements.registrationFailureDetailDialog.open = false;
+    }
+}
+
+function openRegistrationFailureDetailByIndex(index) {
+    const numericIndex = Number(index);
+    if (!Number.isInteger(numericIndex) || numericIndex < 0) {
+        return;
+    }
+    const item = Array.isArray(registrationFailureState.items) ? registrationFailureState.items[numericIndex] : null;
+    if (!item) {
+        return;
+    }
+    openRegistrationFailureDetail(item);
+}
+
+function renderRegistrationFailureRows(items) {
+    if (!elements.registrationFailureTableBody) {
+        return;
+    }
+    const rows = Array.isArray(items) ? items : [];
+    registrationFailureState.items = rows;
+    if (rows.length === 0) {
+        elements.registrationFailureTableBody.innerHTML = `
+            <tr>
+                <td colspan="7">暂无失败记录</td>
+            </tr>
+        `;
+        return;
+    }
+    elements.registrationFailureTableBody.innerHTML = rows.map((item, index) => `
+        <tr>
+            <td>${formatRegistrationFailureTimestamp(item.failed_at || item.created_at)}</td>
+            <td>${escapeHtml(item.email || '—')}</td>
+            <td>${escapeHtml(item.email_suffix || '—')}</td>
+            <td>${escapeHtml(item.registration_mode || '—')}</td>
+            <td>${escapeHtml(item.proxy_ip || '—')}</td>
+            <td>${escapeHtml(item.error_code || 'unknown')}</td>
+            <td class="failure-detail-cell">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="openRegistrationFailureDetailByIndex(${index})">查看详情</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function loadRegistrationFailureSummary() {
+    if (!elements.registrationFailureSummary) {
+        return null;
+    }
+    const query = buildRegistrationFailureQueryParams({ includePage: false });
+    const path = query ? `/registration/failures/summary?${query}` : '/registration/failures/summary';
+    const summary = await api.get(path);
+    renderRegistrationFailureSummary(summary);
+    return summary;
+}
+
+async function loadRegistrationFailureList() {
+    if (!elements.registrationFailureSummary) {
+        return null;
+    }
+    const query = buildRegistrationFailureQueryParams();
+    const path = query ? `/registration/failures?${query}` : '/registration/failures';
+    const payload = await api.get(path);
+    registrationFailureState.total = Number(payload?.total || 0);
+    renderRegistrationFailureRows(payload?.items || []);
+    updateRegistrationFailurePagination();
+    return payload;
+}
+
+async function loadRegistrationFailureAnalysis() {
+    if (!elements.registrationFailureSummary) {
+        return;
+    }
+    try {
+        await Promise.all([
+            loadRegistrationFailureSummary(),
+            loadRegistrationFailureList(),
+        ]);
+    } catch (error) {
+        console.error('加载失败分析面板失败:', error);
+        if (elements.registrationFailureTableBody) {
+            elements.registrationFailureTableBody.innerHTML = `
+                <tr>
+                    <td colspan="7">加载失败：${escapeHtml(error?.message || 'unknown error')}</td>
+                </tr>
+            `;
+        }
+    }
 }
 
 // 加载可用的邮箱服务
@@ -2113,10 +2429,13 @@ function resetButtons() {
 
 // HTML 转义
 function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 

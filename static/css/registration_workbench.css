@@ -113,6 +113,115 @@
   opacity: 0.78;
 }
 
+.failure-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hover);
+  min-width: 0;
+}
+
+.metric-label {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.metric-value {
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.failure-top-card {
+  min-height: 116px;
+}
+
+.failure-top-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.failure-filter-panel {
+  margin-bottom: var(--spacing-md);
+}
+
+.failure-filter-grid {
+  margin-bottom: var(--spacing-sm);
+}
+
+.failure-analysis-table {
+  overflow-x: auto;
+}
+
+.failure-analysis-table table {
+  min-width: 860px;
+}
+
+.failure-detail-cell {
+  width: 110px;
+  text-align: right;
+}
+
+.failure-pagination-row {
+  margin-top: var(--spacing-md);
+  justify-content: space-between;
+  align-items: center;
+}
+
+.failure-detail-dialog {
+  width: min(860px, calc(100vw - 32px));
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  padding: 0;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.failure-detail-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.failure-detail-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+}
+
+.failure-detail-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.failure-detail-dialog pre {
+  margin: 0;
+  padding: var(--spacing-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 [data-theme="dark"] .feedback-panel-log .card {
   background: var(--surface);
   color: var(--text-primary);
@@ -126,5 +235,14 @@
 @media (max-width: 1024px) {
   .registration-layout {
     grid-template-columns: 1fr;
+  }
+
+  .failure-detail-dialog-header {
+    flex-direction: column;
+  }
+
+  .failure-pagination-row {
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
   }
 }
