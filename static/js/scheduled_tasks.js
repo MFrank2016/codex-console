@@ -1,20 +1,8 @@
 const scheduledTaskElements = {
     plansBody: document.getElementById('scheduled-plans-table-body'),
-    runsCard: document.getElementById('scheduled-runs-card'),
-    runsBody: document.getElementById('scheduled-runs-table-body'),
     refreshBtn: document.getElementById('refresh-plans-btn'),
     createPlanBtn: document.getElementById('create-plan-btn'),
-    runFilterTaskTypeInput: document.getElementById('scheduled-run-filter-task-type'),
-    runFilterStatusInput: document.getElementById('scheduled-run-filter-status'),
-    runFilterStartedFromInput: document.getElementById('scheduled-run-filter-started-from'),
-    runFilterStartedToInput: document.getElementById('scheduled-run-filter-started-to'),
-    runFilterApplyBtn: document.getElementById('scheduled-run-filter-apply-btn'),
-    runFilterResetBtn: document.getElementById('scheduled-run-filter-reset-btn'),
-    runPaginationSummary: document.getElementById('scheduled-run-pagination-summary'),
-    runPrevPageBtn: document.getElementById('scheduled-run-prev-page'),
-    runNextPageBtn: document.getElementById('scheduled-run-next-page'),
-    runPageJumpInput: document.getElementById('scheduled-run-page-jump-input'),
-    runPageJumpBtn: document.getElementById('scheduled-run-page-jump-btn'),
+    supportContext: document.getElementById('scheduled-tasks-support-context'),
     planFormModal: document.getElementById('plan-form-modal'),
     planFormTitle: document.getElementById('plan-form-title'),
     planForm: document.getElementById('plan-form'),
@@ -40,21 +28,6 @@ const scheduledTaskElements = {
     planEnabledInput: document.getElementById('plan-enabled'),
     planModal: document.getElementById('plan-modal'),
     planModalBody: document.getElementById('plan-modal-body'),
-    runDetailModal: document.getElementById('run-detail-modal'),
-    runDetailModalBody: document.getElementById('run-detail-modal-body'),
-    runLogModal: document.getElementById('run-log-modal'),
-    runLogStatusBar: document.getElementById('run-log-status-bar'),
-    runLogRefreshBtn: document.getElementById('run-log-refresh-btn'),
-    runLogAutoScrollInput: document.getElementById('run-log-auto-scroll'),
-    runLogStopActions: document.getElementById('run-log-stop-actions'),
-    runLogStopBtn: document.getElementById('run-log-stop-btn'),
-    runLogModalBody: document.getElementById('run-log-modal-body'),
-    runLogConsole: document.getElementById('run-log-console'),
-    runLogSearchInput: document.getElementById('run-log-search-input'),
-    runLogLevelFilter: document.getElementById('run-log-level-filter'),
-    runLogCopyBtn: document.getElementById('run-log-copy-btn'),
-    runLogClearBtn: document.getElementById('run-log-clear-btn'),
-    runLogWrapInput: document.getElementById('run-log-wrap-input'),
 };
 
 const CONFIG_EDITOR_MODE_TABLE = 'table';
@@ -194,59 +167,11 @@ const TASK_CONFIG_SCHEMAS = {
 };
 
 let scheduledPlansCache = [];
-let scheduledRunsCache = [];
-let currentRunList = [];
 let cpaServicesCache = [];
 let submittingPlanForm = false;
 let currentConfigEntries = [];
 let currentConfigEditorMode = CONFIG_EDITOR_MODE_TABLE;
 let currentConfigTaskType = 'cpa_cleanup';
-let scheduledRunFilters = {
-    taskType: '',
-    status: '',
-    startedFrom: '',
-    startedTo: '',
-    planId: null,
-    page: 1,
-    pageSize: 20,
-};
-let scheduledRunPaginationMeta = {
-    total: 0,
-    page: 1,
-    pageSize: 20,
-};
-let activeScheduledRunId = null;
-let activeScheduledRunDetail = null;
-let currentScheduledRunLogOffset = 0;
-let scheduledRunLogPollingTimer = null;
-let scheduledRunLogPollingInFlight = false;
-let scheduledRunLogLoadToken = 0;
-let scheduledRunSharedFallbackTimer = null;
-let scheduledRunSharedConsoleController = null;
-let scheduledRunSharedClient = null;
-let scheduledRunSharedWebSocket = null;
-let scheduledRunConsoleState = {
-    lines: [],
-    pendingLineText: '',
-    visibleLines: [],
-    searchTerm: '',
-    levelFilter: '',
-    wrap: Boolean(scheduledTaskElements.runLogWrapInput?.checked),
-};
-const SCHEDULED_RUN_LOG_LINE_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{3})?) \[(INFO|WARN|ERROR)\]\s?(.*)$/;
-
-function isScheduledRunLogRequestActive(runId, token) {
-    return token === scheduledRunLogLoadToken && activeScheduledRunId === Number(runId);
-}
-
-function hasSharedScheduledRunLogRuntime() {
-    return Boolean(
-        window?.realtimeLogStore?.createState
-        && window?.realtimeLogStore?.reduceHistoryChunk
-        && window?.realtimeLogClient?.createStreamClient
-        && window?.realtimeLogConsole?.mountRealtimeLogConsole
-    );
-}
 
 function escapeHtml(text) {
     if (text === null || text === undefined) return '';
@@ -1174,1051 +1099,67 @@ async function runPlanNow(planId) {
         await api.post(`/scheduled-plans/${planId}/run`, {});
         toast.success('已触发执行');
         await loadPlans();
-        await loadScheduledRuns();
     } catch (error) {
         toast.error(`触发失败: ${error.message}`);
     }
 }
 
-function buildScheduledRunQuery(filters = scheduledRunFilters) {
+
+function buildScheduledTasksRunCenterHref(planId = '', extraContext = {}) {
+    if (window.runCenterShared && typeof window.runCenterShared.buildRunCenterHref === 'function') {
+        return window.runCenterShared.buildRunCenterHref({
+            scope: 'scheduled',
+            plan_id: planId,
+            source: 'scheduled-tasks',
+            ...extraContext,
+        });
+    }
+
     const params = new URLSearchParams();
-    if (filters.taskType) params.set('task_type', filters.taskType);
-    if (filters.status) params.set('status', filters.status);
-    if (filters.planId) params.set('plan_id', String(filters.planId));
-    if (filters.startedFrom) params.set('started_from', filters.startedFrom);
-    if (filters.startedTo) params.set('started_to', filters.startedTo);
-    params.set('page', String(filters.page || 1));
-    params.set('page_size', String(filters.pageSize || 20));
-    const query = params.toString();
-    return query ? `?${query}` : '';
-}
-
-function syncScheduledRunFiltersToInputs() {
-    if (scheduledTaskElements.runFilterTaskTypeInput) {
-        scheduledTaskElements.runFilterTaskTypeInput.value = scheduledRunFilters.taskType || '';
+    params.set('scope', 'scheduled');
+    params.set('source', 'scheduled-tasks');
+    if (planId) {
+        params.set('plan_id', String(planId));
     }
-    if (scheduledTaskElements.runFilterStatusInput) {
-        scheduledTaskElements.runFilterStatusInput.value = scheduledRunFilters.status || '';
-    }
-    if (scheduledTaskElements.runFilterStartedFromInput) {
-        scheduledTaskElements.runFilterStartedFromInput.value = scheduledRunFilters.startedFrom || '';
-    }
-    if (scheduledTaskElements.runFilterStartedToInput) {
-        scheduledTaskElements.runFilterStartedToInput.value = scheduledRunFilters.startedTo || '';
-    }
-}
-
-function updateScheduledRunFiltersFromInputs() {
-    scheduledRunFilters = {
-        ...scheduledRunFilters,
-        taskType: scheduledTaskElements.runFilterTaskTypeInput?.value || '',
-        status: scheduledTaskElements.runFilterStatusInput?.value || '',
-        startedFrom: scheduledTaskElements.runFilterStartedFromInput?.value || '',
-        startedTo: scheduledTaskElements.runFilterStartedToInput?.value || '',
-        page: 1,
-    };
-}
-
-function getScheduledRunTotalPages(total = scheduledRunPaginationMeta.total, pageSize = scheduledRunFilters.pageSize || 20) {
-    const safeTotal = Number.isFinite(Number(total)) ? Math.max(0, Number(total)) : 0;
-    const safePageSize = Number.isFinite(Number(pageSize)) ? Math.max(1, Number(pageSize)) : 20;
-    return Math.max(1, Math.ceil(safeTotal / safePageSize));
-}
-
-function updateScheduledRunPaginationControls() {
-    const total = Number.isFinite(Number(scheduledRunPaginationMeta.total))
-        ? Math.max(0, Number(scheduledRunPaginationMeta.total))
-        : 0;
-    const hasData = total > 0;
-    const pageSize = Number.isFinite(Number(scheduledRunFilters.pageSize))
-        ? Math.max(1, Number(scheduledRunFilters.pageSize))
-        : 20;
-    const totalPages = getScheduledRunTotalPages(total, pageSize);
-    const currentPage = Math.min(Math.max(1, Number(scheduledRunFilters.page) || 1), totalPages);
-
-    scheduledRunFilters = {
-        ...scheduledRunFilters,
-        page: currentPage,
-        pageSize,
-    };
-    scheduledRunPaginationMeta = {
-        ...scheduledRunPaginationMeta,
-        total,
-        page: currentPage,
-        pageSize,
-    };
-
-    if (scheduledTaskElements.runPaginationSummary) {
-        scheduledTaskElements.runPaginationSummary.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${total} 条`;
-    }
-    if (scheduledTaskElements.runPageJumpInput) {
-        scheduledTaskElements.runPageJumpInput.max = String(totalPages);
-        scheduledTaskElements.runPageJumpInput.disabled = !hasData;
-        if (document.activeElement !== scheduledTaskElements.runPageJumpInput) {
-            scheduledTaskElements.runPageJumpInput.value = String(currentPage);
+    Object.entries(extraContext || {}).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && String(value).trim()) {
+            params.set(key, String(value));
         }
-    }
-    if (scheduledTaskElements.runPrevPageBtn) {
-        scheduledTaskElements.runPrevPageBtn.disabled = !hasData || currentPage <= 1;
-    }
-    if (scheduledTaskElements.runNextPageBtn) {
-        scheduledTaskElements.runNextPageBtn.disabled = !hasData || currentPage >= totalPages;
-    }
-    if (scheduledTaskElements.runPageJumpBtn) {
-        scheduledTaskElements.runPageJumpBtn.disabled = !hasData;
-    }
-}
-
-function resolveScheduledRunTargetPage(rawValue, {
-    currentPage = scheduledRunFilters.page,
-    totalPages = getScheduledRunTotalPages(),
-} = {}) {
-    const normalized = String(rawValue ?? '').trim();
-    if (!/^\d+$/.test(normalized)) {
-        return { valid: false, page: currentPage, clamped: false };
-    }
-    const requested = Number.parseInt(normalized, 10);
-    const clamped = Math.min(Math.max(requested, 1), totalPages);
-    return { valid: true, page: clamped, clamped: clamped !== requested };
-}
-
-async function jumpToScheduledRunPage(rawValue, { showWarnings = true } = {}) {
-    const totalPages = getScheduledRunTotalPages();
-    const result = resolveScheduledRunTargetPage(rawValue, {
-        currentPage: scheduledRunFilters.page,
-        totalPages,
     });
-    if (!result.valid) {
-        if (showWarnings) {
-            toast.warning('请输入有效页码');
-        }
+    return `/run-center?${params.toString()}`;
+}
+
+function renderScheduledTasksSupportContext() {
+    if (!scheduledTaskElements.supportContext) {
         return;
     }
 
-    if (result.clamped && showWarnings) {
-        toast.warning(`页码已自动调整到 ${result.page}`);
-    }
-    if (result.page === scheduledRunFilters.page) {
-        updateScheduledRunPaginationControls();
-        return;
-    }
+    const params = new URLSearchParams(window.location?.search || '');
+    const planId = (params.get('plan_id') || '').trim();
+    const source = (params.get('source') || 'scheduled-tasks').trim();
+    const runCenterHref = buildScheduledTasksRunCenterHref(planId, { source });
+    const contextHint = planId ? `当前聚焦计划 #${escapeHtml(planId)}` : '可按计划跳转到统一运行中心';
 
-    scheduledRunFilters = {
-        ...scheduledRunFilters,
-        page: result.page,
-    };
-    await loadScheduledRuns();
-}
-
-function toSummaryCount(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return 0;
-    return Math.max(0, Math.floor(parsed));
-}
-
-function formatSummaryCountOrDash(value) {
-    if (value === null || value === undefined || value === '') return '-';
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return '-';
-    return String(Math.max(0, Math.floor(parsed)));
-}
-
-function formatScheduledRunReason(run) {
-    const rawReason = String(run?.error_message || '').trim();
-    if (rawReason) {
-        return rawReason.length > 32 ? `${rawReason.slice(0, 32)}…` : rawReason;
-    }
-
-    const uiStatus = getScheduledRunUiStatus(run);
-    if (uiStatus === 'cancelled') return '用户停止';
-    if (uiStatus === 'stopping') return '停止中';
-    if (uiStatus === 'failed') return '执行失败';
-    return '';
-}
-
-function buildScheduledRunSummaryBase(run) {
-    const summary = isPlainObject(run?.summary) ? run.summary : {};
-    const taskType = run?.task_type;
-
-    if (taskType === 'cpa_refill') {
-        return `补号 ${toSummaryCount(summary.uploaded_success)}`;
-    }
-
-    if (taskType === 'cpa_cleanup') {
-        const probeItemsScanned = summary.probe_items_scanned;
-        const probeItemsSelected = summary.probe_items_selected;
-        const detectedCount =
-            probeItemsScanned ?? probeItemsSelected ?? summary.invalid_items_considered ?? summary.invalid_items_found;
-        return (
-            `扫描 ${formatSummaryCountOrDash(detectedCount)} · ` +
-            `清理 ${formatSummaryCountOrDash(summary.remote_deleted)} · ` +
-            `剩余 ${formatSummaryCountOrDash(summary.remaining_valid_count)}`
-        );
-    }
-
-    if (taskType === 'account_refresh') {
-        return (
-            `处理 ${toSummaryCount(summary.processed)} · ` +
-            `刷新 ${toSummaryCount(summary.refreshed_success)} · ` +
-            `上传 ${toSummaryCount(summary.uploaded_success)}`
-        );
-    }
-
-    if (run?.summary && Object.keys(run.summary).length > 0) {
-        try {
-            return JSON.stringify(run.summary);
-        } catch (error) {
-            return String(run.summary);
-        }
-    }
-
-    return '-';
-}
-
-function summarizeScheduledRun(run) {
-    const baseSummary = buildScheduledRunSummaryBase(run);
-    const uiStatus = getScheduledRunUiStatus(run);
-
-    if (['failed', 'cancelled', 'stopping'].includes(uiStatus)) {
-        const reason = formatScheduledRunReason(run);
-        if (reason) {
-            return `${baseSummary} · 原因：${reason}`;
-        }
-    }
-
-    return baseSummary;
-}
-
-function highlightScheduledRunSummaryNumbers(summaryText) {
-    const safeSummaryText = escapeHtml(summaryText || '-');
-    return safeSummaryText.replace(/\d+(?:\.\d+)?/g, (matched) => (
-        `<span class="scheduled-run-summary-number">${matched}</span>`
-    ));
-}
-
-function renderScheduledRunSummaryHtml(run) {
-    const uiStatus = getScheduledRunUiStatus(run);
-    const summaryText = summarizeScheduledRun(run);
-    const safeSummaryText = escapeHtml(summaryText || '-');
-
-    return `
-        <div
-            class="scheduled-run-summary"
-            data-summary-state="${escapeHtml(uiStatus || 'default')}"
-            data-summary-text="${safeSummaryText}"
-            title="${safeSummaryText}"
-        >${highlightScheduledRunSummaryNumbers(summaryText)}</div>
-    `;
-}
-
-function updateScheduledRunCacheItem(runId, updater) {
-    const targetId = Number(runId);
-    scheduledRunsCache = scheduledRunsCache.map((run) => {
-        if (Number(run.id) !== targetId) return run;
-        return typeof updater === 'function' ? updater(run) : { ...run, ...updater };
-    });
-    currentRunList = scheduledRunsCache;
-}
-
-function focusScheduledRunsCard() {
-    if (!scheduledTaskElements.runsCard) return;
-    scheduledTaskElements.runsCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function renderScheduledRuns(runs) {
-    const tbody = scheduledTaskElements.runsBody;
-    if (!tbody) return;
-
-    const rows = Array.isArray(runs) ? runs : [];
-    if (rows.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="9">
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📭</div>
-                        <div class="empty-state-title">暂无运行记录</div>
-                    </div>
-                </td>
-            </tr>
-        `;
-        return;
-    }
-
-    tbody.innerHTML = rows.map((run) => {
-        const uiStatus = getScheduledRunUiStatus(run);
-        const rowClasses = ['scheduled-run-row'];
-        if (uiStatus) {
-            rowClasses.push(`scheduled-run-row--${uiStatus}`);
-        }
-        if (uiStatus === 'stopping') {
-            rowClasses.push('stopping');
-        }
-        const stopAction = run.can_stop
-            ? `<button class="btn btn-secondary btn-sm" data-action="stop-run" data-run-id="${run.id}" onclick="handleRunLogAction(this)">停止</button>`
-            : '';
-        return `
-            <tr class="${rowClasses.join(' ')}" data-run-id="${run.id}" data-run-state="${uiStatus}">
-                <td>${run.id}</td>
-                <td class="scheduled-name-cell">
-                    <button
-                        type="button"
-                        class="scheduled-plan-link"
-                        data-action="logs"
-                        data-plan-id="${run.plan_id}"
-                        onclick="handlePlanAction(this)"
-                        title="筛选同计划运行记录"
-                    >${escapeHtml(run.plan_name || `计划 #${run.plan_id}`)}</button>
-                </td>
-                <td>${getTaskTypeText(run.task_type)}</td>
-                <td>${escapeHtml(run.trigger_source || '-')}</td>
-                <td><span class="status-badge ${uiStatus}">${getRunStatusText(uiStatus)}</span></td>
-                <td class="scheduled-time-cell">${format.date(run.started_at)}</td>
-                <td class="scheduled-time-cell">${format.date(run.finished_at)}</td>
-                <td class="scheduled-run-summary-cell">${renderScheduledRunSummaryHtml(run)}</td>
-                <td>
-                    <div class="table-actions table-actions--compact">
-                        <button class="btn btn-secondary btn-sm" data-action="view-run-detail" data-run-id="${run.id}" onclick="handleRunLogAction(this)">详情</button>
-                        <button class="btn btn-secondary btn-sm" data-action="view-run-log" data-run-id="${run.id}" onclick="handleRunLogAction(this)">日志</button>
-                        ${stopAction}
-                    </div>
-                </td>
-            </tr>
-        `;
-    }).join('');
-}
-
-async function loadScheduledRuns() {
-    const tbody = scheduledTaskElements.runsBody;
-    if (!tbody) return;
-
-    try {
-        const data = await api.get(`/scheduled-runs${buildScheduledRunQuery()}`);
-        scheduledRunsCache = Array.isArray(data.items) ? data.items : [];
-        currentRunList = scheduledRunsCache;
-        const total = Number.isFinite(Number(data.total)) ? Math.max(0, Number(data.total)) : 0;
-        const pageSize = Number.isFinite(Number(data.page_size))
-            ? Math.max(1, Number(data.page_size))
-            : Math.max(1, Number(scheduledRunFilters.pageSize) || 20);
-        const totalPages = getScheduledRunTotalPages(total, pageSize);
-        const pageFromResponse = Number.isFinite(Number(data.page)) ? Number(data.page) : Number(scheduledRunFilters.page) || 1;
-        const nextPage = Math.min(Math.max(1, pageFromResponse), totalPages);
-        scheduledRunFilters = {
-            ...scheduledRunFilters,
-            page: nextPage,
-            pageSize,
-        };
-        scheduledRunPaginationMeta = {
-            total,
-            page: nextPage,
-            pageSize,
-        };
-        renderScheduledRuns(scheduledRunsCache);
-        updateScheduledRunPaginationControls();
-    } catch (error) {
-        scheduledRunPaginationMeta = {
-            ...scheduledRunPaginationMeta,
-            total: 0,
-        };
-        updateScheduledRunPaginationControls();
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="9">
-                    <div class="empty-state">
-                        <div class="empty-state-icon">❌</div>
-                        <div class="empty-state-title">运行记录加载失败</div>
-                        <div class="empty-state-description">${escapeHtml(error.message || '请求失败')}</div>
-                    </div>
-                </td>
-            </tr>
-        `;
-    }
-}
-
-async function openRunLogs(planId) {
-    scheduledRunFilters = {
-        ...scheduledRunFilters,
-        planId: Number(planId),
-        page: 1,
-    };
-    syncScheduledRunFiltersToInputs();
-    await loadScheduledRuns();
-    focusScheduledRunsCard();
-}
-
-function stopScheduledRunSharedFallback() {
-    if (scheduledRunSharedFallbackTimer) {
-        clearTimeout(scheduledRunSharedFallbackTimer);
-        scheduledRunSharedFallbackTimer = null;
-    }
-}
-
-function teardownScheduledRunSharedRealtime() {
-    const websocket = scheduledRunSharedWebSocket;
-    scheduledRunSharedWebSocket = null;
-    if (websocket) {
-        websocket.onopen = null;
-        websocket.onmessage = null;
-        websocket.onerror = null;
-        websocket.onclose = null;
-        if (typeof websocket.close === 'function') {
-            websocket.close();
-        }
-    }
-    scheduledRunSharedClient = null;
-    scheduledRunSharedConsoleController = null;
-}
-
-function ensureScheduledRunSharedConsoleMounted() {
-    if (!hasSharedScheduledRunLogRuntime()) return null;
-    const consoleElement = getScheduledRunConsoleElement();
-    if (!consoleElement) return null;
-    if (!scheduledRunSharedConsoleController || scheduledRunSharedConsoleController.root !== consoleElement) {
-        scheduledRunSharedConsoleController = window.realtimeLogConsole.mountRealtimeLogConsole(consoleElement, {
-            state: window.realtimeLogStore.createState(),
-        });
-    }
-    return scheduledRunSharedConsoleController;
-}
-
-function applyScheduledRunSharedState(nextState) {
-    const controller = ensureScheduledRunSharedConsoleMounted();
-    if (!controller) return null;
-    controller.setState(nextState);
-    return controller;
-}
-
-function createScheduledRunSharedClient() {
-    if (!hasSharedScheduledRunLogRuntime()) return null;
-    const controller = ensureScheduledRunSharedConsoleMounted();
-    if (!controller) return null;
-    return window.realtimeLogClient.createStreamClient({
-        initialState: window.realtimeLogStore.createState(),
-        onStateChange(nextState) {
-            applyScheduledRunSharedState(nextState);
-        },
-    });
-}
-
-function getScheduledRunSharedWsUrl(runId, afterSeq = 0) {
-    const protocol = window?.location?.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window?.location?.host || location.host;
-    return `${protocol}//${host}/api/ws/run/${Number(runId)}?after_seq=${Number(afterSeq) || 0}`;
-}
-
-function scheduleScheduledRunSharedFallback(runId, token) {
-    stopScheduledRunSharedFallback();
-    scheduledRunSharedFallbackTimer = setTimeout(async () => {
-        if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
-            stopScheduledRunSharedFallback();
-            return;
-        }
-        try {
-            const eventsResponse = await api.get(`/realtime-streams/run/${Number(runId)}/events?after_seq=0`);
-            if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
-                return;
-            }
-            const events = Array.isArray(eventsResponse?.events) ? eventsResponse.events : [];
-            for (const event of events) {
-                scheduledRunSharedClient.dispatchEvent(event);
-            }
-        } catch (error) {
-            stopScheduledRunSharedFallback();
-        }
-    }, 2000);
-}
-
-function connectScheduledRunSharedWebSocket(runId, token) {
-    if (!scheduledRunSharedClient || typeof WebSocket !== 'function') return null;
-    const websocket = new WebSocket(getScheduledRunSharedWsUrl(runId, 0));
-    scheduledRunSharedWebSocket = websocket;
-    websocket.onmessage = (messageEvent) => {
-        if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) return;
-        try {
-            const payload = JSON.parse(messageEvent.data || '{}');
-            scheduledRunSharedClient.dispatchEvent(payload);
-        } catch (error) {
-            toast.warning?.(`实时日志解析失败: ${error.message || error}`);
-        }
-    };
-    websocket.onerror = () => {
-        if (!isScheduledRunLogRequestActive(runId, token)) return;
-        scheduleScheduledRunSharedFallback(runId, token);
-    };
-    websocket.onclose = () => {
-        if (!isScheduledRunLogRequestActive(runId, token)) return;
-        scheduleScheduledRunSharedFallback(runId, token);
-    };
-    return websocket;
-}
-
-async function bootstrapScheduledRunSharedRealtime(runId, token) {
-    scheduledRunSharedClient = createScheduledRunSharedClient();
-    if (!scheduledRunSharedClient) return false;
-
-    const historyChunk = await api.get(`/scheduled-runs/${Number(runId)}/logs?offset=0`);
-    if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
-        return true;
-    }
-    scheduledRunSharedClient.applyHistoryChunk(historyChunk?.chunk || '');
-
-    const snapshot = await api.get(`/realtime-streams/run/${Number(runId)}/snapshot`);
-    if (!isScheduledRunLogRequestActive(runId, token) || !scheduledRunSharedClient) {
-        return true;
-    }
-    if (snapshot && snapshot.kind === 'snapshot') {
-        scheduledRunSharedClient.applySnapshot(snapshot);
-    }
-
-    connectScheduledRunSharedWebSocket(runId, token);
-    return true;
-}
-
-function resetScheduledRunModalState() {
-    scheduledRunLogLoadToken += 1;
-    scheduledRunLogPollingInFlight = false;
-    activeScheduledRunId = null;
-    activeScheduledRunDetail = null;
-    currentScheduledRunLogOffset = 0;
-    stopScheduledRunLogPolling();
-    stopScheduledRunSharedFallback();
-    teardownScheduledRunSharedRealtime();
-    scheduledRunConsoleState = {
-        lines: [],
-        pendingLineText: '',
-        visibleLines: [],
-        searchTerm: '',
-        levelFilter: '',
-        wrap: Boolean(scheduledTaskElements.runLogWrapInput?.checked ?? true),
-    };
-    if (scheduledTaskElements.runLogStatusBar) {
-        scheduledTaskElements.runLogStatusBar.innerHTML = '<span>未选择运行记录</span>';
-    }
-    if (scheduledTaskElements.runLogSearchInput) {
-        scheduledTaskElements.runLogSearchInput.value = '';
-    }
-    if (scheduledTaskElements.runLogLevelFilter) {
-        scheduledTaskElements.runLogLevelFilter.value = '';
-    }
-    if (scheduledTaskElements.runLogWrapInput) {
-        scheduledTaskElements.runLogWrapInput.checked = scheduledRunConsoleState.wrap;
-    }
-    if (scheduledTaskElements.runLogStopBtn) {
-        scheduledTaskElements.runLogStopBtn.style.display = 'none';
-        scheduledTaskElements.runLogStopBtn.textContent = '停止运行';
-        scheduledTaskElements.runLogStopBtn.disabled = false;
-        scheduledTaskElements.runLogStopBtn.removeAttribute('data-run-id');
-        scheduledTaskElements.runLogStopBtn.removeAttribute('data-stopping');
-    }
-    renderScheduledRunConsole();
-}
-
-function renderScheduledRunStatusBar(detail) {
-    if (!scheduledTaskElements.runLogStatusBar) return;
-    if (!detail) {
-        scheduledTaskElements.runLogStatusBar.innerHTML = '<span>未选择运行记录</span>';
-        return;
-    }
-    const uiStatus = getScheduledRunUiStatus(detail);
-    scheduledTaskElements.runLogStatusBar.innerHTML = `
-        <div class="scheduled-run-meta-bar">
-            <span><strong>Run #${detail.id}</strong> · ${escapeHtml(detail.plan_name || `计划 #${detail.plan_id}`)}</span>
-            <span>状态：<strong>${getRunStatusText(uiStatus)}</strong></span>
-            <span>最后日志：${format.date(detail.last_log_at)}</span>
-        </div>
-    `;
-}
-
-function formatScheduledRunDurationSeconds(durationSeconds) {
-    if (durationSeconds === null || durationSeconds === undefined || durationSeconds === '') {
-        return '-';
-    }
-    return `${escapeHtml(String(durationSeconds))} 秒`;
-}
-
-function renderScheduledRunDetailBody(detail) {
-    if (!scheduledTaskElements.runDetailModalBody) return;
-    scheduledTaskElements.runDetailModalBody.innerHTML = `
-        <div class="scheduled-run-detail-head">
-            <strong>运行详情 #${detail.id}</strong>
-            <div class="table-actions">
-                <button class="btn btn-secondary btn-sm" data-close-modal="run-detail-modal" onclick="closeModal('run-detail-modal')">关闭</button>
+    scheduledTaskElements.supportContext.innerHTML = `
+        <div class="support-context-card">
+            <div class="support-context-copy">
+                <strong>运行记录已迁移到运行中心</strong>
+                <p>${contextHint}</p>
+            </div>
+            <div class="support-context-actions">
+                <a class="btn btn-secondary btn-sm" href="${runCenterHref}">打开运行中心</a>
             </div>
         </div>
-        <div class="info-grid scheduled-run-detail-grid">
-            <div class="info-item"><span class="label">计划</span><span class="value">${escapeHtml(detail.plan_name || `计划 #${detail.plan_id}`)}</span></div>
-            <div class="info-item"><span class="label">任务类型</span><span class="value">${getTaskTypeText(detail.task_type)}</span></div>
-            <div class="info-item"><span class="label">触发源</span><span class="value">${escapeHtml(detail.trigger_source || '-')}</span></div>
-            <div class="info-item"><span class="label">状态</span><span class="value">${getRunStatusText(getScheduledRunUiStatus(detail))}</span></div>
-            <div class="info-item"><span class="label">开始时间</span><span class="value">${format.date(detail.started_at)}</span></div>
-            <div class="info-item"><span class="label">结束时间</span><span class="value">${format.date(detail.finished_at)}</span></div>
-            <div class="info-item"><span class="label">持续时长</span><span class="value">${formatScheduledRunDurationSeconds(detail.duration_seconds)}</span></div>
-            <div class="info-item"><span class="label">错误信息</span><span class="value">${escapeHtml(detail.error_message || '-')}</span></div>
-            <div class="info-item"><span class="label">停止请求时间</span><span class="value">${format.date(detail.stop_requested_at)}</span></div>
-            <div class="info-item"><span class="label">停止请求人</span><span class="value">${escapeHtml(detail.stop_requested_by || '-')}</span></div>
-            <div class="info-item"><span class="label">停止原因</span><span class="value">${escapeHtml(detail.stop_reason || '-')}</span></div>
-            <div class="info-item scheduled-run-summary"><span class="label">摘要</span><span class="value">${escapeHtml(summarizeScheduledRun(detail))}</span></div>
-        </div>
     `;
 }
 
-function parseScheduledRunLogLines(text) {
-    const normalized = String(text || '').replace(/\r\n/g, '\n');
-    if (!normalized) return [];
-    return normalized
-        .split('\n')
-        .filter((line, index, lines) => line !== '' || index < lines.length - 1)
-        .map((line) => {
-            const match = line.match(SCHEDULED_RUN_LOG_LINE_PATTERN);
-            if (!match) {
-                return {
-                    raw: line,
-                    timestamp: '',
-                    level: '',
-                    message: line,
-                };
-            }
-            return {
-                raw: line,
-                timestamp: match[1],
-                level: match[2],
-                message: match[3] || '',
-            };
-        });
-}
-
-function getScheduledRunConsoleElement() {
-    return scheduledTaskElements.runLogConsole || document.getElementById('run-log-console');
-}
-
-function getScheduledRunSharedConsoleController() {
-    if (!hasSharedScheduledRunLogRuntime()) return null;
-    return scheduledRunSharedConsoleController;
-}
-
-function getScheduledRunRenderableLines() {
-    const lines = [...scheduledRunConsoleState.lines];
-    if (scheduledRunConsoleState.pendingLineText) {
-        const pendingLine = parseScheduledRunLogLines(scheduledRunConsoleState.pendingLineText)[0];
-        if (pendingLine) {
-            lines.push(pendingLine);
-        }
-    }
-    return lines;
-}
-
-function syncScheduledRunConsoleMountFallback() {
-    if (!scheduledTaskElements.runLogModalBody || getScheduledRunConsoleElement()) return;
-    scheduledTaskElements.runLogModalBody.innerHTML = `
-        <div id="run-log-console" class="scheduled-run-console-shell ${scheduledRunConsoleState.wrap ? 'scheduled-run-log-wrap' : 'scheduled-run-log-nowrap'}"></div>
-    `;
-}
-
-function updateScheduledRunConsoleShell() {
-    const consoleElement = getScheduledRunConsoleElement();
-    if (!consoleElement) return null;
-    consoleElement.classList.add('scheduled-run-console-shell');
-    if (scheduledRunConsoleState.wrap) {
-        consoleElement.classList.add('scheduled-run-log-wrap');
-        consoleElement.classList.remove('scheduled-run-log-nowrap');
-    } else {
-        consoleElement.classList.add('scheduled-run-log-nowrap');
-        consoleElement.classList.remove('scheduled-run-log-wrap');
-    }
-    return consoleElement;
-}
-
-function formatScheduledRunLogTimestamp(timestamp) {
-    return String(timestamp || '').slice(0, 19);
-}
-
-function renderScheduledRunConsoleLine(line) {
-    if (!line.level) {
-        return `
-            <div class="scheduled-run-log-line">
-                <span>${escapeHtml(line.raw || '')}</span>
-            </div>
-        `;
-    }
-    const levelClass = `scheduled-run-log-level-${String(line.level).toLowerCase()}`;
-    return `
-        <div class="scheduled-run-log-line">
-            <span class="scheduled-run-log-timestamp">${escapeHtml(formatScheduledRunLogTimestamp(line.timestamp))}</span>
-            <span class="scheduled-run-log-level-badge ${levelClass}">${escapeHtml(line.level)}</span>
-            <span class="scheduled-run-log-message">${escapeHtml(line.message)}</span>
-        </div>
-    `;
-}
-
-function renderScheduledRunConsole() {
-    const sharedController = getScheduledRunSharedConsoleController();
-    if (sharedController) {
-        sharedController.toggleWrap(scheduledRunConsoleState.wrap);
-        sharedController.toggleAutoScroll(Boolean(scheduledTaskElements.runLogAutoScrollInput?.checked));
+function openRunCenterForPlan(planId) {
+    const href = buildScheduledTasksRunCenterHref(planId);
+    if (window.location && typeof window.location.assign === 'function') {
+        window.location.assign(href);
         return;
     }
-
-    syncScheduledRunConsoleMountFallback();
-    const consoleElement = updateScheduledRunConsoleShell();
-    if (!consoleElement) return;
-
-    const previousScrollTop = Number(consoleElement.scrollTop || 0);
-    const shouldAutoScroll = Boolean(scheduledTaskElements.runLogAutoScrollInput?.checked);
-    const lines = scheduledRunConsoleState.visibleLines;
-    const contentHtml = lines.length
-        ? lines.map((line) => renderScheduledRunConsoleLine(line)).join('')
-        : `
-            <div class="scheduled-run-log-line">
-                <span class="scheduled-run-log-level-badge">INFO</span>
-                <span>暂无记录</span>
-            </div>
-        `;
-
-    consoleElement.innerHTML = contentHtml;
-
-    if (shouldAutoScroll) {
-        consoleElement.scrollTop = Number(consoleElement.scrollHeight || 0);
-        return;
-    }
-    consoleElement.scrollTop = previousScrollTop;
-}
-
-function applyScheduledRunLogFilters() {
-    const searchTerm = scheduledRunConsoleState.searchTerm.trim().toLowerCase();
-    const sharedController = getScheduledRunSharedConsoleController();
-    if (sharedController) {
-        sharedController.setSearch(searchTerm);
-        sharedController.setLevelFilter(scheduledRunConsoleState.levelFilter);
-        return;
-    }
-
-    scheduledRunConsoleState.visibleLines = getScheduledRunRenderableLines().filter((line) => {
-        const matchesLevel = !scheduledRunConsoleState.levelFilter || line.level === scheduledRunConsoleState.levelFilter;
-        const matchesSearch = !searchTerm || line.raw.toLowerCase().includes(searchTerm);
-        return matchesLevel && matchesSearch;
-    });
-    renderScheduledRunConsole();
-}
-
-function appendScheduledRunLogChunk(chunk, options = {}) {
-    const reset = options.reset === true;
-    if (reset) {
-        scheduledRunConsoleState.lines = [];
-        scheduledRunConsoleState.pendingLineText = '';
-    }
-
-    const incomingText = String(chunk || '').replace(/\r\n/g, '\n');
-    if (incomingText) {
-        const combinedText = `${scheduledRunConsoleState.pendingLineText}${incomingText}`;
-        const parts = combinedText.split('\n');
-        const endsWithNewline = combinedText.endsWith('\n');
-        scheduledRunConsoleState.pendingLineText = endsWithNewline ? '' : (parts.pop() ?? '');
-        const parsedLines = parts.length ? parseScheduledRunLogLines(parts.join('\n')) : [];
-        if (parsedLines.length) {
-            scheduledRunConsoleState.lines.push(...parsedLines);
-        }
-    }
-
-    applyScheduledRunLogFilters();
-}
-
-function handleScheduledRunLogSearchKeydown(event) {
-    if (event?.key !== 'Enter') return;
-    event.preventDefault();
-    scheduledRunConsoleState.searchTerm = String(scheduledTaskElements.runLogSearchInput?.value || '').trim();
-    applyScheduledRunLogFilters();
-}
-
-function handleScheduledRunLogLevelFilterChange() {
-    scheduledRunConsoleState.levelFilter = String(scheduledTaskElements.runLogLevelFilter?.value || '').trim();
-    applyScheduledRunLogFilters();
-}
-
-function handleScheduledRunLogWrapChange() {
-    scheduledRunConsoleState.wrap = Boolean(scheduledTaskElements.runLogWrapInput?.checked);
-    const sharedController = getScheduledRunSharedConsoleController();
-    if (sharedController) {
-        sharedController.toggleWrap(scheduledRunConsoleState.wrap);
-        return;
-    }
-    renderScheduledRunConsole();
-}
-
-function handleScheduledRunLogAutoScrollChange() {
-    const sharedController = getScheduledRunSharedConsoleController();
-    if (sharedController) {
-        sharedController.toggleAutoScroll(Boolean(scheduledTaskElements.runLogAutoScrollInput?.checked));
-        return;
-    }
-
-    if (!scheduledTaskElements.runLogAutoScrollInput?.checked) return;
-    const consoleElement = getScheduledRunConsoleElement();
-    if (!consoleElement) return;
-    consoleElement.scrollTop = Number(consoleElement.scrollHeight || 0);
-}
-
-async function copyScheduledRunVisibleLogs() {
-    if (hasSharedScheduledRunLogRuntime() && scheduledRunSharedConsoleController) {
-        const copiedText = await scheduledRunSharedConsoleController.copyVisibleText();
-        if (!copiedText) {
-            toast.warning('暂无可复制日志');
-            return;
-        }
-        toast.success('已复制当前日志');
-        return;
-    }
-
-    const visibleText = scheduledRunConsoleState.visibleLines.map((line) => line.raw).join('\n');
-    if (!visibleText) {
-        toast.warning('暂无可复制日志');
-        return;
-    }
-    if (typeof navigator?.clipboard?.writeText !== 'function') {
-        toast.warning('当前环境不支持复制');
-        return;
-    }
-    await navigator.clipboard.writeText(visibleText);
-    toast.success('已复制当前日志');
-}
-
-function clearScheduledRunConsoleView() {
-    if (hasSharedScheduledRunLogRuntime() && scheduledRunSharedConsoleController) {
-        scheduledRunSharedConsoleController.clearView();
-        return;
-    }
-    scheduledRunConsoleState.visibleLines = [];
-    renderScheduledRunConsole();
-}
-
-function renderScheduledRunLogLoadError(message) {
-    syncScheduledRunConsoleMountFallback();
-    const consoleElement = updateScheduledRunConsoleShell();
-    if (!consoleElement) return;
-    consoleElement.innerHTML = `<div style="color: var(--danger-color, #d9534f);">${escapeHtml(message)}</div>`;
-}
-
-function setScheduledRunStopButtonState(detail) {
-    const button = scheduledTaskElements.runLogStopBtn;
-    if (!button) return;
-    if (!detail || !detail.is_running) {
-        button.style.display = 'none';
-        button.disabled = false;
-        button.textContent = '停止运行';
-        button.removeAttribute('data-run-id');
-        button.removeAttribute('data-stopping');
-        return;
-    }
-
-    button.style.display = '';
-    button.dataset.runId = String(detail.id);
-    if (getScheduledRunUiStatus(detail) === 'stopping') {
-        button.textContent = '停止中';
-        button.disabled = true;
-        button.setAttribute('data-stopping', 'true');
-        return;
-    }
-
-    button.textContent = '停止运行';
-    button.disabled = false;
-    button.removeAttribute('data-stopping');
-}
-
-function stopScheduledRunLogPolling() {
-    if (scheduledRunLogPollingTimer) {
-        clearTimeout(scheduledRunLogPollingTimer);
-        scheduledRunLogPollingTimer = null;
-    }
-}
-
-function scheduleScheduledRunLogPolling(runId, token) {
-    scheduledRunLogPollingTimer = setTimeout(async () => {
-        if (!isScheduledRunLogRequestActive(runId, token)) {
-            stopScheduledRunLogPolling();
-            return;
-        }
-        if (scheduledRunLogPollingInFlight) {
-            return;
-        }
-        scheduledRunLogPollingInFlight = true;
-        try {
-            const data = await loadScheduledRunLogChunk(runId, { token });
-            if (!data || !isScheduledRunLogRequestActive(runId, token)) {
-                return;
-            }
-            if (data.is_running) {
-                scheduleScheduledRunLogPolling(runId, token);
-            } else {
-                stopScheduledRunLogPolling();
-            }
-        } catch (error) {
-            stopScheduledRunLogPolling();
-        } finally {
-            scheduledRunLogPollingInFlight = false;
-        }
-    }, 2000);
-}
-
-function startScheduledRunLogPolling(runId, token = scheduledRunLogLoadToken) {
-    stopScheduledRunLogPolling();
-    scheduleScheduledRunLogPolling(runId, token);
-}
-
-async function loadScheduledRunLogChunk(runId, { reset = false, token = scheduledRunLogLoadToken } = {}) {
-    const targetId = Number(runId);
-    if (!Number.isInteger(targetId) || targetId <= 0) return null;
-
-    let offset = reset ? 0 : currentScheduledRunLogOffset;
-    let finalData = null;
-    let shouldReset = reset;
-    const seenOffsets = new Set();
-
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-        if (!isScheduledRunLogRequestActive(targetId, token)) {
-            return null;
-        }
-
-        const data = await api.get(`/scheduled-runs/${targetId}/logs?offset=${offset}`);
-        if (!isScheduledRunLogRequestActive(targetId, token)) {
-            return null;
-        }
-
-        finalData = data;
-        const nextOffset = Number(data.next_offset || 0);
-        currentScheduledRunLogOffset = nextOffset;
-
-        if (activeScheduledRunDetail && Number(activeScheduledRunDetail.id) === targetId) {
-            activeScheduledRunDetail = {
-                ...activeScheduledRunDetail,
-                status: data.status,
-                stop_requested_at: data.stop_requested_at,
-                log_version: data.log_version,
-                last_log_at: data.last_log_at,
-                is_running: data.is_running,
-                can_stop: Boolean(data.is_running) && !data.stop_requested_at,
-            };
-            renderScheduledRunStatusBar(activeScheduledRunDetail);
-            setScheduledRunStopButtonState(activeScheduledRunDetail);
-        }
-
-        updateScheduledRunCacheItem(targetId, (run) => ({
-            ...run,
-            status: data.status,
-            stop_requested_at: data.stop_requested_at,
-            last_log_at: data.last_log_at,
-            can_stop: Boolean(data.is_running) && !data.stop_requested_at,
-        }));
-        renderScheduledRuns(scheduledRunsCache);
-        appendScheduledRunLogChunk(data.chunk, { reset: shouldReset });
-        shouldReset = false;
-
-        if (!data.has_more) {
-            break;
-        }
-
-        if (seenOffsets.has(nextOffset) || nextOffset === offset) {
-            break;
-        }
-        seenOffsets.add(nextOffset);
-        offset = nextOffset;
-    }
-
-    if (finalData && !finalData.is_running) {
-        stopScheduledRunLogPolling();
-    }
-
-    return finalData;
-}
-
-async function openScheduledRunDetail(runId) {
-    const targetId = Number(runId);
-    if (!Number.isInteger(targetId) || targetId <= 0) return;
-    if (scheduledTaskElements.runDetailModal) {
-        scheduledTaskElements.runDetailModal.classList.add('active');
-    }
-    if (scheduledTaskElements.runDetailModalBody) {
-        scheduledTaskElements.runDetailModalBody.innerHTML = '<div style="color: var(--text-muted);">运行详情加载中...</div>';
-    }
-    try {
-        const detail = await api.get(`/scheduled-runs/${targetId}`);
-        renderScheduledRunDetailBody(detail);
-    } catch (error) {
-        if (!scheduledTaskElements.runDetailModalBody) return;
-        scheduledTaskElements.runDetailModalBody.innerHTML = `<div style="color: var(--danger-color, #d9534f);">加载运行详情失败：${escapeHtml(error.message || '请求失败')}</div>`;
-        toast.error(`加载运行详情失败: ${error.message}`);
-    }
-}
-
-async function openScheduledRunLog(runId) {
-    resetScheduledRunModalState();
-    activeScheduledRunId = Number(runId);
-    const token = scheduledRunLogLoadToken;
-    if (scheduledTaskElements.runLogModal) {
-        scheduledTaskElements.runLogModal.classList.add('active');
-    }
-
-    try {
-        const detail = await api.get(`/scheduled-runs/${runId}`);
-        if (!isScheduledRunLogRequestActive(runId, token)) {
-            return;
-        }
-        activeScheduledRunDetail = detail;
-        renderScheduledRunStatusBar(detail);
-        setScheduledRunStopButtonState(detail);
-        if (hasSharedScheduledRunLogRuntime()) {
-            const bootstrapped = await bootstrapScheduledRunSharedRealtime(runId, token);
-            if (!isScheduledRunLogRequestActive(runId, token)) {
-                return;
-            }
-            if (bootstrapped) {
-                return;
-            }
-        }
-        renderScheduledRunConsole();
-        const logChunk = await loadScheduledRunLogChunk(runId, { reset: true, token });
-        if (!isScheduledRunLogRequestActive(runId, token)) {
-            return;
-        }
-        if (logChunk?.is_running) {
-            startScheduledRunLogPolling(runId, token);
-        }
-    } catch (error) {
-        if (!isScheduledRunLogRequestActive(runId, token)) {
-            return;
-        }
-        renderScheduledRunStatusBar(null);
-        renderScheduledRunLogLoadError(`加载运行日志失败：${error.message || '请求失败'}`);
-        toast.error(`加载运行日志失败: ${error.message}`);
-    }
-}
-
-async function stopScheduledRun(runId) {
-    const targetId = Number(runId);
-    if (!Number.isInteger(targetId) || targetId <= 0) return;
-
-    try {
-        await api.post(`/scheduled-runs/${targetId}/stop`, {});
-        toast.success('已发送停止请求');
-        const optimisticStopRequestedAt = new Date().toISOString();
-        updateScheduledRunCacheItem(targetId, (run) => ({
-            ...run,
-            stop_requested_at: optimisticStopRequestedAt,
-            can_stop: false,
-        }));
-        renderScheduledRuns(scheduledRunsCache);
-
-        if (activeScheduledRunDetail && Number(activeScheduledRunDetail.id) === targetId) {
-            activeScheduledRunDetail = {
-                ...activeScheduledRunDetail,
-                stop_requested_at: optimisticStopRequestedAt,
-                can_stop: false,
-            };
-            renderScheduledRunStatusBar(activeScheduledRunDetail);
-            setScheduledRunStopButtonState(activeScheduledRunDetail);
-        }
-
-        await loadScheduledRuns();
-    } catch (error) {
-        toast.error(`停止失败: ${error.message}`);
-    }
+    window.location.href = href;
 }
 
 async function handlePlanAction(button) {
@@ -2231,7 +1172,7 @@ async function handlePlanAction(button) {
                 showPlanDetail(planId);
                 return;
             case 'logs':
-                await openRunLogs(planId);
+                openRunCenterForPlan(planId);
                 return;
             case 'edit':
                 await openEditPlanModal(planId);
@@ -2248,49 +1189,17 @@ async function handlePlanAction(button) {
     });
 }
 
-async function handleRunLogAction(button) {
-    const action = button?.dataset?.action;
-
-    return withButtonBusy(button, async () => {
-        if (action === 'view-run-detail') {
-            const runId = Number.parseInt(button?.dataset?.runId || '', 10);
-            await openScheduledRunDetail(runId);
-            return;
-        }
-
-        if (action === 'view-run-log') {
-            const runId = Number.parseInt(button?.dataset?.runId || '', 10);
-            await openScheduledRunLog(runId);
-            return;
-        }
-
-        if (action === 'stop-run') {
-            const runId = Number.parseInt(button?.dataset?.runId || scheduledTaskElements.runLogStopBtn?.dataset?.runId || '', 10);
-            await stopScheduledRun(runId);
-            return;
-        }
-
-        if (action === 'back-to-runs') {
-            closeModal('run-log-modal');
-            focusScheduledRunsCard();
-        }
-    });
-}
-
 function closeModal(modalId) {
     const modal = document.getElementById(modalId);
     if (!modal) return;
-    if (modalId === 'run-log-modal') {
-        resetScheduledRunModalState();
-    }
     modal.classList.remove('active');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     loadPlans();
-    loadScheduledRuns();
     loadCpaServices();
     setConfigEditorState('cpa_cleanup', {}, {});
+    renderScheduledTasksSupportContext();
 
     if (scheduledTaskElements.refreshBtn) {
         scheduledTaskElements.refreshBtn.addEventListener('click', (event) => {
@@ -2301,65 +1210,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (scheduledTaskElements.createPlanBtn) {
         scheduledTaskElements.createPlanBtn.addEventListener('click', (event) => {
             void withButtonBusy(event.currentTarget, () => openCreatePlanModal());
-        });
-    }
-
-    if (scheduledTaskElements.runFilterApplyBtn) {
-        scheduledTaskElements.runFilterApplyBtn.addEventListener('click', (event) => {
-            updateScheduledRunFiltersFromInputs();
-            void withButtonBusy(event.currentTarget, () => loadScheduledRuns());
-        });
-    }
-
-    if (scheduledTaskElements.runFilterResetBtn) {
-        scheduledTaskElements.runFilterResetBtn.addEventListener('click', (event) => {
-            scheduledRunFilters = {
-                taskType: '',
-                status: '',
-                startedFrom: '',
-                startedTo: '',
-                planId: null,
-                page: 1,
-                pageSize: 20,
-            };
-            scheduledRunPaginationMeta = {
-                total: 0,
-                page: 1,
-                pageSize: 20,
-            };
-            syncScheduledRunFiltersToInputs();
-            void withButtonBusy(event.currentTarget, () => loadScheduledRuns());
-        });
-    }
-
-    if (scheduledTaskElements.runPrevPageBtn) {
-        scheduledTaskElements.runPrevPageBtn.addEventListener('click', (event) => {
-            event.preventDefault();
-            void withButtonBusy(event.currentTarget, () => jumpToScheduledRunPage(String((scheduledRunFilters.page || 1) - 1)));
-        });
-    }
-
-    if (scheduledTaskElements.runNextPageBtn) {
-        scheduledTaskElements.runNextPageBtn.addEventListener('click', (event) => {
-            event.preventDefault();
-            void withButtonBusy(event.currentTarget, () => jumpToScheduledRunPage(String((scheduledRunFilters.page || 1) + 1)));
-        });
-    }
-
-    if (scheduledTaskElements.runPageJumpBtn) {
-        scheduledTaskElements.runPageJumpBtn.addEventListener('click', (event) => {
-            event.preventDefault();
-            const targetPage = scheduledTaskElements.runPageJumpInput?.value || '';
-            void withButtonBusy(event.currentTarget, () => jumpToScheduledRunPage(targetPage));
-        });
-    }
-
-    if (scheduledTaskElements.runPageJumpInput) {
-        scheduledTaskElements.runPageJumpInput.addEventListener('keydown', (event) => {
-            if (event.key !== 'Enter') return;
-            event.preventDefault();
-            const targetPage = scheduledTaskElements.runPageJumpInput?.value || '';
-            void jumpToScheduledRunPage(targetPage);
         });
     }
 
@@ -2408,48 +1258,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (scheduledTaskElements.runLogRefreshBtn) {
-        scheduledTaskElements.runLogRefreshBtn.addEventListener('click', (event) => {
-            if (!activeScheduledRunId) return;
-            void withButtonBusy(event.currentTarget, () => openScheduledRunLog(activeScheduledRunId));
-        });
-    }
-
-    if (scheduledTaskElements.runLogSearchInput) {
-        scheduledTaskElements.runLogSearchInput.addEventListener('keydown', handleScheduledRunLogSearchKeydown);
-    }
-
-    if (scheduledTaskElements.runLogLevelFilter) {
-        scheduledTaskElements.runLogLevelFilter.addEventListener('change', handleScheduledRunLogLevelFilterChange);
-    }
-
-    if (scheduledTaskElements.runLogWrapInput) {
-        scheduledTaskElements.runLogWrapInput.addEventListener('change', handleScheduledRunLogWrapChange);
-    }
-
-    if (scheduledTaskElements.runLogAutoScrollInput) {
-        scheduledTaskElements.runLogAutoScrollInput.addEventListener('change', handleScheduledRunLogAutoScrollChange);
-    }
-
-    if (scheduledTaskElements.runLogCopyBtn) {
-        scheduledTaskElements.runLogCopyBtn.addEventListener('click', (event) => {
-            void withButtonBusy(event.currentTarget, () => copyScheduledRunVisibleLogs());
-        });
-    }
-
-    if (scheduledTaskElements.runLogClearBtn) {
-        scheduledTaskElements.runLogClearBtn.addEventListener('click', () => {
-            clearScheduledRunConsoleView();
-        });
-    }
-
     document.querySelectorAll('[data-close-modal]').forEach((btn) => {
         btn.addEventListener('click', (event) => {
             void withButtonBusy(event.currentTarget, () => closeModal(btn.dataset.closeModal));
         });
     });
 
-    [scheduledTaskElements.planFormModal, scheduledTaskElements.planModal, scheduledTaskElements.runLogModal].forEach((modal) => {
+    [scheduledTaskElements.planFormModal, scheduledTaskElements.planModal].forEach((modal) => {
         if (!modal) return;
         modal.addEventListener('click', (event) => {
             if (event.target === modal) {
@@ -2460,29 +1275,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 window.loadPlans = loadPlans;
-window.loadScheduledRuns = loadScheduledRuns;
-window.buildScheduledRunQuery = buildScheduledRunQuery;
-window.renderScheduledRuns = renderScheduledRuns;
 window.openCreatePlanModal = openCreatePlanModal;
 window.openEditPlanModal = openEditPlanModal;
 window.submitPlanForm = submitPlanForm;
-window.openRunLogs = openRunLogs;
 window.runPlanNow = runPlanNow;
 window.showPlanDetail = showPlanDetail;
 window.togglePlanEnabled = togglePlanEnabled;
-window.openScheduledRunDetail = openScheduledRunDetail;
-window.openScheduledRunLog = openScheduledRunLog;
-window.viewRunLog = openScheduledRunLog;
-window.startScheduledRunLogPolling = startScheduledRunLogPolling;
-window.stopScheduledRunLogPolling = stopScheduledRunLogPolling;
-window.parseScheduledRunLogLines = parseScheduledRunLogLines;
-window.applyScheduledRunLogFilters = applyScheduledRunLogFilters;
-window.renderScheduledRunConsole = renderScheduledRunConsole;
-window.appendScheduledRunLogChunk = appendScheduledRunLogChunk;
-window.handleScheduledRunLogSearchKeydown = handleScheduledRunLogSearchKeydown;
-window.stopScheduledRun = stopScheduledRun;
 window.handlePlanAction = handlePlanAction;
-window.handleRunLogAction = handleRunLogAction;
+window.renderScheduledTasksSupportContext = renderScheduledTasksSupportContext;
 window.handleConfigEntryInput = handleConfigEntryInput;
 window.handleConfigEntryAction = handleConfigEntryAction;
 window.renderConfigEntries = renderConfigEntries;

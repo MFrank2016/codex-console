@@ -302,6 +302,22 @@ def test_registration_workbench_falls_back_to_stream_polling_when_websocket_hand
     assert result["polling_interval_started"] is True
 
 
+def test_app_js_builds_run_center_href_for_single_task_context():
+    result = run_app_js_scenario("build_run_center_href_single_task")
+    assert result["href"] == (
+        "/run-center?scope=task&task_uuid=task-single-01"
+        "&source=registration-workbench"
+    )
+
+
+def test_app_js_builds_run_center_href_for_batch_context():
+    result = run_app_js_scenario("build_run_center_href_batch")
+    assert result["href"] == (
+        "/run-center?scope=batch&batch_id=batch-001"
+        "&source=registration-workbench"
+    )
+
+
 def test_app_js_uses_shared_realtime_log_client_without_legacy_dom_append_main_path():
     script = Path("static/js/app.js").read_text(encoding="utf-8")
 
@@ -404,7 +420,7 @@ def test_accounts_template_filter_panel_uses_shared_shell_classes():
 
 
 def test_shared_stylesheet_defines_filter_and_pagination_panel_selectors():
-    stylesheet = Path("static/css/style.css").read_text(encoding="utf-8")
+    stylesheet = Path("static/css/workspace_components.css").read_text(encoding="utf-8")
     assert ".filter-panel" in stylesheet
     assert ".filter-panel-grid" in stylesheet
     assert ".filter-panel-actions" in stylesheet

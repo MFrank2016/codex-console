@@ -1147,118 +1147,6 @@ body {
 }
 
 /* ============================================
-   分页
-   ============================================ */
-
-.pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: var(--spacing-md);
-    margin-top: var(--spacing-lg);
-    padding-top: var(--spacing-lg);
-    border-top: 1px solid var(--border-light);
-    background: linear-gradient(180deg, transparent 0%, var(--border-light) 100%);
-}
-
-.pagination-panel {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--spacing-md);
-    flex-wrap: wrap;
-    margin-top: var(--spacing-lg);
-    padding-top: var(--spacing-lg);
-    border-top: 1px solid var(--border-light);
-}
-
-.pagination-panel--dense {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-lg);
-    background: linear-gradient(180deg, rgba(148, 163, 184, 0.04) 0%, var(--surface) 100%);
-}
-
-.pagination.pagination-panel {
-    justify-content: center;
-}
-
-.pagination-jump {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-.pagination-jump--dense {
-    gap: 8px;
-}
-
-.pagination-summary-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 36px;
-    padding: 6px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
-    background: var(--surface);
-    color: var(--text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-}
-
-.pagination-jump-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-.pagination-jump-field {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    padding: 4px 8px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
-    background: var(--surface);
-}
-
-.pagination-jump-field label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    white-space: nowrap;
-}
-
-.filter-input-cpa-service-id {
-    width: 160px;
-}
-
-.filter-input-search {
-    min-width: 200px;
-}
-
-.pagination-jump-input {
-    width: 72px;
-    min-height: 36px;
-    padding: 6px 8px;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-}
-
-#page-info {
-    color: var(--text-secondary);
-    font-size: 0.875rem;
-    min-width: 100px;
-    text-align: center;
-}
-
-/* ============================================
    标签页
    ============================================ */
 
@@ -1832,18 +1720,6 @@ body {
 
     .nav-links {
         width: 100%;
-        justify-content: center;
-    }
-
-    .pagination-panel--dense,
-    .pagination-jump,
-    .pagination-jump-actions,
-    .pagination-jump-field {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .pagination-summary-pill {
         justify-content: center;
     }
 

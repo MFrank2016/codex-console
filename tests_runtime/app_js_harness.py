@@ -476,7 +476,7 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  buildRunCenterHref,\n  elements,\n}};`,
   context,
 );
 
@@ -1355,6 +1355,24 @@ async function runScenario() {{
         connection_status: String(getElement('registration-stream-status').textContent || ''),
         api_get_paths: logs.apiGetPaths.slice(),
         polling_interval_started: !!pollingHandle,
+      }};
+    }}
+    case 'build_run_center_href_single_task': {{
+      return {{
+        href: exported.buildRunCenterHref({{
+          scope: 'task',
+          task_uuid: 'task-single-01',
+          source: 'registration-workbench',
+        }}),
+      }};
+    }}
+    case 'build_run_center_href_batch': {{
+      return {{
+        href: exported.buildRunCenterHref({{
+          scope: 'batch',
+          batch_id: 'batch-001',
+          source: 'registration-workbench',
+        }}),
       }};
     }}
     default:

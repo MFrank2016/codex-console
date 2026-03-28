@@ -68,6 +68,40 @@ function shouldRenderSingleTaskSteps(task) {
     return pipelineKey !== 'codexgen_pipeline';
 }
 
+function buildRunCenterHref(context = {}) {
+    const params = new URLSearchParams();
+    const scope = String(context.scope || '').trim();
+    const source = String(context.source || '').trim();
+
+    if (scope) {
+        params.set('scope', scope);
+    }
+    if (scope === 'task' && context.task_uuid) {
+        params.set('task_uuid', String(context.task_uuid));
+    }
+    if (scope === 'batch' && context.batch_id) {
+        params.set('batch_id', String(context.batch_id));
+    }
+    if (scope === 'scheduled') {
+        if (context.plan_id) {
+            params.set('plan_id', String(context.plan_id));
+        }
+        if (context.run_id) {
+            params.set('run_id', String(context.run_id));
+        }
+    }
+    if (source) {
+        params.set('source', source);
+    }
+
+    const query = params.toString();
+    return query ? `/run-center?${query}` : '/run-center';
+}
+
+if (typeof window !== 'undefined') {
+    window.buildRunCenterHref = buildRunCenterHref;
+}
+
 function formatElapsedMsToClock(elapsedMs) {
     const safeMs = Number.isFinite(Number(elapsedMs)) ? Math.max(0, Number(elapsedMs)) : 0;
     const totalSeconds = Math.floor(safeMs / 1000);
