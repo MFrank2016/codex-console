@@ -2,6 +2,7 @@ import asyncio
 from contextlib import contextmanager
 
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 from src.application.proxy_dispatch_service import ResolvedProxyCandidate
 from src.core.registration_job import RegistrationJobResult
@@ -247,6 +248,48 @@ def test_registration_service_creates_run_records_and_terminal_status(db_factory
     assert [event.message for event in result.events] == ["running", "completed"]
     assert task_manager.get_status("task-1")["status"] == "completed"
     assert "job-started" in task_manager.get_logs("task-1")
+
+
+def test_registration_service_default_run_persistence_survives_fresh_session(db_factory, temp_db):
+    from src.application.registration_runs_service import RegistrationRunsService
+    from src.application.registration_service import RegistrationService
+
+    task_uuid = "task-fresh-session-run-persistence"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid, pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+
+    def fake_job_runner(**kwargs):
+        return RegistrationJobResult(
+            success=True,
+            account_id=303,
+            email="fresh-session@example.com",
+            result_payload={"success": True, "email": "fresh-session@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+    service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    fresh_session = sessionmaker(bind=temp_db.get_bind())()
+    try:
+        runs_service = RegistrationRunsService(fresh_session)
+        run = runs_service.get_run_by_task_uuid(task_uuid)
+        assert run is not None
+        assert run.status == "completed"
+        assert run.completed_at is not None
+        events = runs_service.get_events(run.id)
+        assert any(event.message == "completed" for event in events)
+    finally:
+        fresh_session.close()
 
 
 

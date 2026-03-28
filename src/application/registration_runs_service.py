@@ -8,6 +8,8 @@ from ..database.repositories.registration_repository import RegistrationReposito
 
 class RegistrationRunsService:
     TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+    # 迁移兼容：调用方尚未全量显式声明 commit ownership 前，默认保持 commit=True。
+    DEFAULT_COMMIT = True
 
     def __init__(self, session: Session):
         self.session = session
@@ -29,7 +31,7 @@ class RegistrationRunsService:
         task_uuid: str,
         batch_id: str | None,
         trigger_source: str,
-        commit: bool = False,
+        commit: bool = DEFAULT_COMMIT,
     ):
         existing = self.repository.get_run_by_task_uuid(task_uuid)
         if existing is not None:
@@ -42,7 +44,7 @@ class RegistrationRunsService:
         )
         return self._persist(run, commit=commit)
 
-    def append_event(self, run_id: int, *, level: str, message: str, commit: bool = False):
+    def append_event(self, run_id: int, *, level: str, message: str, commit: bool = DEFAULT_COMMIT):
         event = self.repository.append_event(
             run_id=run_id,
             level=level,
@@ -51,7 +53,7 @@ class RegistrationRunsService:
         )
         return self._persist(event, commit=commit)
 
-    def mark_started(self, run_id: int, *, commit: bool = False):
+    def mark_started(self, run_id: int, *, commit: bool = DEFAULT_COMMIT):
         run = self.get_run(run_id)
         if run is None:
             return None
@@ -62,7 +64,7 @@ class RegistrationRunsService:
         run = self.repository.update_run(run_id, started_at=utc_now_naive())
         return self._persist(run, commit=commit)
 
-    def mark_running(self, run_id: int, *, commit: bool = False):
+    def mark_running(self, run_id: int, *, commit: bool = DEFAULT_COMMIT):
         run = self.get_run(run_id)
         if run is None:
             return None
@@ -78,7 +80,7 @@ class RegistrationRunsService:
         )
         return self._persist(run, commit=commit)
 
-    def mark_completed(self, run_id: int, *, commit: bool = False):
+    def mark_completed(self, run_id: int, *, commit: bool = DEFAULT_COMMIT):
         run = self.get_run(run_id)
         if run is None:
             return None
@@ -93,7 +95,7 @@ class RegistrationRunsService:
         )
         return self._persist(run, commit=commit)
 
-    def mark_failed(self, run_id: int, *, error_message: str | None = None, commit: bool = False):
+    def mark_failed(self, run_id: int, *, error_message: str | None = None, commit: bool = DEFAULT_COMMIT):
         run = self.get_run(run_id)
         if run is None:
             return None
@@ -108,7 +110,7 @@ class RegistrationRunsService:
         )
         return self._persist(run, commit=commit)
 
-    def mark_cancelled(self, run_id: int, *, error_message: str | None = None, commit: bool = False):
+    def mark_cancelled(self, run_id: int, *, error_message: str | None = None, commit: bool = DEFAULT_COMMIT):
         run = self.get_run(run_id)
         if run is None:
             return None
