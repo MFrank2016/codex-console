@@ -6,17 +6,24 @@ import asyncio
 import logging
 import uuid
 import random
+from datetime import datetime, timedelta
 from typing import Any, List, Optional, Dict, Tuple
 
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...database import crud
+from ...database.repositories import registration_failure_repository as failure_repo
 from ...database.session import get_db
 from ...database.models import RegistrationTask, Proxy
 from ...core.registration_batch_metrics import apply_task_outcome, build_domain_stats
 from ...core.registration_batch_stats import finalize_batch_statistics
 from ...core.registration_job import run_registration_job
+from ...core.registration_failure_records import (
+    RegistrationFailureQuery,
+    current_shanghai_day_window_utc_naive,
+    resolve_failure_window,
+)
 from ...application import BatchRegistrationService, ProxyDispatchService, RegistrationService
 from ...application.batch_registration_service import (
     DEFAULT_BATCH_PROXY_POOLS_STORE,
@@ -24,6 +31,7 @@ from ...application.batch_registration_service import (
 )
 from ...services import EmailServiceType
 from ...core.time import utc_now, utc_now_naive
+from ..auth import require_authenticated
 from ..task_manager import task_manager
 
 logger = logging.getLogger(__name__)
@@ -159,6 +167,40 @@ class TaskListResponse(BaseModel):
     tasks: List[RegistrationTaskResponse]
 
 
+class RegistrationFailureItemResponse(BaseModel):
+    id: int
+    task_uuid: str
+    attempt_no: int
+    batch_id: Optional[str] = None
+    pipeline_key: str
+    registration_mode: str
+    email: Optional[str] = None
+    email_suffix: Optional[str] = None
+    email_service_type: Optional[str] = None
+    display_name: Optional[str] = None
+    birthdate: Optional[str] = None
+    proxy: Optional[str] = None
+    proxy_ip: Optional[str] = None
+    error_code: str
+    error_detail: str
+    failed_at: Optional[str] = None
+    created_at: Optional[str] = None
+    extra_json: Optional[dict] = None
+
+
+class RegistrationFailureListResponse(BaseModel):
+    total: int
+    items: List[RegistrationFailureItemResponse]
+
+
+class RegistrationFailureSummaryResponse(BaseModel):
+    total_failed_attempts: int
+    today_failed_attempts: int
+    top_email_suffixes: List[dict]
+    top_error_codes: List[dict]
+    top_proxy_ips: List[dict]
+
+
 # ============== Outlook 批量注册模型 ==============
 
 class OutlookAccountForRegistration(BaseModel):
@@ -255,6 +297,142 @@ def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = No
         started_at=task.started_at.isoformat() if task.started_at else None,
         completed_at=task.completed_at.isoformat() if task.completed_at else None,
     )
+
+
+def _build_failure_filters(
+    *,
+    pipeline_key: Optional[str],
+    registration_mode: Optional[str],
+    email_service_type: Optional[str],
+    email_suffix: Optional[str],
+    error_keyword: Optional[str],
+    failed_from: datetime,
+    failed_to: datetime,
+) -> RegistrationFailureQuery:
+    return RegistrationFailureQuery(
+        pipeline_key=str(pipeline_key or "").strip() or None,
+        registration_mode=str(registration_mode or "").strip() or None,
+        email_service_type=str(email_service_type or "").strip() or None,
+        email_suffix=str(email_suffix or "").strip() or None,
+        error_keyword=str(error_keyword or "").strip() or None,
+        failed_from=failed_from,
+        failed_to=failed_to,
+    )
+
+
+def _current_day_intersection_count(db, *, now: datetime, filters: RegistrationFailureQuery) -> int:
+    day_start, day_end_exclusive = current_shanghai_day_window_utc_naive(now)
+    # repository 层使用 <= failed_to，因此这里把“次日 00:00:00 的开区间上界”
+    # 转成“当天 23:59:59.999999 的闭区间上界”，避免出现 off-by-one。
+    day_end_inclusive = day_end_exclusive - timedelta(microseconds=1)
+
+    effective_from = max(filters.failed_from, day_start) if filters.failed_from else day_start
+    effective_to = min(filters.failed_to, day_end_inclusive) if filters.failed_to else day_end_inclusive
+    if effective_from > effective_to:
+        return 0
+
+    today_filters = RegistrationFailureQuery(
+        pipeline_key=filters.pipeline_key,
+        registration_mode=filters.registration_mode,
+        email_service_type=filters.email_service_type,
+        email_suffix=filters.email_suffix,
+        error_keyword=filters.error_keyword,
+        failed_from=effective_from,
+        failed_to=effective_to,
+    )
+    return failure_repo.count_registration_failure_records(db, filters=today_filters)
+
+
+@router.get("/failures/summary", response_model=RegistrationFailureSummaryResponse)
+async def get_registration_failures_summary(
+    request: Request,
+    pipeline_key: Optional[str] = None,
+    registration_mode: Optional[str] = None,
+    email_service_type: Optional[str] = None,
+    email_suffix: Optional[str] = None,
+    error_keyword: Optional[str] = None,
+    failed_from: Optional[str] = None,
+    failed_to: Optional[str] = None,
+):
+    require_authenticated(request)
+    now = utc_now()
+    try:
+        window_from, window_to = resolve_failure_window(
+            failed_from_raw=failed_from,
+            failed_to_raw=failed_to,
+            now=now,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    filters = _build_failure_filters(
+        pipeline_key=pipeline_key,
+        registration_mode=registration_mode,
+        email_service_type=email_service_type,
+        email_suffix=email_suffix,
+        error_keyword=error_keyword,
+        failed_from=window_from,
+        failed_to=window_to,
+    )
+
+    with get_db() as db:
+        summary = failure_repo.build_registration_failure_summary(db, filters=filters)
+        today_failed_attempts = _current_day_intersection_count(db, now=now, filters=filters)
+
+    return {
+        **summary,
+        "today_failed_attempts": today_failed_attempts,
+    }
+
+
+@router.get("/failures", response_model=RegistrationFailureListResponse)
+async def get_registration_failures(
+    request: Request,
+    pipeline_key: Optional[str] = None,
+    registration_mode: Optional[str] = None,
+    email_service_type: Optional[str] = None,
+    email_suffix: Optional[str] = None,
+    error_keyword: Optional[str] = None,
+    failed_from: Optional[str] = None,
+    failed_to: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+):
+    require_authenticated(request)
+    try:
+        window_from, window_to = resolve_failure_window(
+            failed_from_raw=failed_from,
+            failed_to_raw=failed_to,
+            now=utc_now(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    safe_page = max(1, int(page or 1))
+    safe_page_size = min(100, max(1, int(page_size or 20)))
+    filters = _build_failure_filters(
+        pipeline_key=pipeline_key,
+        registration_mode=registration_mode,
+        email_service_type=email_service_type,
+        email_suffix=email_suffix,
+        error_keyword=error_keyword,
+        failed_from=window_from,
+        failed_to=window_to,
+    )
+
+    with get_db() as db:
+        total = failure_repo.count_registration_failure_records(db, filters=filters)
+        items = failure_repo.list_registration_failure_records(
+            db,
+            filters=filters,
+            page=safe_page,
+            page_size=safe_page_size,
+        )
+
+    return {
+        "total": total,
+        "items": [item.to_dict() for item in items],
+    }
 
 
 def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", registration_mode: str = "single", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, use_proxy: bool = False, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None, resolved_proxy_candidate: Any = None):

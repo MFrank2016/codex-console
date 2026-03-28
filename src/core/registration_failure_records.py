@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .email_suffix_blacklist import RegistrationDisallowedSuffixError, extract_email_suffix
 
@@ -12,6 +13,8 @@ SENSITIVE_RESULT_KEYS = {
     "id_token",
     "session_token",
 }
+ASIA_SHANGHAI = ZoneInfo("Asia/Shanghai")
+UTC = ZoneInfo("UTC")
 
 
 @dataclass(slots=True)
@@ -42,6 +45,53 @@ class RegistrationFailureWritePayload:
     error_detail: str
     failed_at: datetime
     extra_json: dict[str, Any]
+
+
+def normalize_query_datetime(raw: str | None) -> datetime | None:
+    # 仅支持 ISO8601（允许 Z / offset）；naive 输入统一按上海时区解释。
+    text = str(raw or "").strip()
+    if not text:
+        return None
+
+    normalized = text.replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ASIA_SHANGHAI)
+    else:
+        parsed = parsed.astimezone(ASIA_SHANGHAI)
+    return parsed.astimezone(UTC).replace(tzinfo=None)
+
+
+def resolve_failure_window(
+    *,
+    failed_from_raw: str | None,
+    failed_to_raw: str | None,
+    now: datetime,
+) -> tuple[datetime, datetime]:
+    normalized_now = now.astimezone(UTC).replace(tzinfo=None) if now.tzinfo else now
+    failed_from = normalize_query_datetime(failed_from_raw)
+    failed_to = normalize_query_datetime(failed_to_raw)
+
+    if failed_from is None and failed_to is None:
+        return normalized_now - timedelta(days=7), normalized_now
+    if failed_from is not None and failed_to is None:
+        return failed_from, normalized_now
+    if failed_from is None and failed_to is not None:
+        return failed_to - timedelta(days=7), failed_to
+    if failed_from is not None and failed_to is not None and failed_from > failed_to:
+        raise ValueError("failed_from must be less than or equal to failed_to")
+    return failed_from, failed_to
+
+
+def current_shanghai_day_window_utc_naive(now: datetime) -> tuple[datetime, datetime]:
+    aware_now = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    shanghai_now = aware_now.astimezone(ASIA_SHANGHAI)
+    start_local = shanghai_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    return (
+        start_local.astimezone(UTC).replace(tzinfo=None),
+        end_local.astimezone(UTC).replace(tzinfo=None),
+    )
 
 
 def truncate_error_detail(value: str | None, *, limit: int = 4000) -> str:
