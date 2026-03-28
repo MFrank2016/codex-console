@@ -476,13 +476,14 @@ vm.runInContext(realtimeLogClientSource, context);
 vm.runInContext(realtimeLogConsoleSource, context);
 vm.runInContext(registrationStreamSource, context);
 vm.runInContext(
-  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  buildRunCenterHref,\n  elements,\n}};`,
+  appSource + `\n;globalThis.__appTestExports = {{\n  handleStartRegistration,\n  handleModeChange,\n  handleBatchRegistration,\n  handleSingleRegistration,\n  handleOutlookBatchRegistration,\n  handleRegistrationLogAutoScrollChange,\n  switchWorkbenchView,\n  initWorkbenchTabs,\n  reduceRegistrationStream,\n  renderTaskSteps,\n  renderSingleTaskProgressSummary,\n  showTaskStatus,\n  showBatchStatus,\n  updateBatchProgress,\n  restoreActiveTask,\n  finalizeSingleTaskIfTerminal,\n  resetButtons,\n  buildRunCenterHref,\n  elements,\n}};`,
   context,
 );
 
 const exported = context.__appTestExports;
 
 function setupBaseElements() {{
+  document.body.dataset.pageKey = 'registration_workbench';
   getElement('email-service').value = 'tempmail:default';
   getElement('reg-mode').value = 'single';
   getElement('batch-count').value = '5';
@@ -555,6 +556,19 @@ async function runScenario() {{
       await exported.handleBatchRegistration(requestPayload);
       return {{
         request_payload: logs.lastPostPayload,
+      }};
+    }}
+    case 'switch_workbench_view': {{
+      exported.initWorkbenchTabs();
+      exported.switchWorkbenchView('config');
+      const initialView = String(getElement('registration-workbench-shell').dataset.activeView || '');
+      exported.switchWorkbenchView('running');
+      return {{
+        active_view_initial: initialView,
+        active_view_after_click: String(getElement('registration-workbench-shell').dataset.activeView || ''),
+        config_hidden_after_click: !!getElement('registration-workbench-view-config').hidden,
+        running_hidden_after_click: !!getElement('registration-workbench-view-running').hidden,
+        recent_hidden_after_click: !!getElement('registration-workbench-view-recent').hidden,
       }};
     }}
     case 'batch_mode_persists_after_reset': {{

@@ -46,6 +46,7 @@ let registrationSharedConsoleController = null;
 let registrationSharedStreamClient = null;
 let registrationSharedPendingEvent = null;
 let registrationLocalEventSeq = 0;
+let activeWorkbenchView = 'config';
 const REGISTRATION_WS_HANDSHAKE_TIMEOUT_MS = 2500;
 
 function parseRegistrationTimestampMs(value) {
@@ -498,6 +499,15 @@ function resetRegistrationStreamViewState() {
 
 // DOM 元素
 const elements = {
+    workbenchShell: document.getElementById('registration-workbench-shell'),
+    workbenchTabs: document.getElementById('registration-workbench-tabs'),
+    workbenchTabConfig: document.getElementById('registration-workbench-tab-config'),
+    workbenchTabRunning: document.getElementById('registration-workbench-tab-running'),
+    workbenchTabRecent: document.getElementById('registration-workbench-tab-recent'),
+    workbenchViewConfig: document.getElementById('registration-workbench-view-config'),
+    workbenchViewRunning: document.getElementById('registration-workbench-view-running'),
+    workbenchViewRecent: document.getElementById('registration-workbench-view-recent'),
+
     // 新版工作台布局挂点（用于保持 DOM 结构可读、便于后续扩展；不改变现有渲染逻辑）
     registrationConfigPanel: document.getElementById('registration-config-panel'),
     registrationSingleProgress: document.getElementById('registration-single-progress'),
@@ -576,6 +586,61 @@ const elements = {
     tmServiceSelect: document.getElementById('tm-service-select'),
 };
 
+function switchWorkbenchView(nextView = 'config') {
+    const allowedViews = ['config', 'running', 'recent'];
+    const normalizedView = allowedViews.includes(nextView) ? nextView : 'config';
+    activeWorkbenchView = normalizedView;
+
+    if (elements.workbenchShell) {
+        elements.workbenchShell.dataset.activeView = normalizedView;
+    }
+
+    const panels = {
+        config: elements.workbenchViewConfig,
+        running: elements.workbenchViewRunning,
+        recent: elements.workbenchViewRecent,
+    };
+
+    Object.entries(panels).forEach(([viewKey, panel]) => {
+        if (!panel) return;
+        panel.hidden = viewKey !== normalizedView;
+    });
+
+    const tabs = {
+        config: elements.workbenchTabConfig,
+        running: elements.workbenchTabRunning,
+        recent: elements.workbenchTabRecent,
+    };
+
+    Object.entries(tabs).forEach(([viewKey, button]) => {
+        if (!button) return;
+        const isActive = viewKey === normalizedView;
+        button.classList.toggle('is-active', isActive);
+        if (typeof button.setAttribute === 'function') {
+            button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        } else {
+            button.ariaSelected = isActive ? 'true' : 'false';
+        }
+    });
+
+    return normalizedView;
+}
+
+function initWorkbenchTabs() {
+    [
+        ['config', elements.workbenchTabConfig],
+        ['running', elements.workbenchTabRunning],
+        ['recent', elements.workbenchTabRecent],
+    ].forEach(([viewKey, button]) => {
+        if (!button) return;
+        button.addEventListener('click', () => {
+            switchWorkbenchView(viewKey);
+        });
+    });
+
+    switchWorkbenchView(activeWorkbenchView);
+}
+
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
     const root = document.body?.dataset?.pageKey;
@@ -583,6 +648,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    initWorkbenchTabs();
     initEventListeners();
     ensureRegistrationSharedConsoleMounted();
     renderRegistrationStreamStatus();
@@ -968,6 +1034,7 @@ async function handleStartRegistration(e) {
     // 禁用开始按钮
     elements.startBtn.disabled = true;
     elements.cancelBtn.disabled = false;
+    switchWorkbenchView('running');
 
     // 清空日志
     elements.consoleLog.innerHTML = '';
@@ -2566,6 +2633,7 @@ async function restoreActiveTask() {
             // 任务仍在运行，恢复状态
             currentTask = data;
             activeTaskUuid = task_uuid;
+            switchWorkbenchView('running');
             singleTaskStartedAtMs = parseRegistrationTimestampMs(data.started_at) ?? parseRegistrationTimestampMs(started_at);
             taskCompleted = false;
             taskFinalStatus = null;
@@ -2595,6 +2663,7 @@ async function restoreActiveTask() {
             // 批量任务仍在运行，恢复状态
             currentBatch = { batch_id, ...data };
             activeBatchId = batch_id;
+            switchWorkbenchView('running');
             batchTaskStartedAtMs = parseRegistrationTimestampMs(data.started_at) ?? parseRegistrationTimestampMs(started_at);
             isOutlookBatchMode = (mode === 'outlook_batch');
             isBatchMode = (mode === 'batch' || mode === 'unlimited');
