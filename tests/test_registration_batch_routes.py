@@ -1078,7 +1078,12 @@ def test_run_unlimited_batch_registration_stops_after_eleven_consecutive_failure
 
 def test_run_unlimited_batch_registration_preserves_pre_start_cancellation(route_db, fake_task_manager, monkeypatch):
     batch_id = "unlimited-pre-cancelled"
-    registration_routes._init_batch_state(batch_id, [], is_unlimited=True, total=0)
+    registration_routes._build_batch_registration_service().init_batch_state(
+        batch_id,
+        [],
+        is_unlimited=True,
+        total=0,
+    )
     registration_routes.batch_tasks[batch_id]["cancelled"] = True
     fake_task_manager._status[batch_id]["cancelled"] = True
     calls = []

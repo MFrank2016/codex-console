@@ -515,22 +515,6 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
         resolved_proxy_candidate=resolved_proxy_candidate,
     )
 
-def _init_batch_state(
-    batch_id: str,
-    task_uuids: List[str],
-    *,
-    is_unlimited: bool = False,
-    total: Optional[int] = None,
-    statistics_context: Optional[dict] = None,
-):
-    _build_batch_registration_service().init_batch_state(
-        batch_id,
-        task_uuids,
-        is_unlimited=is_unlimited,
-        total=total,
-        statistics_context=statistics_context,
-    )
-
 def _make_batch_helpers(batch_id: str):
     return _build_batch_registration_service().make_batch_helpers(batch_id)
 
