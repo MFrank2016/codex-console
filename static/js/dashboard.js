@@ -15,90 +15,102 @@ function safeHref(rawHref) {
   return '#';
 }
 
-function normalizeToneToken(value) {
-  const token = String(value ?? '').trim().toLowerCase();
-  return /^[a-z0-9-]+$/.test(token) ? token : '';
-}
-
-function renderMetricCard(label, value, hint = '', tone = '') {
-  const hintHtml = hint ? `<p class="dashboard-metric-hint">${escapeHtml(hint)}</p>` : '';
-  const toneKey = normalizeToneToken(tone);
-  const toneClass = toneKey ? ` dashboard-metric-card--${toneKey}` : '';
-  const badgeToneClass = toneKey ? ` dashboard-metric-value-badge--${toneKey}` : '';
+function renderSummaryCard(label, value, hint = '') {
   return `
-    <article class="dashboard-metric-card${toneClass}">
-      <p class="dashboard-metric-label">${escapeHtml(label)}</p>
-      <p class="dashboard-metric-value">
-        <span class="dashboard-metric-value-badge${badgeToneClass}">${escapeHtml(value)}</span>
-      </p>
-      ${hintHtml}
+    <article class="dashboard-summary-card">
+      <p class="dashboard-summary-label">${escapeHtml(label)}</p>
+      <p class="dashboard-summary-value">${escapeHtml(value)}</p>
+      <p class="dashboard-summary-hint">${escapeHtml(hint)}</p>
     </article>
   `;
 }
 
-function renderDashboardHero(summary) {
-  const registration = summary.registration || {};
-  const accounts = summary.accounts || {};
-  const scheduled = summary.scheduled || {};
+function renderOverviewSummary(summary) {
+  const registration = summary?.registration || {};
+  const accounts = summary?.accounts || {};
+  const scheduled = summary?.scheduled || {};
   const successRate = registration.success_rate == null ? '—' : `${registration.success_rate}%`;
-  const totalTasks = registration.total_tasks ?? registration.total ?? 0;
 
   return [
-    renderMetricCard('注册任务', totalTasks, `运行中 ${registration.running ?? 0}`, 'registration'),
-    renderMetricCard('成功率', successRate, `失败 ${registration.failed ?? 0}`, 'success-rate'),
-    renderMetricCard('账号', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`, 'accounts'),
-    renderMetricCard('定时计划', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`, 'scheduled'),
+    renderSummaryCard(
+      '注册任务',
+      registration.total_tasks ?? registration.total ?? 0,
+      `运行中 ${registration.running ?? 0}`,
+    ),
+    renderSummaryCard('成功率', successRate, `失败 ${registration.failed ?? 0}`),
+    renderSummaryCard('账号总数', accounts.total ?? 0, `活跃 ${accounts.active ?? 0}`),
+    renderSummaryCard('计划任务', scheduled.plans_total ?? 0, `启用 ${scheduled.plans_enabled ?? 0}`),
   ].join('');
 }
 
-function renderRecentActivity(items) {
+function renderOverviewAlerts(items) {
   const normalized = Array.isArray(items) ? items : [];
   if (!normalized.length) {
-    return '<li class="dashboard-empty">暂无最近活动。</li>';
+    return '<li class="dashboard-empty">暂无提醒。</li>';
   }
 
   return normalized
     .map((item) => `
-      <li class="dashboard-activity-item">
-        <a href="${escapeHtml(safeHref(item?.href))}">${escapeHtml(item?.title || '未命名活动')}</a>
-        <span class="dashboard-activity-status">${escapeHtml(item?.status || 'unknown')}</span>
+      <li class="dashboard-alert-item">
+        <a class="dashboard-alert-link" href="${escapeHtml(safeHref(item?.href))}">${escapeHtml(item?.title || '未命名动态')}</a>
+        <span class="dashboard-alert-meta">${escapeHtml(item?.status || 'unknown')}</span>
       </li>
     `)
     .join('');
 }
 
-function renderQuickActions(links) {
+function renderOverviewLaunchpad(links) {
   const normalized = Array.isArray(links) ? links : [];
   if (!normalized.length) {
-    return '<p class="dashboard-empty">暂无快捷动作。</p>';
+    return '<p class="dashboard-empty">暂无启动台入口。</p>';
   }
 
   return normalized
     .map((link, index) => {
-      const variant = index === 0 ? 'primary' : 'secondary';
+      const variant = index === 0 ? ' dashboard-launchpad-card--primary' : '';
       return `
-      <a class="dashboard-quick-action dashboard-quick-action--${variant}" href="${escapeHtml(safeHref(link?.href))}">
-        <p class="dashboard-quick-action-title">${escapeHtml(link?.label || '未命名动作')}</p>
-        <p class="dashboard-quick-action-desc">${escapeHtml(link?.description || '')}</p>
-      </a>
-    `;
+        <a class="dashboard-launchpad-card${variant}" href="${escapeHtml(safeHref(link?.href))}">
+          <p class="dashboard-launchpad-title">${escapeHtml(link?.label || '未命名入口')}</p>
+          <p class="dashboard-launchpad-desc">${escapeHtml(link?.description || '')}</p>
+        </a>
+      `;
     })
     .join('');
 }
 
+function getOverviewContainers() {
+  return {
+    summary: document.getElementById('dashboard-overview-summary'),
+    alerts: document.getElementById('dashboard-overview-alerts'),
+    launchpad: document.getElementById('dashboard-overview-launchpad'),
+  };
+}
+
+function renderDashboardLoadingState() {
+  const containers = getOverviewContainers();
+  if (containers.summary) {
+    containers.summary.innerHTML = '<p class="dashboard-loading">加载中...</p>';
+  }
+  if (containers.alerts) {
+    containers.alerts.innerHTML = '<li class="dashboard-loading">加载中...</li>';
+  }
+  if (containers.launchpad) {
+    containers.launchpad.innerHTML = '<p class="dashboard-loading">加载中...</p>';
+  }
+}
+
 function renderDashboardError(error) {
   const message = error instanceof Error ? error.message : '加载失败';
-  const metricHtml = `<p class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</p>`;
-  const listHtml = `<li class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</li>`;
-  const actionHtml = `<p class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</p>`;
-
-  const metricGrid = document.getElementById('dashboard-metric-grid');
-  const activity = document.getElementById('dashboard-activity-feed');
-  const actions = document.getElementById('dashboard-quick-actions');
-
-  if (metricGrid) metricGrid.innerHTML = metricHtml;
-  if (activity) activity.innerHTML = listHtml;
-  if (actions) actions.innerHTML = actionHtml;
+  const containers = getOverviewContainers();
+  if (containers.summary) {
+    containers.summary.innerHTML = `<p class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</p>`;
+  }
+  if (containers.alerts) {
+    containers.alerts.innerHTML = `<li class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</li>`;
+  }
+  if (containers.launchpad) {
+    containers.launchpad.innerHTML = `<p class="dashboard-empty">Dashboard 加载失败：${escapeHtml(message)}</p>`;
+  }
 }
 
 async function loadDashboardSummary() {
@@ -116,23 +128,20 @@ async function loadDashboardSummary() {
 }
 
 function mountDashboard(summary) {
-  const metricGrid = document.getElementById('dashboard-metric-grid');
-  if (metricGrid) {
-    metricGrid.innerHTML = renderDashboardHero(summary);
+  const containers = getOverviewContainers();
+  if (containers.summary) {
+    containers.summary.innerHTML = renderOverviewSummary(summary);
   }
-
-  const activity = document.getElementById('dashboard-activity-feed');
-  if (activity) {
-    activity.innerHTML = renderRecentActivity(summary?.recent_activity);
+  if (containers.alerts) {
+    containers.alerts.innerHTML = renderOverviewAlerts(summary?.recent_activity);
   }
-
-  const actions = document.getElementById('dashboard-quick-actions');
-  if (actions) {
-    actions.innerHTML = renderQuickActions(summary?.quick_links);
+  if (containers.launchpad) {
+    containers.launchpad.innerHTML = renderOverviewLaunchpad(summary?.quick_links);
   }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  renderDashboardLoadingState();
   try {
     const summary = await loadDashboardSummary();
     mountDashboard(summary);

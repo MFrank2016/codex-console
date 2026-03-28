@@ -5,30 +5,34 @@
 {% endblock %}
 
 {% block page_content %}
-<section class="dashboard-page">
-  <header id="dashboard-hero-primary" class="dashboard-hero-primary">
-    <div class="dashboard-hero-copy">
-      <h2 class="dashboard-hero-title">总览</h2>
-      <p class="dashboard-hero-subtitle">快速了解当前运行状态与最近活动。</p>
-    </div>
-    <div id="dashboard-metric-grid" class="dashboard-metric-grid"></div>
+<section class="dashboard-page dashboard-overview-hub">
+  <header class="dashboard-overview-head">
+    <h2 class="dashboard-overview-title">Dashboard 启动台</h2>
+    <p class="dashboard-overview-subtitle">在一个页面内查看摘要、提醒和常用入口。</p>
   </header>
 
-  <div class="dashboard-page-grid">
-    <section class="dashboard-card dashboard-card-activity">
-      <header class="dashboard-card-head">
-        <h3 class="dashboard-card-title">最近活动</h3>
+  <div class="dashboard-overview-grid">
+    <section class="dashboard-overview-section">
+      <header class="dashboard-overview-section-head">
+        <h3 class="dashboard-overview-section-title">总览摘要</h3>
       </header>
-      <ul id="dashboard-activity-feed" class="dashboard-activity-feed"></ul>
+      <div id="dashboard-overview-summary" class="dashboard-overview-summary-grid" aria-live="polite"></div>
     </section>
 
-    <section class="dashboard-card dashboard-card-actions">
-      <header class="dashboard-card-head">
-        <h3 class="dashboard-card-title">快捷动作</h3>
+    <section class="dashboard-overview-section">
+      <header class="dashboard-overview-section-head">
+        <h3 class="dashboard-overview-section-title">提醒与动态</h3>
       </header>
-      <div id="dashboard-quick-actions" class="dashboard-quick-actions"></div>
+      <ul id="dashboard-overview-alerts" class="dashboard-overview-alerts" aria-live="polite"></ul>
     </section>
   </div>
+
+  <section class="dashboard-overview-section dashboard-overview-launchpad-section">
+    <header class="dashboard-overview-section-head">
+      <h3 class="dashboard-overview-section-title">启动台入口</h3>
+    </header>
+    <div id="dashboard-overview-launchpad" class="dashboard-launchpad-grid" aria-live="polite"></div>
+  </section>
 </section>
 {% endblock %}
 
