@@ -280,15 +280,40 @@ class RegistrationService:
             except Exception as exc:
                 logger.warning("任务 %s 写入步骤快照失败: %s", task_uuid, exc)
 
-        def _commit_queued_checkpoint(runs_service: RegistrationRunsService) -> RegistrationRun:
+        def _sync_task_manager_from_result(result: SingleTaskExecutionResult) -> str | None:
+            final_status: str | None = None
+            extra: dict[str, Any] = {}
+
+            if result.task is not None and result.task.status in RegistrationRunsService.TERMINAL_STATUSES:
+                final_status = result.task.status
+                if final_status == "completed" and result.task.email_address:
+                    extra["email"] = result.task.email_address
+                elif final_status in {"failed", "cancelled"} and result.task.error_message:
+                    extra["error"] = result.task.error_message
+            elif result.run is not None and result.run.status in RegistrationRunsService.TERMINAL_STATUSES:
+                final_status = result.run.status
+                if final_status in {"failed", "cancelled"} and result.run.error_message:
+                    extra["error"] = result.run.error_message
+
+            if final_status is not None:
+                service.task_manager.update_status(task_uuid, final_status, **extra)
+                _close_task_stream(final_status)
+
+            return final_status
+
+        def _commit_queued_checkpoint(
+            runs_service: RegistrationRunsService,
+        ) -> tuple[RegistrationRun, bool]:
             run = runs_service.create_run(
                 task_uuid=task_uuid,
                 batch_id=batch_id or None,
                 trigger_source="batch" if batch_id else "manual",
                 commit=False,
             )
+            if run.status in runs_service.TERMINAL_STATUSES:
+                return run, False
             runs_service.append_event(run.id, level="info", message="queued", commit=True)
-            return run
+            return run, True
 
         def _commit_execution_start_checkpoint(
             runs_service: RegistrationRunsService,
@@ -330,7 +355,11 @@ class RegistrationService:
         try:
             with service.db_factory() as db:
                 runs_service = RegistrationRunsService(db)
-                run = _commit_queued_checkpoint(runs_service)
+                run, should_execute = _commit_queued_checkpoint(runs_service)
+                if not should_execute:
+                    result = service.build_result_for_task(task_uuid, db=db)
+                    _sync_task_manager_from_result(result)
+                    return result
 
                 if service.task_manager.is_cancelled(task_uuid):
                     logger.info("任务 %s 已取消，跳过执行", task_uuid)

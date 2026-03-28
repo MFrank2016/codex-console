@@ -261,6 +261,63 @@ def test_registration_service_creates_run_records_and_terminal_status(db_factory
     assert "job-started" in task_manager.get_logs("task-1")
 
 
+def test_registration_service_does_not_replay_terminal_run_events_on_repeat_execution(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    task_uuid = "task-terminal-run-no-replay"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid, pipeline_key="codexgen_pipeline")
+    task_manager = FakeTaskManager()
+    runner_calls: list[str] = []
+
+    def fake_job_runner(**kwargs):
+        runner_calls.append(kwargs["task_uuid"])
+        return RegistrationJobResult(
+            success=True,
+            account_id=808,
+            email="terminal-repeat@example.com",
+            result_payload={"success": True, "email": "terminal-repeat@example.com"},
+        )
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    first = service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+    second = service.run_single_task_sync(
+        task_uuid=task_uuid,
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        pipeline_key="codexgen_pipeline",
+    )
+
+    fresh_session = sessionmaker(bind=temp_db.get_bind())()
+    try:
+        run, events = _load_run_and_events(fresh_session, task_uuid)
+    finally:
+        fresh_session.close()
+
+    assert runner_calls == [task_uuid]
+    assert first.run is not None
+    assert first.run.status == "completed"
+    assert second.run is not None
+    assert second.run.status == "completed"
+    assert second.task is not None
+    assert second.task.status == "completed"
+    assert [event.message for event in second.events] == ["queued", "started", "running", "completed"]
+    assert [event.message for event in events] == ["queued", "started", "running", "completed"]
+    assert run.status == "completed"
+    assert task_manager.get_status(task_uuid)["status"] == "completed"
+
+
 def test_registration_service_default_run_persistence_survives_fresh_session(db_factory, temp_db):
     from src.application.registration_runs_service import RegistrationRunsService
     from src.application.registration_service import RegistrationService
