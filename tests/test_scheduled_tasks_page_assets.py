@@ -74,6 +74,13 @@ def test_scheduled_tasks_template_no_longer_carries_primary_run_center_shell():
     assert 'id="run-log-stop-btn"' not in template
 
 
+def test_scheduled_tasks_template_reduces_inline_style_hotspots():
+    template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
+    assert 'style="max-width: 1080px;"' not in template
+    assert 'style="display:none;"' not in template
+
+
+
 def test_scheduled_tasks_script_stays_focused_on_plan_management_and_support_context():
     script = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
     assert "function escapeHtml(" in script

@@ -23,6 +23,14 @@ def test_payment_template_has_no_inline_event_handlers():
     assert "onchange=" not in template
 
 
+def test_payment_template_reduces_inline_style_hotspots():
+    template = Path("templates/payment.html").read_text(encoding="utf-8")
+    assert 'style="width:100%"' not in template
+    assert 'style="background:var(--surface-hover);cursor:default"' not in template
+    assert 'style="margin-top:10px"' not in template
+
+
+
 def test_payment_script_uses_api_client_instead_of_direct_fetch():
     script = Path("static/js/payment.js").read_text(encoding="utf-8")
     assert "fetch(" not in script

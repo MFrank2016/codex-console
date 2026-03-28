@@ -1,5 +1,15 @@
 {% extends "_workspace_base.html" %}
 
+{% block head_extra %}
+<style>
+.scheduled-tasks-card-body--flush { padding: 0; }
+.scheduled-plan-form-modal-content { max-width: 1080px; }
+.scheduled-plan-modal-content { max-width: 520px; }
+.is-hidden { display: none; }
+.scheduled-plan-json-label { display: block; margin-bottom: 8px; }
+</style>
+{% endblock %}
+
 {% block page_content %}
 <div class="workspace-side-stack scheduled-tasks-page">
     <section class="workspace-panel page-head">
@@ -19,7 +29,7 @@
                     <button class="btn btn-secondary btn-sm" id="refresh-plans-btn" data-action="refresh-plans">🔄 刷新</button>
                 </div>
             </div>
-            <div class="card-body" style="padding:0;">
+            <div class="card-body scheduled-tasks-card-body--flush">
                 <div class="table-container table-shell">
                     <table id="scheduled-plans-table" class="data-table scheduled-dense-table scheduled-plans-grid">
                         <colgroup>
@@ -62,7 +72,7 @@
 </div>
 
 <div id="plan-form-modal" class="modal">
-    <div class="modal-content" style="max-width: 1080px;">
+    <div class="modal-content scheduled-plan-form-modal-content">
         <div class="modal-header">
             <h3 id="plan-form-title">新建计划</h3>
             <button class="modal-close" data-close-modal="plan-form-modal">&times;</button>
@@ -100,7 +110,7 @@
                             <option value="cron">Cron</option>
                         </select>
                     </div>
-                    <div class="form-group" id="plan-cron-group" style="display:none;">
+                    <div class="form-group is-hidden" id="plan-cron-group">
                         <label for="plan-cron-expression">Cron 表达式</label>
                         <input type="text" id="plan-cron-expression" placeholder="0 * * * *">
                     </div>
@@ -144,8 +154,8 @@
                         </div>
                     </div>
 
-                    <div id="plan-config-json-panel" style="display:none;">
-                        <label for="plan-config-json" style="display:block;margin-bottom:8px;">原始 JSON（高级模式）</label>
+                    <div id="plan-config-json-panel" class="is-hidden">
+                        <label for="plan-config-json" class="scheduled-plan-json-label">原始 JSON（高级模式）</label>
                         <textarea id="plan-config-json" rows="10" placeholder='{"max_consecutive_failures": 10}'>{}</textarea>
                         <small style="display:block;color:var(--text-muted);margin-top:8px;">
                             原始 JSON 只编辑 config 值；键说明和值说明请在键值对模式中维护。
@@ -168,7 +178,7 @@
 </div>
 
 <div id="plan-modal" class="modal">
-    <div class="modal-content" style="max-width: 520px;">
+    <div class="modal-content scheduled-plan-modal-content">
         <div class="modal-header">
             <h3>计划详情</h3>
             <button class="modal-close" data-close-modal="plan-modal">&times;</button>
