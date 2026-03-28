@@ -93,6 +93,12 @@ def test_scheduled_tasks_script_stays_focused_on_plan_management_and_support_con
     assert "/scheduled-runs" not in script
 
 
+def test_scheduled_tasks_script_avoids_inline_event_markup():
+    script = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
+    assert "onclick=" not in script
+    assert "onchange=" not in script
+
+
 def test_scheduled_tasks_script_surfaces_cpa_service_load_failures_to_users():
     script = Path("static/js/scheduled_tasks.js").read_text(encoding="utf-8")
     assert "CPA 服务列表加载失败" in script

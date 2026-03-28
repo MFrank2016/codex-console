@@ -503,19 +503,19 @@ function renderConfigValueInput(entry, index) {
 
     switch (normalizeValueType(entry.valueType)) {
         case 'number':
-            return `<input type="number" ${commonAttrs} value="${safeValue}" onchange="handleConfigEntryInput(this)">`;
+            return `<input type="number" ${commonAttrs} value="${safeValue}">`;
         case 'boolean':
             return `
-                <select ${commonAttrs} onchange="handleConfigEntryInput(this)">
+                <select ${commonAttrs}>
                     <option value="true" ${entry.rawValue === 'true' ? 'selected' : ''}>true</option>
                     <option value="false" ${entry.rawValue === 'false' ? 'selected' : ''}>false</option>
                 </select>
             `;
         case 'object':
         case 'array':
-            return `<textarea rows="4" ${commonAttrs} onchange="handleConfigEntryInput(this)">${safeValue}</textarea>`;
+            return `<textarea rows="4" ${commonAttrs}>${safeValue}</textarea>`;
         default:
-            return `<input type="text" ${commonAttrs} value="${safeValue}" onchange="handleConfigEntryInput(this)">`;
+            return `<input type="text" ${commonAttrs} value="${safeValue}">`;
     }
 }
 
@@ -551,7 +551,7 @@ function renderConfigEntries() {
                             data-config-field="key"
                             value="${escapeHtml(entry.key || '')}"
                             ${entry.readonlyKey ? 'readonly' : ''}
-                            onchange="handleConfigEntryInput(this)"
+                           
                             style="width:100%;"
                         >
                     </td>
@@ -561,7 +561,7 @@ function renderConfigEntries() {
                             data-config-index="${index}"
                             data-config-field="keyDescription"
                             value="${escapeHtml(entry.keyDescription || '')}"
-                            onchange="handleConfigEntryInput(this)"
+                           
                             style="width:100%;"
                         >
                     </td>
@@ -572,7 +572,7 @@ function renderConfigEntries() {
                             data-config-index="${index}"
                             data-config-field="valueDescription"
                             value="${escapeHtml(entry.valueDescription || '')}"
-                            onchange="handleConfigEntryInput(this)"
+                           
                             style="width:100%;"
                         >
                     </td>
@@ -580,7 +580,7 @@ function renderConfigEntries() {
                         <select
                             data-config-index="${index}"
                             data-config-field="valueType"
-                            onchange="handleConfigEntryInput(this)"
+                           
                             style="width:100%;"
                         >${typeOptions}</select>
                     </td>
@@ -593,7 +593,7 @@ function renderConfigEntries() {
                                     class="btn btn-secondary btn-sm"
                                     data-config-action="remove"
                                     data-config-index="${index}"
-                                    onclick="handleConfigEntryAction(this)"
+                                   
                                 >删除</button>
                             `}
                     </td>
@@ -823,11 +823,11 @@ function renderPlans(plans) {
                     <td class="scheduled-time-cell">${format.date(plan.last_run_started_at)}</td>
                     <td>
                         <div class="table-actions table-actions--compact">
-                            <button class="btn btn-secondary btn-sm" data-action="detail" data-plan-id="${plan.id}" onclick="handlePlanAction(this)">详情</button>
-                            <button class="btn btn-secondary btn-sm" data-action="logs" data-plan-id="${plan.id}" onclick="handlePlanAction(this)">记录</button>
-                            <button class="btn btn-secondary btn-sm" data-action="edit" data-plan-id="${plan.id}" onclick="handlePlanAction(this)">编辑</button>
-                            <button class="btn btn-secondary btn-sm" data-action="toggle" data-plan-id="${plan.id}" data-should-enable="${shouldEnable}" onclick="handlePlanAction(this)">${toggleLabel}</button>
-                            <button class="btn btn-primary btn-sm" data-action="run-now" data-plan-id="${plan.id}" onclick="handlePlanAction(this)">立即执行</button>
+                            <button class="btn btn-secondary btn-sm" data-action="detail" data-plan-id="${plan.id}">详情</button>
+                            <button class="btn btn-secondary btn-sm" data-action="logs" data-plan-id="${plan.id}">记录</button>
+                            <button class="btn btn-secondary btn-sm" data-action="edit" data-plan-id="${plan.id}">编辑</button>
+                            <button class="btn btn-secondary btn-sm" data-action="toggle" data-plan-id="${plan.id}" data-should-enable="${shouldEnable}">${toggleLabel}</button>
+                            <button class="btn btn-primary btn-sm" data-action="run-now" data-plan-id="${plan.id}">立即执行</button>
                         </div>
                     </td>
                 </tr>
@@ -851,7 +851,7 @@ async function loadPlans() {
                         <div class="empty-state-title">加载失败</div>
                         <div class="empty-state-description">${escapeHtml(error.message || '请求失败')}</div>
                         <div style="margin-top: var(--spacing-sm);">
-                            <button class="btn btn-secondary btn-sm" type="button" onclick="window.loadPlans()">重新加载计划列表</button>
+                            <button class="btn btn-secondary btn-sm" type="button" data-action="reload-plans">重新加载计划列表</button>
                         </div>
                     </div>
                 </td>
@@ -1200,6 +1200,47 @@ async function handlePlanAction(button) {
     });
 }
 
+function bindPlanTableEvents() {
+    const plansBody = scheduledTaskElements.plansBody;
+    if (!plansBody) return;
+
+    plansBody.addEventListener('click', (event) => {
+        const target = event?.target;
+        const actionButton = target?.closest ? target.closest('[data-action]') : null;
+        if (!actionButton) return;
+
+        if (actionButton.dataset.action === 'reload-plans') {
+            void withButtonBusy(actionButton, () => loadPlans());
+            return;
+        }
+
+        if (!actionButton.dataset.planId) {
+            return;
+        }
+
+        void handlePlanAction(actionButton);
+    });
+}
+
+function bindConfigEditorEvents() {
+    const entriesBody = scheduledTaskElements.planConfigEntriesBody;
+    if (!entriesBody) return;
+
+    entriesBody.addEventListener('change', (event) => {
+        const target = event?.target;
+        const input = target?.closest ? target.closest('[data-config-index][data-config-field]') : null;
+        if (!input) return;
+        handleConfigEntryInput(input);
+    });
+
+    entriesBody.addEventListener('click', (event) => {
+        const target = event?.target;
+        const button = target?.closest ? target.closest('[data-config-action][data-config-index]') : null;
+        if (!button) return;
+        handleConfigEntryAction(button);
+    });
+}
+
 function closeModal(modalId) {
     const modal = document.getElementById(modalId);
     if (!modal) return;
@@ -1207,6 +1248,8 @@ function closeModal(modalId) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    bindPlanTableEvents();
+    bindConfigEditorEvents();
     loadPlans();
     loadCpaServices();
     setConfigEditorState('cpa_cleanup', {}, {});
@@ -1292,10 +1335,7 @@ window.submitPlanForm = submitPlanForm;
 window.runPlanNow = runPlanNow;
 window.showPlanDetail = showPlanDetail;
 window.togglePlanEnabled = togglePlanEnabled;
-window.handlePlanAction = handlePlanAction;
 window.renderScheduledTasksSupportContext = renderScheduledTasksSupportContext;
-window.handleConfigEntryInput = handleConfigEntryInput;
-window.handleConfigEntryAction = handleConfigEntryAction;
 window.renderConfigEntries = renderConfigEntries;
 window.buildConfigPayloadFromEntries = buildConfigPayloadFromEntries;
 window.prepareConfigEntriesForTaskTypeSwitch = prepareConfigEntriesForTaskTypeSwitch;
