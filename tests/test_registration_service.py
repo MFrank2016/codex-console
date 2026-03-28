@@ -45,6 +45,26 @@ def _load_run_and_events(session, task_uuid: str):
     return run, events
 
 
+def test_registration_service_create_task_keeps_orm_compatibility(db_factory):
+    from src.application.registration_service import RegistrationService
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+    )
+
+    task = service.create_task(
+        task_uuid="compat-create-task",
+        proxy=None,
+        pipeline_key="current_pipeline",
+        email_service_id=9,
+    )
+
+    assert task.task_uuid == "compat-create-task"
+    assert task.pipeline_key == "current_pipeline"
+    assert task.email_service_id == 9
+
+
 def test_registration_service_emits_step_snapshot_and_closes_stream(db_factory, temp_db):
     from src.application.registration_service import RegistrationService
 

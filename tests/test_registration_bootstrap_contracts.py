@@ -86,6 +86,7 @@ def test_batch_registration_service_start_batch_owns_batch_state_and_proxy_warmu
 
     assert isinstance(result, BatchBootstrapResult)
     assert result.batch_id == "batch-001"
+    assert isinstance(result.task_snapshots, tuple)
     assert len(result.task_snapshots) == 2
     assert "batch-001" in service.batch_tasks
     assert dispatcher.prepare_calls == [
@@ -143,7 +144,8 @@ def test_outlook_batch_bootstrap_filters_registered_accounts_and_returns_dto(db_
     assert isinstance(result, OutlookBatchBootstrapResult)
     assert result.batch_id == "outlook-batch-001"
     assert result.skipped == 1
-    assert result.service_ids == [
+    assert isinstance(result.service_ids, tuple)
+    assert result.service_ids == (
         unregistered_service_one.id,
         unregistered_service_two.id,
-    ]
+    )

@@ -110,6 +110,48 @@ def test_start_registration_persists_pipeline_key(route_db, batch_state, monkeyp
     assert task.pipeline_key == "codexgen_pipeline"
 
 
+def test_start_registration_delegates_bootstrap_to_start_task(route_db, batch_state, monkeypatch):
+    class FakeRegistrationService:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def create_task(self, **kwargs):
+            raise AssertionError("route should not call create_task directly")
+
+        def start_task(self, **kwargs):
+            self.calls.append(kwargs)
+            return RegistrationTaskSnapshot(
+                id=99,
+                task_uuid=kwargs["task_uuid"],
+                status="pending",
+                proxy=kwargs["proxy"],
+                pipeline_key=kwargs["pipeline_key"],
+                email_service_id=kwargs["email_service_id"],
+            )
+
+    fake_service = FakeRegistrationService()
+    monkeypatch.setattr(registration_routes, "_build_registration_service", lambda: fake_service)
+    background = BackgroundTasks()
+
+    response = asyncio.run(
+        registration_routes.start_registration(
+            registration_routes.RegistrationTaskCreate(
+                email_service_type="tempmail",
+                use_proxy=False,
+                pipeline_key="current_pipeline",
+                email_service_id=12,
+            ),
+            background,
+        )
+    )
+
+    assert fake_service.calls, "route should delegate single-start bootstrap to service.start_task"
+    assert response.id == 99
+    assert response.status == "pending"
+    assert response.pipeline_key == "current_pipeline"
+    assert response.email_service_id == 12
+
+
 def test_start_batch_registration_persists_pipeline_key_for_each_task(route_db, batch_state, monkeypatch):
     monkeypatch.setattr(registration_routes, "task_manager", FakeTaskManager())
     background = BackgroundTasks()

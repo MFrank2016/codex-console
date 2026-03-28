@@ -25,6 +25,7 @@ from ...core.registration_failure_records import (
     resolve_failure_window,
 )
 from ...application import BatchRegistrationService, ProxyDispatchService, RegistrationService
+from ...application.registration_bootstrap_dtos import RegistrationTaskSnapshot
 from ...application.batch_registration_service import (
     DEFAULT_BATCH_PROXY_POOLS_STORE,
     DEFAULT_BATCH_TASKS_STORE,
@@ -305,6 +306,17 @@ def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = No
         created_at=task.created_at.isoformat() if task.created_at else None,
         started_at=task.started_at.isoformat() if task.started_at else None,
         completed_at=task.completed_at.isoformat() if task.completed_at else None,
+    )
+
+
+def snapshot_to_response(snapshot: RegistrationTaskSnapshot) -> RegistrationTaskResponse:
+    return RegistrationTaskResponse(
+        id=snapshot.id,
+        task_uuid=snapshot.task_uuid,
+        status=snapshot.status,
+        email_service_id=snapshot.email_service_id,
+        pipeline_key=snapshot.pipeline_key,
+        proxy=snapshot.proxy,
     )
 
 
@@ -784,7 +796,7 @@ async def start_registration(
 
     # 创建任务
     task_uuid = str(uuid.uuid4())
-    task = _build_registration_service().create_task(
+    snapshot = _build_registration_service().start_task(
         task_uuid=task_uuid,
         proxy=request.proxy if request.use_proxy else None,
         pipeline_key=request.pipeline_key,
@@ -813,7 +825,7 @@ async def start_registration(
         proxy_overrides=_build_single_proxy_overrides(request),
     )
 
-    return task_to_response(task)
+    return snapshot_to_response(snapshot)
 
 
 @router.post("/batch", response_model=BatchRegistrationResponse)
