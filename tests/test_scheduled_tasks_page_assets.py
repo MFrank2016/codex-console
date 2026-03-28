@@ -24,7 +24,9 @@ def test_scheduled_tasks_page_requires_auth_and_renders_script():
         response = client.get("/scheduled-tasks")
         assert response.status_code == 200
         assert 'id="scheduled-plans-table"' in response.text
+        assert "/static/js/utils.js?v=" in response.text
         assert "/static/js/scheduled_tasks.js?v=" in response.text
+        assert response.text.index("/static/js/utils.js?v=") < response.text.index("/static/js/scheduled_tasks.js?v=")
 
 
 def test_scheduled_tasks_template_extends_workspace_shell_and_keeps_plan_management_hooks():
@@ -45,6 +47,8 @@ def test_scheduled_tasks_template_extends_workspace_shell_and_keeps_plan_managem
     assert 'id="plan-config-add-entry-btn"' in template
     assert 'id="plan-modal"' in template
     assert 'id="scheduled-tasks-support-context"' in template
+    assert "/static/js/utils.js?v=" in template
+    assert template.index("/static/js/utils.js?v=") < template.index("/static/js/scheduled_tasks.js?v=")
 
 
 def test_scheduled_tasks_template_no_longer_carries_primary_run_center_shell():

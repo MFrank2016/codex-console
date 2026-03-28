@@ -27,8 +27,10 @@ def test_run_center_page_requires_auth_and_renders_template_hooks():
         assert 'data-page-key="run_center"' in response.text
         assert 'id="run-center-page"' in response.text
         assert "/static/css/run_center.css?v=" in response.text
+        assert "/static/js/utils.js?v=" in response.text
         assert "/static/js/run_center_shared.js?v=" in response.text
         assert "/static/js/run_center.js?v=" in response.text
+        assert response.text.index("/static/js/utils.js?v=") < response.text.index("/static/js/run_center.js?v=")
 
 
 def test_run_center_template_contains_run_filters_table_log_controls_and_assets():
@@ -60,8 +62,10 @@ def test_run_center_template_contains_run_filters_table_log_controls_and_assets(
     assert 'id="run-log-refresh-btn"' in template
     assert 'id="run-log-stop-btn"' in template
     assert "/static/css/run_center.css?v=" in template
+    assert "/static/js/utils.js?v=" in template
     assert "/static/js/run_center_shared.js?v=" in template
     assert "/static/js/run_center.js?v=" in template
+    assert template.index("/static/js/utils.js?v=") < template.index("/static/js/run_center.js?v=")
     assert template.index("/static/js/run_center_shared.js?v=") < template.index("/static/js/run_center.js?v=")
 
 
