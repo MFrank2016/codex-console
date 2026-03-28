@@ -295,6 +295,7 @@ class RegistrationService:
             run_id: int,
         ) -> None:
             runs_service.mark_started(run_id, commit=False)
+            runs_service.append_event(run_id, level="info", message="started", commit=False)
             runs_service.mark_running(run_id, commit=False)
             runs_service.append_event(run_id, level="info", message="running", commit=True)
 

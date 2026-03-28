@@ -256,7 +256,7 @@ def test_registration_service_creates_run_records_and_terminal_status(db_factory
     assert result.run.status == "completed"
     assert result.run.started_at is not None
     assert result.run.completed_at is not None
-    assert [event.message for event in result.events] == ["queued", "running", "completed"]
+    assert [event.message for event in result.events] == ["queued", "started", "running", "completed"]
     assert task_manager.get_status("task-1")["status"] == "completed"
     assert "job-started" in task_manager.get_logs("task-1")
 
@@ -344,7 +344,7 @@ def test_registration_service_commits_queued_checkpoint_before_job_runner(db_fac
 
     assert observed["status"] == "running"
     assert observed["events"][0] == "queued"
-    assert observed["events"][:2] == ["queued", "running"]
+    assert observed["events"][:3] == ["queued", "started", "running"]
 
 
 
@@ -377,7 +377,7 @@ def test_registration_service_persists_run_events_in_owner_defined_order(db_fact
         pipeline_key="codexgen_pipeline",
     )
 
-    assert [event.message for event in result.events] == ["queued", "running", "completed"]
+    assert [event.message for event in result.events] == ["queued", "started", "running", "completed"]
 
 
 
@@ -417,7 +417,7 @@ def test_registration_service_marks_failed_once_when_job_runner_raises(db_factor
     assert result.task.status == "failed"
     assert result.run is not None
     assert result.run.status == "failed"
-    assert [event.message for event in events] == ["queued", "running", "failed"]
+    assert [event.message for event in events] == ["queued", "started", "running", "failed"]
     assert [event.message for event in events].count("failed") == 1
     assert task_manager.get_status(task_uuid)["status"] == "failed"
     assert task_manager._closed_streams == [(task_uuid, "failed")]
