@@ -106,7 +106,6 @@ def test_workspace_routes_render_after_login_with_page_specific_scripts():
             _assert_versioned_asset(response.text, "/static/js/workspace.js")
             _assert_versioned_asset(response.text, script_path)
             if path == "/scheduled-tasks":
-                _assert_versioned_asset(response.text, "/static/css/realtime_log_console.css")
                 _assert_versioned_asset(response.text, "/static/js/utils.js")
                 _assert_versioned_asset(response.text, "/static/js/run_center_shared.js")
 

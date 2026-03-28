@@ -51,6 +51,11 @@ def test_scheduled_tasks_template_extends_workspace_shell_and_keeps_plan_managem
     assert template.index("/static/js/utils.js?v=") < template.index("/static/js/scheduled_tasks.js?v=")
 
 
+def test_scheduled_tasks_template_does_not_load_realtime_log_console_assets():
+    template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
+    assert "/static/css/realtime_log_console.css?v=" not in template
+
+
 def test_scheduled_tasks_template_no_longer_carries_primary_run_center_shell():
     template = Path("templates/scheduled_tasks.html").read_text(encoding="utf-8")
     assert 'id="scheduled-runs-card"' not in template
