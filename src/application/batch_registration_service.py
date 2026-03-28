@@ -11,8 +11,13 @@ from typing import Any, Callable
 from ..core.registration_batch_metrics import apply_task_outcome, build_domain_stats
 from ..core.registration_batch_stats import finalize_batch_statistics
 from ..core.time import utc_now_naive
+from .registration_bootstrap_dtos import (
+    BatchBootstrapResult,
+    OutlookBatchBootstrapResult,
+    RegistrationTaskSnapshot,
+)
 from ..database import crud
-from ..database.models import RegistrationRun, RegistrationTask
+from ..database.models import Account, EmailService, RegistrationRun, RegistrationTask
 from .proxy_dispatch_service import ProxyDispatchService, ResolvedProxyCandidate
 from .registration_runs_service import RegistrationRunsService
 
@@ -54,6 +59,7 @@ class BatchRegistrationService:
         batch_statistics_finalizer: Callable[..., Any] = finalize_batch_statistics,
         proxy_dispatcher: ProxyDispatchService | None = None,
         utc_now_provider: Callable[[], Any] = utc_now_naive,
+        uuid_factory: Callable[[], str] | None = None,
     ):
         self.db_factory = db_factory
         if task_manager is None:
@@ -74,6 +80,177 @@ class BatchRegistrationService:
         self.batch_statistics_finalizer = batch_statistics_finalizer
         self.proxy_dispatcher = proxy_dispatcher
         self.utc_now_provider = utc_now_provider
+        # 仅用于 bootstrap 阶段的 batch_id 生成；任务 task_uuid 仍独立生成。
+        self.uuid_factory = uuid_factory or (lambda: str(uuid.uuid4()))
+
+    def _task_to_snapshot(self, task: RegistrationTask) -> RegistrationTaskSnapshot:
+        return RegistrationTaskSnapshot(
+            id=task.id,
+            task_uuid=task.task_uuid,
+            status=task.status,
+            created_at=task.created_at.isoformat() if task.created_at else None,
+            proxy=task.proxy,
+            pipeline_key=task.pipeline_key,
+            email_service_id=task.email_service_id,
+        )
+
+    @staticmethod
+    def _resolve_outlook_service_email(config: dict[str, Any] | None, fallback_name: str) -> str:
+        resolved = (config or {}).get("email")
+        return resolved or fallback_name
+
+    def _prepare_proxy_pool_with_fallback(
+        self,
+        *,
+        batch_id: str,
+        task_group: str,
+        concurrency: int,
+        overrides: dict[str, Any] | None,
+    ) -> None:
+        try:
+            self.prepare_batch_proxy_pool(
+                batch_id=batch_id,
+                task_group=task_group,
+                concurrency=concurrency,
+                overrides=overrides or {},
+            )
+        except RuntimeError as exc:
+            logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
+
+    def _filter_outlook_service_ids(
+        self,
+        *,
+        service_ids: list[int],
+        skip_registered: bool,
+    ) -> tuple[list[int], int]:
+        if not skip_registered:
+            return list(service_ids), 0
+
+        with self.db_factory() as db:
+            ordered_services = (
+                db.query(EmailService)
+                .filter(EmailService.id.in_(service_ids))
+                .all()
+            )
+            service_email_by_id = {
+                service.id: self._resolve_outlook_service_email(service.config, service.name)
+                for service in ordered_services
+            }
+            existing_emails = {
+                row[0]
+                for row in db.query(Account.email)
+                .filter(Account.email.in_(list(service_email_by_id.values())))
+                .all()
+            }
+
+        actual_service_ids: list[int] = []
+        skipped = 0
+        for service_id in service_ids:
+            email = service_email_by_id.get(service_id)
+            if email is None:
+                continue
+            if email in existing_emails:
+                skipped += 1
+            else:
+                actual_service_ids.append(service_id)
+
+        return actual_service_ids, skipped
+
+    def start_outlook_batch(
+        self,
+        *,
+        service_ids: list[int],
+        skip_registered: bool,
+        concurrency: int,
+        use_proxy: bool,
+        proxy_task_group: str,
+        proxy_overrides: dict[str, Any],
+    ) -> OutlookBatchBootstrapResult:
+        batch_id = self.uuid_factory()
+        actual_service_ids, skipped = self._filter_outlook_service_ids(
+            service_ids=service_ids,
+            skip_registered=skip_registered,
+        )
+
+        if not actual_service_ids:
+            return OutlookBatchBootstrapResult(
+                batch_id="",
+                total=len(service_ids),
+                skipped=skipped,
+                service_ids=[],
+            )
+
+        self.init_batch_state(batch_id, [], total=len(actual_service_ids))
+        self.batch_tasks[batch_id]["skipped"] = skipped
+        self.batch_tasks[batch_id]["service_ids"] = list(actual_service_ids)
+        self.task_manager.update_batch_status(
+            batch_id,
+            skipped=skipped,
+            service_ids=list(actual_service_ids),
+        )
+
+        if use_proxy:
+            self._prepare_proxy_pool_with_fallback(
+                batch_id=batch_id,
+                task_group=proxy_task_group,
+                concurrency=concurrency,
+                overrides=proxy_overrides,
+            )
+
+        return OutlookBatchBootstrapResult(
+            batch_id=batch_id,
+            total=len(service_ids),
+            skipped=skipped,
+            service_ids=actual_service_ids,
+        )
+
+    def start_batch(
+        self,
+        *,
+        count: int,
+        proxy: str | None,
+        pipeline_key: str | None,
+        concurrency: int,
+        use_proxy: bool,
+        proxy_task_group: str,
+        proxy_overrides: dict[str, Any],
+    ) -> BatchBootstrapResult:
+        batch_id = self.uuid_factory()
+
+        if count == 0:
+            if use_proxy:
+                self._prepare_proxy_pool_with_fallback(
+                    batch_id=batch_id,
+                    task_group=proxy_task_group,
+                    concurrency=concurrency,
+                    overrides=proxy_overrides,
+                )
+            self.init_batch_state(batch_id, [], is_unlimited=True, total=0)
+            return BatchBootstrapResult(
+                batch_id=batch_id,
+                task_snapshots=(),
+                is_unlimited=True,
+            )
+
+        if use_proxy:
+            self._prepare_proxy_pool_with_fallback(
+                batch_id=batch_id,
+                task_group=proxy_task_group,
+                concurrency=concurrency,
+                overrides=proxy_overrides,
+            )
+
+        tasks = self.create_batch_tasks(
+            count=count,
+            proxy=proxy,
+            pipeline_key=pipeline_key,
+        )
+        self.init_batch_state(batch_id, [task.task_uuid for task in tasks])
+        return BatchBootstrapResult(
+            batch_id=batch_id,
+            task_snapshots=[self._task_to_snapshot(task) for task in tasks],
+            is_unlimited=False,
+        )
 
     def create_batch_tasks(
         self,
@@ -129,6 +306,13 @@ class BatchRegistrationService:
         total: int | None = None,
         statistics_context: dict | None = None,
     ) -> None:
+        previous_state = self.batch_tasks.get(batch_id, {})
+        preserved_fields: dict[str, Any] = {}
+        for key in ("skipped", "service_ids"):
+            if key in previous_state:
+                value = previous_state[key]
+                preserved_fields[key] = list(value) if isinstance(value, list | tuple) else value
+
         computed_total = 0 if is_unlimited else (total if total is not None else len(task_uuids))
         started_at = self.utc_now_provider().isoformat()
         self.task_manager.init_batch(
@@ -160,6 +344,9 @@ class BatchRegistrationService:
             "domain_stats": [],
             "statistics_context": statistics_context,
         }
+        if preserved_fields:
+            self.batch_tasks[batch_id].update(preserved_fields)
+            self.task_manager.update_batch_status(batch_id, **preserved_fields)
 
     def prepare_batch_proxy_pool(
         self,
@@ -1009,7 +1196,6 @@ class BatchRegistrationService:
         self,
         batch_id: str,
         service_ids: list[int],
-        skip_registered: bool,
         proxy: str | None,
         interval_min: int,
         interval_max: int,
@@ -1032,11 +1218,18 @@ class BatchRegistrationService:
             except RuntimeError:
                 pass
 
+        if batch_id not in self.batch_tasks:
+            self.init_batch_state(batch_id, [], total=len(service_ids))
+
         task_uuids = self.create_outlook_task_records(
             service_ids=service_ids,
             proxy=proxy if use_proxy else None,
         )
-        return await self.run_batch_registration(
+        if batch_id in self.batch_tasks:
+            self.batch_tasks[batch_id]["task_uuids"] = list(task_uuids)
+            self.task_manager.update_batch_status(batch_id, task_uuids=list(task_uuids))
+
+        summary = await self.run_batch_registration(
             batch_id=batch_id,
             task_uuids=task_uuids,
             email_service_type="outlook",
@@ -1059,3 +1252,5 @@ class BatchRegistrationService:
             proxy_overrides=proxy_overrides or {},
             registration_mode="outlook_batch",
         )
+        self.task_manager.update_batch_status(batch_id, task_uuids=list(task_uuids))
+        return summary

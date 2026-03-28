@@ -25,6 +25,7 @@ from ...core.registration_failure_records import (
     resolve_failure_window,
 )
 from ...application import BatchRegistrationService, ProxyDispatchService, RegistrationService
+from ...application.registration_bootstrap_dtos import RegistrationTaskSnapshot
 from ...application.batch_registration_service import (
     DEFAULT_BATCH_PROXY_POOLS_STORE,
     DEFAULT_BATCH_TASKS_STORE,
@@ -308,6 +309,18 @@ def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = No
     )
 
 
+def snapshot_to_response(snapshot: RegistrationTaskSnapshot) -> RegistrationTaskResponse:
+    return RegistrationTaskResponse(
+        id=snapshot.id,
+        task_uuid=snapshot.task_uuid,
+        status=snapshot.status,
+        created_at=snapshot.created_at,
+        email_service_id=snapshot.email_service_id,
+        pipeline_key=snapshot.pipeline_key,
+        proxy=snapshot.proxy,
+    )
+
+
 def _build_failure_filters(
     *,
     pipeline_key: Optional[str],
@@ -500,22 +513,6 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
         proxy_task_group=proxy_task_group,
         proxy_overrides=proxy_overrides or {},
         resolved_proxy_candidate=resolved_proxy_candidate,
-    )
-
-def _init_batch_state(
-    batch_id: str,
-    task_uuids: List[str],
-    *,
-    is_unlimited: bool = False,
-    total: Optional[int] = None,
-    statistics_context: Optional[dict] = None,
-):
-    _build_batch_registration_service().init_batch_state(
-        batch_id,
-        task_uuids,
-        is_unlimited=is_unlimited,
-        total=total,
-        statistics_context=statistics_context,
     )
 
 def _make_batch_helpers(batch_id: str):
@@ -784,7 +781,7 @@ async def start_registration(
 
     # 创建任务
     task_uuid = str(uuid.uuid4())
-    task = _build_registration_service().create_task(
+    snapshot = _build_registration_service().start_task(
         task_uuid=task_uuid,
         proxy=request.proxy if request.use_proxy else None,
         pipeline_key=request.pipeline_key,
@@ -813,7 +810,7 @@ async def start_registration(
         proxy_overrides=_build_single_proxy_overrides(request),
     )
 
-    return task_to_response(task)
+    return snapshot_to_response(snapshot)
 
 
 @router.post("/batch", response_model=BatchRegistrationResponse)
@@ -853,26 +850,21 @@ async def start_batch_registration(
     if request.dynamic_proxy_strategy and request.dynamic_proxy_strategy not in {"random", "exclusive", "consume_once", "strict_isolation"}:
         raise HTTPException(status_code=400, detail="动态代理策略无效")
 
-    is_unlimited = request.count == 0
-
-    # 创建批量任务
-    batch_id = str(uuid.uuid4())
     batch_service = _build_batch_registration_service()
     batch_proxy_overrides = _build_batch_proxy_overrides(request)
-    batch_proxy_overrides = _build_batch_proxy_overrides(request)
+    bootstrap = batch_service.start_batch(
+        count=request.count,
+        proxy=request.proxy if request.use_proxy else None,
+        pipeline_key=request.pipeline_key,
+        concurrency=request.concurrency,
+        use_proxy=request.use_proxy,
+        proxy_task_group="batch_registration" if request.count else "unlimited_registration",
+        proxy_overrides=batch_proxy_overrides,
+    )
+    batch_id = bootstrap.batch_id
+    is_unlimited = bootstrap.is_unlimited
 
     if is_unlimited:
-        if request.use_proxy:
-            try:
-                batch_service.prepare_batch_proxy_pool(
-                    batch_id=batch_id,
-                    task_group="unlimited_registration",
-                    concurrency=request.concurrency,
-                    overrides=batch_proxy_overrides,
-                )
-            except RuntimeError as exc:
-                logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
-        _init_batch_state(batch_id, [], is_unlimited=True, total=0)
         background_tasks.add_task(
             run_unlimited_batch_registration,
             batch_id,
@@ -902,23 +894,7 @@ async def start_batch_registration(
             tasks=[],
         )
 
-    if request.use_proxy:
-        try:
-            batch_service.prepare_batch_proxy_pool(
-                batch_id=batch_id,
-                task_group="batch_registration",
-                concurrency=request.concurrency,
-                overrides=batch_proxy_overrides,
-            )
-        except RuntimeError as exc:
-            logger.warning("批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
-
-    tasks = batch_service.create_batch_tasks(
-        count=request.count,
-        proxy=request.proxy if request.use_proxy else None,
-        pipeline_key=request.pipeline_key,
-    )
-    task_uuids = [task.task_uuid for task in tasks]
+    task_uuids = [snapshot.task_uuid for snapshot in bootstrap.task_snapshots]
 
     # 在后台运行批量注册
     background_tasks.add_task(
@@ -949,7 +925,7 @@ async def start_batch_registration(
         batch_id=batch_id,
         count=request.count,
         is_unlimited=False,
-        tasks=[task_to_response(t) for t in tasks if t]
+        tasks=[snapshot_to_response(snapshot) for snapshot in bootstrap.task_snapshots]
     )
 
 
@@ -1353,7 +1329,6 @@ async def get_outlook_accounts_for_registration():
 async def run_outlook_batch_registration(
     batch_id: str,
     service_ids: List[int],
-    skip_registered: bool,
     proxy: Optional[str],
     interval_min: int,
     interval_max: int,
@@ -1373,7 +1348,6 @@ async def run_outlook_batch_registration(
     return await _build_batch_registration_service().run_outlook_batch_registration(
         batch_id=batch_id,
         service_ids=service_ids,
-        skip_registered=skip_registered,
         proxy=proxy,
         interval_min=interval_min,
         interval_max=interval_max,
@@ -1404,9 +1378,6 @@ async def start_outlook_batch_registration(
     - interval_min: 最小间隔秒数
     - interval_max: 最大间隔秒数
     """
-    from ...database.models import EmailService as EmailServiceModel
-    from ...database.models import Account
-
     # 验证参数
     if not request.service_ids:
         raise HTTPException(status_code=400, detail="请选择至少一个 Outlook 账户")
@@ -1422,79 +1393,31 @@ async def start_outlook_batch_registration(
     if request.dynamic_proxy_strategy and request.dynamic_proxy_strategy not in {"random", "exclusive", "consume_once", "strict_isolation"}:
         raise HTTPException(status_code=400, detail="动态代理策略无效")
 
-    # 过滤掉已注册的邮箱
-    actual_service_ids = request.service_ids
-    skipped_count = 0
-
-    if request.skip_registered:
-        actual_service_ids = []
-        with get_db() as db:
-            for service_id in request.service_ids:
-                service = db.query(EmailServiceModel).filter(
-                    EmailServiceModel.id == service_id
-                ).first()
-
-                if not service:
-                    continue
-
-                config = service.config or {}
-                email = config.get("email") or service.name
-
-                # 检查是否已注册
-                existing_account = db.query(Account).filter(
-                    Account.email == email
-                ).first()
-
-                if existing_account:
-                    skipped_count += 1
-                else:
-                    actual_service_ids.append(service_id)
-
-    if not actual_service_ids:
-        return OutlookBatchRegistrationResponse(
-            batch_id="",
-            total=len(request.service_ids),
-            skipped=skipped_count,
-            to_register=0,
-            service_ids=[]
-        )
-
-    # 创建批量任务
-    batch_id = str(uuid.uuid4())
     batch_service = _build_batch_registration_service()
     batch_proxy_overrides = _build_batch_proxy_overrides(request)
+    bootstrap = batch_service.start_outlook_batch(
+        service_ids=request.service_ids,
+        skip_registered=request.skip_registered,
+        concurrency=request.concurrency,
+        use_proxy=request.use_proxy,
+        proxy_task_group="outlook_batch",
+        proxy_overrides=batch_proxy_overrides,
+    )
 
-    # 初始化批量任务状态
-    batch_tasks[batch_id] = {
-        "total": len(actual_service_ids),
-        "completed": 0,
-        "success": 0,
-        "failed": 0,
-        "skipped": 0,
-        "cancelled": False,
-        "service_ids": actual_service_ids,
-        "current_index": 0,
-        "logs": [],
-        "finished": False
-    }
-
-    if request.use_proxy:
-        try:
-            batch_service.prepare_batch_proxy_pool(
-                batch_id=batch_id,
-                task_group="outlook_batch",
-                concurrency=request.concurrency,
-                overrides=batch_proxy_overrides,
-            )
-        except RuntimeError as exc:
-            logger.warning("Outlook 批量任务 %s 预热动态代理池失败，将在运行时回退: %s", batch_id, exc)
+    if not bootstrap.service_ids:
+        return OutlookBatchRegistrationResponse(
+            batch_id="",
+            total=bootstrap.total,
+            skipped=bootstrap.skipped,
+            to_register=0,
+            service_ids=[],
+        )
 
     # 在后台运行批量注册
     background_tasks.add_task(
         run_outlook_batch_registration,
-        batch_id,
-        actual_service_ids,
-        request.skip_registered,
+        bootstrap.batch_id,
+        list(bootstrap.service_ids),
         request.proxy if request.use_proxy else None,
         request.interval_min,
         request.interval_max,
@@ -1512,11 +1435,11 @@ async def start_outlook_batch_registration(
     )
 
     return OutlookBatchRegistrationResponse(
-        batch_id=batch_id,
-        total=len(request.service_ids),
-        skipped=skipped_count,
-        to_register=len(actual_service_ids),
-        service_ids=actual_service_ids
+        batch_id=bootstrap.batch_id,
+        total=bootstrap.total,
+        skipped=bootstrap.skipped,
+        to_register=len(bootstrap.service_ids),
+        service_ids=list(bootstrap.service_ids),
     )
 
 

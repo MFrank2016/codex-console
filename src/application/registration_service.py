@@ -11,6 +11,7 @@ from ..core.time import utc_now_naive
 from ..database import crud
 from ..database.models import Account, RegistrationRun, RegistrationRunEvent, RegistrationTask
 from .proxy_dispatch_service import ProxyDispatchService, ResolvedProxyCandidate
+from .registration_bootstrap_dtos import RegistrationTaskSnapshot
 from .registration_runs_service import RegistrationRunsService
 
 logger = logging.getLogger(__name__)
@@ -60,13 +61,59 @@ class RegistrationService:
         email_service_id: int | None = None,
     ) -> RegistrationTask:
         with self.db_factory() as db:
-            return crud.create_registration_task(
+            return self._create_registration_task(
                 db,
                 task_uuid=task_uuid,
                 proxy=proxy,
                 pipeline_key=pipeline_key,
                 email_service_id=email_service_id,
             )
+
+    def start_task(
+        self,
+        *,
+        task_uuid: str,
+        proxy: str | None = None,
+        pipeline_key: str | None = None,
+        email_service_id: int | None = None,
+    ) -> RegistrationTaskSnapshot:
+        with self.db_factory() as db:
+            task = self._create_registration_task(
+                db,
+                task_uuid=task_uuid,
+                proxy=proxy,
+                pipeline_key=pipeline_key,
+                email_service_id=email_service_id,
+            )
+            if task.id is None:
+                raise RuntimeError(f"registration task {task_uuid} created without database id")
+            return RegistrationTaskSnapshot(
+                id=task.id,
+                task_uuid=task.task_uuid,
+                status=task.status,
+                created_at=task.created_at.isoformat() if task.created_at else None,
+                proxy=task.proxy,
+                pipeline_key=task.pipeline_key,
+                email_service_id=task.email_service_id,
+            )
+
+    def _create_registration_task(
+        self,
+        db,
+        *,
+        task_uuid: str,
+        proxy: str | None,
+        pipeline_key: str | None,
+        email_service_id: int | None,
+    ) -> RegistrationTask:
+        """共享 create_task/start_task 创建路径，避免重复逻辑与额外回查。"""
+        return crud.create_registration_task(
+            db,
+            task_uuid=task_uuid,
+            proxy=proxy,
+            pipeline_key=pipeline_key,
+            email_service_id=email_service_id,
+        )
 
     def build_result_for_task(
         self,
