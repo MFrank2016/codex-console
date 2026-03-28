@@ -257,7 +257,7 @@ def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = No
     )
 
 
-def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, use_proxy: bool = False, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None, resolved_proxy_candidate: Any = None):
+def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", registration_mode: str = "single", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, use_proxy: bool = False, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None, resolved_proxy_candidate: Any = None):
     return _build_registration_service().run_single_task_sync(
         task_uuid=task_uuid,
         email_service_type=email_service_type,
@@ -266,6 +266,7 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
         email_service_id=email_service_id,
         log_prefix=log_prefix,
         batch_id=batch_id,
+        registration_mode=registration_mode,
         auto_upload_cpa=auto_upload_cpa,
         cpa_service_ids=cpa_service_ids or [],
         auto_upload_sub2api=auto_upload_sub2api,
@@ -279,7 +280,7 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
         resolved_proxy_candidate=resolved_proxy_candidate,
     )
 
-async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, use_proxy: bool = False, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None, resolved_proxy_candidate: Any = None):
+async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", registration_mode: str = "single", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None, pipeline_key: Optional[str] = None, *, use_proxy: bool = False, proxy_task_group: str = "single_registration", proxy_overrides: Optional[dict] = None, resolved_proxy_candidate: Any = None):
     return await _build_registration_service().run_single_task(
         task_uuid=task_uuid,
         email_service_type=email_service_type,
@@ -288,6 +289,7 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
         email_service_id=email_service_id,
         log_prefix=log_prefix,
         batch_id=batch_id,
+        registration_mode=registration_mode,
         auto_upload_cpa=auto_upload_cpa,
         cpa_service_ids=cpa_service_ids or [],
         auto_upload_sub2api=auto_upload_sub2api,

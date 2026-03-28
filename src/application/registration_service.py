@@ -94,6 +94,7 @@ class RegistrationService:
         email_service_id: int | None = None,
         log_prefix: str = "",
         batch_id: str = "",
+        registration_mode: str = "single",
         auto_upload_cpa: bool = False,
         cpa_service_ids: list[int] | None = None,
         auto_upload_sub2api: bool = False,
@@ -128,6 +129,7 @@ class RegistrationService:
             "email_service_id": email_service_id,
             "log_prefix": log_prefix,
             "batch_id": batch_id,
+            "registration_mode": registration_mode,
             "auto_upload_cpa": auto_upload_cpa,
             "cpa_service_ids": cpa_service_ids or [],
             "auto_upload_sub2api": auto_upload_sub2api,
@@ -174,6 +176,7 @@ class RegistrationService:
         email_service_id: int | None = None,
         log_prefix: str = "",
         batch_id: str = "",
+        registration_mode: str = "single",
         auto_upload_cpa: bool = False,
         cpa_service_ids: list[int] | None = None,
         auto_upload_sub2api: bool = False,
@@ -195,6 +198,7 @@ class RegistrationService:
             email_service_id=email_service_id,
             log_prefix=log_prefix,
             batch_id=batch_id,
+            registration_mode=registration_mode,
             auto_upload_cpa=auto_upload_cpa,
             cpa_service_ids=cpa_service_ids or [],
             auto_upload_sub2api=auto_upload_sub2api,
@@ -220,6 +224,7 @@ class RegistrationService:
         email_service_id: int | None = None,
         log_prefix: str = "",
         batch_id: str = "",
+        registration_mode: str = "single",
         auto_upload_cpa: bool = False,
         cpa_service_ids: list[int] | None = None,
         auto_upload_sub2api: bool = False,
@@ -373,6 +378,8 @@ class RegistrationService:
                             callback_logger=log_callback,
                             task_uuid=task_uuid,
                             task_step_callback=_task_step_callback,
+                            batch_id=batch_id or None,
+                            registration_mode=registration_mode,
                         )
                     except Exception as exc:
                         should_retry = (

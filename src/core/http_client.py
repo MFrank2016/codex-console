@@ -59,6 +59,7 @@ class HTTPClient:
         self.proxy_url = proxy_url
         self.config = config or RequestConfig()
         self._session = session
+        self.last_ip_address: str | None = None
 
     @property
     def proxies(self) -> Optional[Dict[str, str]]:
@@ -279,7 +280,9 @@ class OpenAIHTTPClient(HTTPClient):
 
             # 解析位置信息
             import re
+            ip_match = re.search(r"ip=([^\n]+)", trace_text)
             loc_match = re.search(r"loc=([A-Z]+)", trace_text)
+            self.last_ip_address = ip_match.group(1).strip() if ip_match else None
             loc = loc_match.group(1) if loc_match else None
 
             # 检查是否支持
@@ -289,6 +292,7 @@ class OpenAIHTTPClient(HTTPClient):
 
         except Exception as e:
             logger.error(f"检查 IP 地理位置失败: {e}")
+            self.last_ip_address = None
             return False, None
 
     def send_openai_request(

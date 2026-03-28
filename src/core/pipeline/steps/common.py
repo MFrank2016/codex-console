@@ -31,6 +31,7 @@ def get_proxy_ip_step(ctx: PipelineContext) -> dict[str, Any]:
         "proxy_url": proxy_url,
         "metadata": {
             "assigned_proxy_id": selected.get("proxy_id"),
+            "proxy_ip": selected.get("ip_address"),
         },
     }
 

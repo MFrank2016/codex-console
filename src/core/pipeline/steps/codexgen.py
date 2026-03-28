@@ -61,6 +61,14 @@ class CodexgenPipelineRuntime:
     def email_info(self) -> dict[str, Any] | None:
         return self._engine.email_info
 
+    @property
+    def proxy_ip(self) -> str | None:
+        return self._engine.proxy_ip
+
+    @property
+    def generated_user_profile(self) -> dict[str, Any] | None:
+        return self._engine.generated_user_profile
+
     def run_check_ip_location_step(self) -> dict[str, Any]:
         ip_ok, location = self._engine._check_ip_location()  # noqa: SLF001
         if not ip_ok:
@@ -219,6 +227,7 @@ class CodexgenPipelineRuntime:
             return False
 
         user_info = generate_random_user_info()
+        self._engine.generated_user_profile = dict(user_info)  # noqa: SLF001
         body = json.dumps(user_info)
         headers = {
             "referer": "https://auth.openai.com/about-you",

@@ -458,6 +458,7 @@ class BatchRegistrationService:
         use_proxy: bool = False,
         proxy_task_group: str = "unlimited_registration",
         proxy_overrides: dict[str, Any] | None = None,
+        registration_mode: str = "unlimited",
     ) -> BatchExecutionSummary:
         if batch_id not in self.batch_tasks:
             self.init_batch_state(batch_id, [], is_unlimited=True, total=0)
@@ -519,6 +520,7 @@ class BatchRegistrationService:
                         email_service_id,
                         log_prefix=f"[任务{index}]",
                         batch_id=batch_id,
+                        registration_mode=registration_mode,
                         auto_upload_cpa=auto_upload_cpa,
                         cpa_service_ids=cpa_service_ids or [],
                         auto_upload_sub2api=auto_upload_sub2api,
@@ -628,6 +630,7 @@ class BatchRegistrationService:
         use_proxy: bool = False,
         proxy_task_group: str = "batch_registration",
         proxy_overrides: dict[str, Any] | None = None,
+        registration_mode: str = "batch",
     ) -> BatchExecutionSummary:
         statistics_context = None
         if enable_stats_finalization:
@@ -685,6 +688,7 @@ class BatchRegistrationService:
                         email_service_id,
                         log_prefix=prefix,
                         batch_id=batch_id,
+                        registration_mode=registration_mode,
                         auto_upload_cpa=auto_upload_cpa,
                         cpa_service_ids=cpa_service_ids or [],
                         auto_upload_sub2api=auto_upload_sub2api,
@@ -774,6 +778,7 @@ class BatchRegistrationService:
         use_proxy: bool = False,
         proxy_task_group: str = "batch_registration",
         proxy_overrides: dict[str, Any] | None = None,
+        registration_mode: str = "batch",
     ) -> BatchExecutionSummary:
         statistics_context = None
         if enable_stats_finalization:
@@ -831,6 +836,7 @@ class BatchRegistrationService:
                     email_service_id,
                     log_prefix=prefix,
                     batch_id=batch_id,
+                    registration_mode=registration_mode,
                     auto_upload_cpa=auto_upload_cpa,
                     cpa_service_ids=cpa_service_ids or [],
                     auto_upload_sub2api=auto_upload_sub2api,
@@ -938,6 +944,7 @@ class BatchRegistrationService:
         use_proxy: bool = False,
         proxy_task_group: str = "batch_registration",
         proxy_overrides: dict[str, Any] | None = None,
+        registration_mode: str = "batch",
     ) -> BatchExecutionSummary:
         if mode == "parallel":
             return await self.run_batch_parallel(
@@ -961,6 +968,7 @@ class BatchRegistrationService:
                 use_proxy=use_proxy,
                 proxy_task_group=proxy_task_group,
                 proxy_overrides=proxy_overrides or {},
+                registration_mode=registration_mode,
             )
         return await self.run_batch_pipeline(
             batch_id=batch_id,
@@ -983,6 +991,7 @@ class BatchRegistrationService:
             use_proxy=use_proxy,
             proxy_task_group=proxy_task_group,
             proxy_overrides=proxy_overrides or {},
+            registration_mode=registration_mode,
         )
 
     async def run_outlook_batch_registration(
@@ -1037,4 +1046,5 @@ class BatchRegistrationService:
             use_proxy=use_proxy,
             proxy_task_group=proxy_task_group,
             proxy_overrides=proxy_overrides or {},
+            registration_mode="outlook_batch",
         )

@@ -202,6 +202,44 @@ def test_check_sentinel_sends_non_empty_pow(monkeypatch):
     assert body["p"] == "gAAAAACpow-token"
 
 
+def test_check_ip_location_caches_proxy_ip_from_http_client():
+    email_service = FakeEmailService([])
+    engine = RegistrationEngine(email_service)
+    engine.http_client = type(
+        "FakeHttpClient",
+        (),
+        {
+            "last_ip_address": "9.9.9.9",
+            "check_ip_location": lambda self: (True, "US"),
+        },
+    )()
+
+    ok, location = engine._check_ip_location()
+
+    assert ok is True
+    assert location == "US"
+    assert engine.proxy_ip == "9.9.9.9"
+
+
+def test_run_create_account_profile_step_caches_generated_user_profile(monkeypatch):
+    _patch_blacklist_query(monkeypatch)
+    email_service = FakeEmailService([])
+    engine = RegistrationEngine(email_service)
+    engine.session = QueueSession([
+        ("POST", OPENAI_API_ENDPOINTS["create_account"], DummyResponse(payload={})),
+    ])
+
+    monkeypatch.setattr(
+        "src.core.register.generate_random_user_info",
+        lambda: {"name": "Test User", "birthdate": "1990-01-02"},
+    )
+
+    payload = engine.run_create_account_profile_step()
+
+    assert payload == {}
+    assert engine.generated_user_profile == {"name": "Test User", "birthdate": "1990-01-02"}
+
+
 def test_run_registers_then_relogs_to_fetch_token(monkeypatch):
     _patch_blacklist_query(monkeypatch)
     session_one = QueueSession([

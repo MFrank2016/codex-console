@@ -7,6 +7,7 @@ from src.core.email_suffix_blacklist import RegistrationDisallowedSuffixError
 from src.core.registration_job import run_registration_job
 from src.database import crud
 from src.database.models import Base, EmailSuffixBlacklist
+from src.database.repositories import registration_failure_repository as failure_repo
 from src.database.session import DatabaseSessionManager
 
 
@@ -240,3 +241,232 @@ def test_run_registration_job_auto_blacklist_uses_email_suffix_fallback_and_rese
         and call.get("completed_at") is None
         for call in update_calls
     )
+
+
+def test_run_registration_job_records_failure_attempt_before_retry_success(temp_db, monkeypatch):
+    task_uuid = "task-retry-failure-record"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+    stats = {"run_calls": 0}
+
+    class FakeResult:
+        success = True
+        email = "second@ok.test"
+        error_message = None
+
+        def to_dict(self):
+            return {"success": True, "email": self.email}
+
+    class FakeEngine:
+        def __init__(self, **_kwargs):
+            self.generated_user_profile = {"name": "Alice Smith", "birthdate": "1994-02-03"}
+            self.proxy_ip = "1.1.1.1"
+
+        def run(self):
+            stats["run_calls"] += 1
+            if stats["run_calls"] == 1:
+                raise RegistrationDisallowedSuffixError(
+                    email="first@blocked.test",
+                    suffix="blocked.test",
+                    detail="registration disallowed: blocked.test",
+                )
+            return FakeResult()
+
+        def save_to_database(self, result):
+            crud.create_account(
+                temp_db,
+                email=result.email,
+                email_service="tempmail",
+                password="p",
+                client_id="cid",
+            )
+            return True
+
+        def flush_task_logs(self):
+            return None
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FakeEngine)
+    monkeypatch.setattr(
+        "src.core.registration_job.get_settings",
+        lambda: types.SimpleNamespace(registration_max_retries=1),
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-a",
+        email_service_config={},
+        pipeline_key="current_pipeline",
+        task_uuid=task_uuid,
+        batch_id="batch-1",
+        registration_mode="batch",
+    )
+
+    rows = failure_repo.list_registration_failure_records(temp_db)
+
+    assert result.success is True
+    assert len(rows) == 1
+    assert rows[0].task_uuid == task_uuid
+    assert rows[0].attempt_no == 1
+    assert rows[0].batch_id == "batch-1"
+    assert rows[0].registration_mode == "batch"
+    assert rows[0].error_code == "registration_disallowed"
+    assert rows[0].display_name == "Alice Smith"
+    assert rows[0].birthdate == "1994-02-03"
+    assert rows[0].proxy_ip == "1.1.1.1"
+
+
+def test_run_registration_job_records_codexgen_failure_from_result_payload_metadata(temp_db, monkeypatch):
+    task_uuid = "task-codexgen-failure-record"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job._run_pipeline_registration",
+        lambda **_kwargs: (
+            None,
+            {
+                "success": False,
+                "email": "tester@example.com",
+                "access_token": "access-plain-token",
+                "error_message": "boom-codexgen",
+                "metadata": {
+                    "user_profile": {"name": "Test User", "birthdate": "1990-01-02"},
+                    "proxy_ip": "9.9.9.9",
+                    "refresh_token": "refresh-plain-token",
+                },
+            },
+        ),
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-a",
+        email_service_config={},
+        pipeline_key="codexgen_pipeline",
+        task_uuid=task_uuid,
+        batch_id="batch-codexgen-1",
+        registration_mode="batch",
+    )
+
+    rows = failure_repo.list_registration_failure_records(temp_db)
+
+    assert result.success is False
+    assert len(rows) == 1
+    assert rows[0].pipeline_key == "codexgen_pipeline"
+    assert rows[0].task_uuid == task_uuid
+    assert rows[0].display_name == "Test User"
+    assert rows[0].birthdate == "1990-01-02"
+    assert rows[0].proxy_ip == "9.9.9.9"
+    assert rows[0].extra_json["result_payload"]["access_token"].endswith("...")
+    assert rows[0].extra_json["result_payload"]["access_token"] != "access-plain-token"
+    assert rows[0].extra_json["result_payload"]["metadata"]["refresh_token"].endswith("...")
+
+
+def test_run_registration_job_records_codexgen_exception_with_runtime_snapshot(temp_db, monkeypatch):
+    task_uuid = "task-codexgen-exception-record"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    def fake_run_pipeline_registration(**kwargs):
+        kwargs["runtime_ref"]["runtime"] = types.SimpleNamespace(
+            _engine=types.SimpleNamespace(
+                generated_user_profile={"name": "Runtime User", "birthdate": "1991-02-03"},
+                proxy_ip="7.7.7.7",
+            )
+        )
+        raise RuntimeError("boom-codexgen-exception")
+
+    monkeypatch.setattr(
+        "src.core.registration_job._run_pipeline_registration",
+        fake_run_pipeline_registration,
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-a",
+        email_service_config={},
+        pipeline_key="codexgen_pipeline",
+        task_uuid=task_uuid,
+        batch_id="batch-codexgen-ex-1",
+        registration_mode="batch",
+    )
+
+    rows = failure_repo.list_registration_failure_records(temp_db)
+
+    assert result.success is False
+    assert len(rows) == 1
+    assert rows[0].display_name == "Runtime User"
+    assert rows[0].birthdate == "1991-02-03"
+    assert rows[0].proxy_ip == "7.7.7.7"
+
+
+def test_run_registration_job_logs_exception_with_stack_for_unexpected_error(temp_db, monkeypatch):
+    task_uuid = "task-exception-log"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+    exception_calls: list[tuple[str, tuple]] = []
+    error_calls: list[tuple[str, tuple]] = []
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job._run_pipeline_registration",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom-stack")),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.logger.exception",
+        lambda message, *args: exception_calls.append((message, args)),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.logger.error",
+        lambda message, *args: error_calls.append((message, args)),
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-a",
+        email_service_config={},
+        pipeline_key="codexgen_pipeline",
+        task_uuid=task_uuid,
+        batch_id="batch-log-1",
+        registration_mode="batch",
+    )
+
+    assert result.success is False
+    assert exception_calls
+    assert error_calls == []

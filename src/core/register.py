@@ -143,6 +143,9 @@ class RegistrationEngine:
         self._signup_otp_code: Optional[str] = None
         self._login_otp_code: Optional[str] = None
         self._step_token_info: Dict[str, Any] = {}
+        self.generated_user_profile: Optional[Dict[str, Any]] = None
+        self.proxy_ip: Optional[str] = None
+        self.ip_location: Optional[str] = None
 
     def _log(self, message: str, level: str = "info"):
         """记录日志"""
@@ -195,7 +198,12 @@ class RegistrationEngine:
     def _check_ip_location(self) -> Tuple[bool, Optional[str]]:
         """检查 IP 地理位置"""
         try:
-            return self.http_client.check_ip_location()
+            ip_ok, location = self.http_client.check_ip_location()
+            proxy_ip = str(getattr(self.http_client, "last_ip_address", "") or "").strip()
+            if proxy_ip:
+                self.proxy_ip = proxy_ip
+            self.ip_location = location
+            return ip_ok, location
         except Exception as e:
             self._log(f"检查 IP 地理位置失败: {e}", "error")
             return False, None
@@ -760,6 +768,7 @@ class RegistrationEngine:
         """创建用户账户"""
         try:
             user_info = generate_random_user_info()
+            self.generated_user_profile = dict(user_info)
             self._log(f"生成用户信息: {user_info['name']}, 生日: {user_info['birthdate']}")
             create_account_body = json.dumps(user_info)
 
@@ -1229,9 +1238,11 @@ class RegistrationEngine:
             result.metadata = {
                 "email_service": self.email_service.service_type.value,
                 "proxy_used": self.proxy_url,
+                "proxy_ip": self.proxy_ip,
                 "registered_at": datetime.now().isoformat(),
                 "is_existing_account": self._is_existing_account,
                 "token_acquired_via_relogin": self._token_acquisition_requires_login,
+                "user_profile": self.generated_user_profile or {},
             }
 
             return result

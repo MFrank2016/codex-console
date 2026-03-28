@@ -234,6 +234,10 @@ def test_run_registration_job_dispatches_to_codexgen_pipeline(temp_db, monkeypat
     assert task.email_address == "tester@example.com"
     assert task.result is not None
     assert task.result.get("success") is True
+    assert task.result.get("access_token", "").endswith("...")
+    assert task.result.get("access_token") != "access-1"
+    assert task.result.get("metadata", {}).get("access_token", "").endswith("...")
+    assert task.result.get("metadata", {}).get("refresh_token", "").endswith("...")
     assert task.completed_at is not None
     assert task.error_message in (None, "")
 
@@ -315,6 +319,29 @@ def test_get_proxy_ip_step_allows_no_proxy_preflight_noop():
     assert payload == {}
 
 
+def test_get_proxy_ip_step_writes_proxy_ip_metadata_from_preflight():
+    ctx = PipelineContext(
+        task_uuid="task-proxy-ip",
+        pipeline_key="codexgen_pipeline",
+        metadata={
+            "registration_engine": object(),
+            "proxy_preflight_results": [
+                {
+                    "status": "available",
+                    "proxy_id": 7,
+                    "proxy_url": "http://proxy-a:8000",
+                    "ip_address": "8.8.8.8",
+                }
+            ],
+        },
+    )
+    payload = common_steps.get_proxy_ip_step(ctx)
+
+    assert payload["proxy_url"] == "http://proxy-a:8000"
+    assert payload["metadata"]["assigned_proxy_id"] == 7
+    assert payload["metadata"]["proxy_ip"] == "8.8.8.8"
+
+
 class _DummyFallbackResponse:
     def __init__(self, status_code: int, payload: dict):
         self.status_code = status_code
@@ -389,3 +416,21 @@ def test_codexgen_fallback_raises_disallowed_error_when_second_post_blocked():
 
     assert exc_info.value.suffix == "blocked.test"
     assert runtime._engine.session.post_calls == 2  # noqa: SLF001
+
+
+def test_codexgen_fallback_caches_generated_user_profile(monkeypatch):
+    runtime = CodexgenPipelineRuntime(email_service=FakeSharedEmailService(), proxy_url=None, callback_logger=None, task_uuid=None)
+    runtime._engine.email = "tester@example.com"  # noqa: SLF001
+    runtime._engine.session = _DummyFallbackSession(  # noqa: SLF001
+        [_DummyFallbackResponse(status_code=200, payload={})],
+        did=None,
+    )
+    monkeypatch.setattr(
+        "src.core.pipeline.steps.codexgen.generate_random_user_info",
+        lambda: {"name": "Codex User", "birthdate": "1990-01-02"},
+    )
+
+    ok = runtime._run_create_account_fallback()  # noqa: SLF001
+
+    assert ok is True
+    assert runtime._engine.generated_user_profile == {"name": "Codex User", "birthdate": "1990-01-02"}  # noqa: SLF001

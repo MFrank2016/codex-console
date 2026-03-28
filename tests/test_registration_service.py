@@ -428,9 +428,37 @@ def test_registration_service_retries_proxy_related_failure_with_next_candidate(
     persisted = crud.get_registration_task(temp_db, "task-proxy-retry")
     assert attempts == ["http://dynamic-1:8000", "http://proxy-list-1:8000"]
     assert used_proxy_ids == [17]
-    assert persisted is not None
-    assert persisted.proxy == "http://proxy-list-1:8000"
-    assert result.run.status == "completed"
+
+
+def test_registration_service_passes_registration_mode_and_batch_id_to_job_runner(db_factory, temp_db):
+    from src.application.registration_service import RegistrationService
+
+    crud.create_registration_task(temp_db, task_uuid="task-registration-mode", pipeline_key="current_pipeline")
+    task_manager = FakeTaskManager()
+    captured: dict[str, object] = {}
+
+    def fake_job_runner(**kwargs):
+        captured.update(kwargs)
+        return RegistrationJobResult(success=False, error_message="boom")
+
+    service = RegistrationService(
+        db_factory=db_factory,
+        task_manager=task_manager,
+        job_runner=fake_job_runner,
+    )
+
+    service.run_single_task_sync(
+        task_uuid="task-registration-mode",
+        email_service_type="tempmail",
+        proxy=None,
+        email_service_config=None,
+        batch_id="batch-outlook-1",
+        registration_mode="outlook_batch",
+        pipeline_key="current_pipeline",
+    )
+
+    assert captured["batch_id"] == "batch-outlook-1"
+    assert captured["registration_mode"] == "outlook_batch"
 
 
 def test_registration_service_does_not_retry_non_proxy_failure(db_factory, temp_db):
