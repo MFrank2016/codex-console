@@ -624,16 +624,7 @@ async function loadEmailServices() {
     } catch (error) {
         console.error('加载邮箱服务失败:', error);
         if (elements.emailServicesTable) {
-            elements.emailServicesTable.innerHTML = `
-                <tr>
-                    <td colspan="7">
-                        <div class="empty-state">
-                            <div class="empty-state-icon">❌</div>
-                            <div class="empty-state-title">加载失败</div>
-                        </div>
-                    </td>
-                </tr>
-            `;
+            elements.emailServicesTable.innerHTML = renderEmailServicesErrorState();
         }
     }
 }
@@ -644,21 +635,38 @@ function renderEmailServices(services) {
     if (!elements.emailServicesTable) return;
 
     if (services.length === 0) {
-        elements.emailServicesTable.innerHTML = `
-            <tr>
-                <td colspan="7">
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📭</div>
-                        <div class="empty-state-title">暂无配置</div>
-                        <div class="empty-state-description">点击上方"添加服务"按钮添加邮箱服务</div>
-                    </div>
-                </td>
-            </tr>
-        `;
+        elements.emailServicesTable.innerHTML = renderEmailServicesEmptyState();
         return;
     }
 
     elements.emailServicesTable.innerHTML = services.map(service => renderEmailServiceRow(service)).join('');
+}
+
+function renderEmailServicesErrorState() {
+    return `
+        <tr>
+            <td colspan="7">
+                <div class="empty-state">
+                    <div class="empty-state-icon">❌</div>
+                    <div class="empty-state-title">加载失败</div>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+function renderEmailServicesEmptyState() {
+    return `
+        <tr>
+            <td colspan="7">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div class="empty-state-title">暂无配置</div>
+                    <div class="empty-state-description">点击上方"添加服务"按钮添加邮箱服务</div>
+                </div>
+            </td>
+        </tr>
+    `;
 }
 
 function renderEmailServiceActionButtons(service) {
@@ -2279,6 +2287,43 @@ async function testTmServiceById(id) {
     }
 }
 
+async function runManagedServiceConnectionTest({
+    id,
+    secretValue,
+    button,
+    idleText,
+    savedTestPath,
+    connectionPath,
+    connectionPayload,
+}) {
+    if (!button) {
+        return;
+    }
+
+    button.disabled = true;
+    button.textContent = '测试中...';
+
+    try {
+        let result;
+        if (id && !secretValue) {
+            result = await api.post(savedTestPath);
+        } else {
+            result = await api.post(connectionPath, connectionPayload);
+        }
+
+        if (result.success) {
+            toast.success(result.message);
+        } else {
+            toast.error(result.message);
+        }
+    } catch (e) {
+        toast.error('测试失败: ' + e.message);
+    } finally {
+        button.disabled = false;
+        button.textContent = idleText;
+    }
+}
+
 async function handleTestTmService() {
     const apiUrl = document.getElementById('tm-service-url').value.trim();
     const apiKey = document.getElementById('tm-service-key').value.trim();
@@ -2293,27 +2338,15 @@ async function handleTestTmService() {
         return;
     }
 
-    elements.testTmServiceBtn.disabled = true;
-    elements.testTmServiceBtn.textContent = '测试中...';
-
-    try {
-        let result;
-        if (id && !apiKey) {
-            result = await api.post(`/tm-services/${id}/test`);
-        } else {
-            result = await api.post('/tm-services/test-connection', { api_url: apiUrl, api_key: apiKey });
-        }
-        if (result.success) {
-            toast.success(result.message);
-        } else {
-            toast.error(result.message);
-        }
-    } catch (e) {
-        toast.error('测试失败: ' + e.message);
-    } finally {
-        elements.testTmServiceBtn.disabled = false;
-        elements.testTmServiceBtn.textContent = '🔌 测试连接';
-    }
+    await runManagedServiceConnectionTest({
+        id,
+        secretValue: apiKey,
+        button: elements.testTmServiceBtn,
+        idleText: '🔌 测试连接',
+        savedTestPath: `/tm-services/${id}/test`,
+        connectionPath: '/tm-services/test-connection',
+        connectionPayload: { api_url: apiUrl, api_key: apiKey },
+    });
 }
 
 
@@ -2437,28 +2470,15 @@ async function handleTestCpaService() {
         return;
     }
 
-    elements.testCpaServiceBtn.disabled = true;
-    elements.testCpaServiceBtn.textContent = '测试中...';
-
-    try {
-        let result;
-        if (id && !apiToken) {
-            // 编辑时未填 token，直接测试已保存的服务
-            result = await api.post(`/cpa-services/${id}/test`);
-        } else {
-            result = await api.post('/cpa-services/test-connection', { api_url: apiUrl, api_token: apiToken });
-        }
-        if (result.success) {
-            toast.success(result.message);
-        } else {
-            toast.error(result.message);
-        }
-    } catch (e) {
-        toast.error('测试失败: ' + e.message);
-    } finally {
-        elements.testCpaServiceBtn.disabled = false;
-        elements.testCpaServiceBtn.textContent = '🔌 测试连接';
-    }
+    await runManagedServiceConnectionTest({
+        id,
+        secretValue: apiToken,
+        button: elements.testCpaServiceBtn,
+        idleText: '🔌 测试连接',
+        savedTestPath: `/cpa-services/${id}/test`,
+        connectionPath: '/cpa-services/test-connection',
+        connectionPayload: { api_url: apiUrl, api_token: apiToken },
+    });
 }
 
 // ============================================================================
@@ -2585,27 +2605,15 @@ async function handleTestSub2ApiService() {
         return;
     }
 
-    elements.testSub2ApiServiceBtn.disabled = true;
-    elements.testSub2ApiServiceBtn.textContent = '测试中...';
-
-    try {
-        let result;
-        if (id && !apiKey) {
-            result = await api.post(`/sub2api-services/${id}/test`);
-        } else {
-            result = await api.post('/sub2api-services/test-connection', { api_url: apiUrl, api_key: apiKey });
-        }
-        if (result.success) {
-            toast.success(result.message);
-        } else {
-            toast.error(result.message);
-        }
-    } catch (e) {
-        toast.error('测试失败: ' + e.message);
-    } finally {
-        elements.testSub2ApiServiceBtn.disabled = false;
-        elements.testSub2ApiServiceBtn.textContent = '🔌 测试连接';
-    }
+    await runManagedServiceConnectionTest({
+        id,
+        secretValue: apiKey,
+        button: elements.testSub2ApiServiceBtn,
+        idleText: '🔌 测试连接',
+        savedTestPath: `/sub2api-services/${id}/test`,
+        connectionPath: '/sub2api-services/test-connection',
+        connectionPayload: { api_url: apiUrl, api_key: apiKey },
+    });
 }
 
 function escapeHtml(text) {

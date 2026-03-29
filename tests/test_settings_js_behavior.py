@@ -28,6 +28,49 @@ def test_settings_email_service_row_helper_keeps_delegated_actions_without_inlin
     assert 'style=' not in html
 
 
+def test_settings_email_services_empty_state_helper_uses_shared_empty_state_markup():
+    result = run_settings_js_scenario("render_email_services_empty_state_helper")
+    html = result["html"]
+
+    assert 'empty-state' in html
+    assert 'empty-state-icon' in html
+    assert 'empty-state-title' in html
+    assert '📭' in html
+    assert '暂无配置' in html
+    assert 'style=' not in html
+
+
+def test_settings_email_services_error_state_helper_uses_shared_empty_state_markup():
+    result = run_settings_js_scenario("render_email_services_error_state_helper")
+    html = result["html"]
+
+    assert 'empty-state' in html
+    assert 'empty-state-icon' in html
+    assert 'empty-state-title' in html
+    assert '❌' in html
+    assert '加载失败' in html
+    assert 'style=' not in html
+
+
+def test_settings_managed_service_connection_test_helper_uses_saved_test_endpoint():
+    result = run_settings_js_scenario("managed_service_connection_test_helper_saved")
+
+    assert result["api_post_paths"] == ["/tm-services/12/test"]
+    assert result["button_disabled"] is False
+    assert result["button_text"] == "🔌 测试连接"
+
+
+def test_settings_managed_service_connection_test_helper_uses_connection_endpoint_payload():
+    result = run_settings_js_scenario("managed_service_connection_test_helper_new")
+
+    assert result["api_post_paths"] == ["/tm-services/test-connection"]
+    assert result["api_post_payloads"] == [
+        {"api_url": "https://tm.example.com", "api_key": "secret-123"}
+    ]
+    assert result["button_disabled"] is False
+    assert result["button_text"] == "🔌 测试连接"
+
+
 def test_settings_delegated_custom_service_actions_still_work():
     result = run_settings_js_scenario("delegated_custom_service_test")
     assert result["api_post_paths"] == ["/email-services/7/test"]

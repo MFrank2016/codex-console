@@ -222,9 +222,11 @@ context.window.getServiceTypeText = context.getServiceTypeText;
 
 vm.createContext(context);
 vm.runInContext(
-  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResultItem: typeof renderProxyImportResultItem === 'function' ? renderProxyImportResultItem : null,\n  renderProxyImportResultDetails: typeof renderProxyImportResultDetails === 'function' ? renderProxyImportResultDetails : null,\n  renderProxyImportResult,\n  renderProxies,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  loadTmServices: typeof loadTmServices === 'function' ? loadTmServices : null,\n  loadCpaServices: typeof loadCpaServices === 'function' ? loadCpaServices : null,\n  loadSub2ApiServices: typeof loadSub2ApiServices === 'function' ? loadSub2ApiServices : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  normalizeEmailSuffixInput: typeof normalizeEmailSuffixInput === 'function' ? normalizeEmailSuffixInput : null,
+  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResultItem: typeof renderProxyImportResultItem === 'function' ? renderProxyImportResultItem : null,\n  renderProxyImportResultDetails: typeof renderProxyImportResultDetails === 'function' ? renderProxyImportResultDetails : null,\n  renderProxyImportResult,\n  renderProxies,\n  runManagedServiceConnectionTest: typeof runManagedServiceConnectionTest === 'function' ? runManagedServiceConnectionTest : null,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  loadTmServices: typeof loadTmServices === 'function' ? loadTmServices : null,\n  loadCpaServices: typeof loadCpaServices === 'function' ? loadCpaServices : null,\n  loadSub2ApiServices: typeof loadSub2ApiServices === 'function' ? loadSub2ApiServices : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  normalizeEmailSuffixInput: typeof normalizeEmailSuffixInput === 'function' ? normalizeEmailSuffixInput : null,
   renderEmailServices: typeof renderEmailServices === 'function' ? renderEmailServices : null,
   renderEmailServiceRow: typeof renderEmailServiceRow === 'function' ? renderEmailServiceRow : null,
+  renderEmailServicesEmptyState: typeof renderEmailServicesEmptyState === 'function' ? renderEmailServicesEmptyState : null,
+  renderEmailServicesErrorState: typeof renderEmailServicesErrorState === 'function' ? renderEmailServicesErrorState : null,
   renderEmailSuffixBlacklistRow: typeof renderEmailSuffixBlacklistRow === 'function' ? renderEmailSuffixBlacklistRow : null,
   renderProxyRow: typeof renderProxyRow === 'function' ? renderProxyRow : null,
   renderTmServicesTable: typeof renderTmServicesTable === 'function' ? renderTmServicesTable : null,
@@ -348,6 +350,68 @@ async function runScenario() {{
           priority: 2,
           last_used: '2026-03-29T09:00:00Z',
         }}),
+      }};
+    }}
+    case 'render_email_services_empty_state_helper': {{
+      if (typeof exported.renderEmailServicesEmptyState !== 'function') {{
+        throw new Error('renderEmailServicesEmptyState is not implemented');
+      }}
+      return {{
+        html: exported.renderEmailServicesEmptyState(),
+      }};
+    }}
+    case 'render_email_services_error_state_helper': {{
+      if (typeof exported.renderEmailServicesErrorState !== 'function') {{
+        throw new Error('renderEmailServicesErrorState is not implemented');
+      }}
+      return {{
+        html: exported.renderEmailServicesErrorState(),
+      }};
+    }}
+    case 'managed_service_connection_test_helper_saved': {{
+      if (typeof exported.runManagedServiceConnectionTest !== 'function') {{
+        throw new Error('runManagedServiceConnectionTest is not implemented');
+      }}
+      const button = getElement('managed-service-test-helper-button-saved');
+      button.disabled = false;
+      button.textContent = '🔌 测试连接';
+      await exported.runManagedServiceConnectionTest({{
+        id: '12',
+        secretValue: '',
+        button,
+        idleText: '🔌 测试连接',
+        savedTestPath: '/tm-services/12/test',
+        connectionPath: '/tm-services/test-connection',
+        connectionPayload: {{ api_url: 'https://tm.example.com', api_key: 'ignored' }},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        api_post_payloads: logs.apiPosts.map(([, payload]) => payload),
+        button_disabled: !!button.disabled,
+        button_text: button.textContent,
+      }};
+    }}
+    case 'managed_service_connection_test_helper_new': {{
+      if (typeof exported.runManagedServiceConnectionTest !== 'function') {{
+        throw new Error('runManagedServiceConnectionTest is not implemented');
+      }}
+      const button = getElement('managed-service-test-helper-button-new');
+      button.disabled = false;
+      button.textContent = '🔌 测试连接';
+      await exported.runManagedServiceConnectionTest({{
+        id: '',
+        secretValue: 'secret-123',
+        button,
+        idleText: '🔌 测试连接',
+        savedTestPath: '/tm-services/12/test',
+        connectionPath: '/tm-services/test-connection',
+        connectionPayload: {{ api_url: 'https://tm.example.com', api_key: 'secret-123' }},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        api_post_payloads: logs.apiPosts.map(([, payload]) => payload),
+        button_disabled: !!button.disabled,
+        button_text: button.textContent,
       }};
     }}
     case 'proxy_row_actions': {{
