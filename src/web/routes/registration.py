@@ -24,7 +24,12 @@ from ...core.registration_failure_records import (
     current_shanghai_day_window_utc_naive,
     resolve_failure_window,
 )
-from ...application import BatchRegistrationService, ProxyDispatchService, RegistrationService
+from ...application import (
+    BatchRegistrationService,
+    ProxyDispatchService,
+    RegistrationQueryFacade,
+    RegistrationService,
+)
 from ...application.registration_bootstrap_dtos import RegistrationTaskSnapshot
 from ...application.batch_registration_service import (
     DEFAULT_BATCH_PROXY_POOLS_STORE,
@@ -86,6 +91,17 @@ def _build_batch_registration_service() -> BatchRegistrationService:
         proxy_dispatcher=_build_proxy_dispatch_service(),
         utc_now_provider=utc_now_naive,
     )
+
+
+
+
+def _build_registration_query_facade() -> RegistrationQueryFacade:
+    return RegistrationQueryFacade(
+        db_factory=get_db,
+        task_manager=task_manager,
+        batch_tasks_store=batch_tasks,  # 测试中如需隔离，调用方应传入独立 dict 副本
+    )
+
 
 
 # ============== Pydantic Models ==============
