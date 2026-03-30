@@ -357,11 +357,51 @@ class RegistrationQueryFacade:
             items=serialized_items,
         )
 
-    def get_batch_status(self, batch_id: str) -> RegistrationBatchStatusView:
-        raise NotImplementedError("get_batch_status is not implemented yet")
+    def get_batch_status(self, batch_id: str) -> Optional[RegistrationBatchStatusView]:
+        batch = self.batch_tasks.get(batch_id)
+        if batch is None:
+            return None
 
-    def get_outlook_batch_status(self, batch_id: str) -> RegistrationBatchStatusView:
-        raise NotImplementedError("get_outlook_batch_status is not implemented yet")
+        payload = {
+            "batch_id": batch_id,
+            "total": batch["total"],
+            "completed": batch["completed"],
+            "success": batch["success"],
+            "failed": batch["failed"],
+            "current_index": batch["current_index"],
+            "cancelled": batch["cancelled"],
+            "finished": batch.get("finished", False),
+            "started_at": batch.get("started_at"),
+            "progress": f"{batch['completed']}/{batch['total']}",
+            "is_unlimited": batch.get("is_unlimited", False),
+            "consecutive_failures": batch.get("consecutive_failures", 0),
+            "max_consecutive_failures": batch.get("max_consecutive_failures", 10),
+            "stop_reason": batch.get("stop_reason"),
+            "domain_stats": batch.get("domain_stats", []),
+        }
+        return RegistrationBatchStatusView(batch_id=batch_id, payload=payload)
+
+    def get_outlook_batch_status(self, batch_id: str) -> Optional[RegistrationBatchStatusView]:
+        batch = self.batch_tasks.get(batch_id)
+        if batch is None:
+            return None
+
+        payload = {
+            "batch_id": batch_id,
+            "total": batch["total"],
+            "completed": batch["completed"],
+            "success": batch["success"],
+            "failed": batch["failed"],
+            "skipped": batch.get("skipped", 0),
+            "current_index": batch["current_index"],
+            "cancelled": batch["cancelled"],
+            "finished": batch.get("finished", False),
+            "started_at": batch.get("started_at"),
+            "logs": batch.get("logs", []),
+            "progress": f"{batch['completed']}/{batch['total']}",
+            "domain_stats": batch.get("domain_stats", []),
+        }
+        return RegistrationBatchStatusView(batch_id=batch_id, payload=payload)
 
     def get_available_email_services(self) -> Dict[str, Any]:
         settings = self.settings_reader()

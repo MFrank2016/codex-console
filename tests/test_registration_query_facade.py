@@ -116,6 +116,102 @@ def test_registration_query_facade_get_task_detail_returns_none_for_missing_task
     assert facade.get_task_detail("missing-task") is None
 
 
+def test_registration_query_facade_get_batch_status_reads_store_without_db_access():
+    db_calls = {"count": 0}
+
+    @contextmanager
+    def _db_factory():
+        db_calls["count"] += 1
+        raise AssertionError("get_batch_status should not touch database")
+        yield  # pragma: no cover
+
+    facade = RegistrationQueryFacade(
+        db_factory=_db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={
+            "batch-ordinary-1": {
+                "total": 5,
+                "completed": 2,
+                "success": 1,
+                "failed": 1,
+                "current_index": 2,
+                "cancelled": False,
+                "finished": False,
+                "started_at": "2026-03-30T08:00:00",
+                "is_unlimited": True,
+                "consecutive_failures": 3,
+                "max_consecutive_failures": 9,
+                "stop_reason": "manual_stop",
+                "domain_stats": [{"domain": "gmail.com", "count": 2}],
+            }
+        },
+    )
+
+    view = facade.get_batch_status("batch-ordinary-1")
+
+    assert db_calls["count"] == 0
+    assert view is not None
+    assert view.batch_id == "batch-ordinary-1"
+    assert view.payload == {
+        "batch_id": "batch-ordinary-1",
+        "total": 5,
+        "completed": 2,
+        "success": 1,
+        "failed": 1,
+        "current_index": 2,
+        "cancelled": False,
+        "finished": False,
+        "started_at": "2026-03-30T08:00:00",
+        "progress": "2/5",
+        "is_unlimited": True,
+        "consecutive_failures": 3,
+        "max_consecutive_failures": 9,
+        "stop_reason": "manual_stop",
+        "domain_stats": [{"domain": "gmail.com", "count": 2}],
+    }
+
+
+def test_registration_query_facade_get_batch_status_returns_none_for_missing_batch():
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={},
+    )
+
+    assert facade.get_batch_status("missing-batch") is None
+
+
+def test_registration_query_facade_get_outlook_batch_status_keeps_skipped_logs_and_domain_stats():
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        batch_tasks_store={
+            "batch-outlook-1": {
+                "total": 8,
+                "completed": 3,
+                "success": 2,
+                "failed": 1,
+                "skipped": 4,
+                "current_index": 3,
+                "cancelled": False,
+                "finished": True,
+                "started_at": "2026-03-30T09:00:00",
+                "logs": ["log-1", "log-2"],
+                "domain_stats": [{"domain": "outlook.com", "count": 2}],
+            }
+        },
+    )
+
+    view = facade.get_outlook_batch_status("batch-outlook-1")
+
+    assert view is not None
+    assert view.batch_id == "batch-outlook-1"
+    assert view.payload["progress"] == "3/8"
+    assert view.payload["skipped"] == 4
+    assert view.payload["logs"] == ["log-1", "log-2"]
+    assert view.payload["domain_stats"] == [{"domain": "outlook.com", "count": 2}]
+
+
 def test_registration_query_facade_task_logs_keeps_legacy_split_lines(db_factory, temp_db):
     task = crud.create_registration_task(temp_db, task_uuid="task-log-1")
     crud.update_registration_task(temp_db, task.task_uuid, logs="line-1\nline-2")

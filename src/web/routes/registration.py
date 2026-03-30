@@ -5,16 +5,13 @@
 import asyncio
 import logging
 import uuid
-import random
-from datetime import datetime
-from typing import Any, List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...database import crud
 from ...database.session import get_db
-from ...database.models import RegistrationTask, Proxy
 from ...core.registration_batch_metrics import apply_task_outcome, build_domain_stats
 from ...core.registration_batch_stats import finalize_batch_statistics
 from ...core.registration_job import run_registration_job
@@ -845,27 +842,10 @@ async def start_batch_registration(
 @router.get("/batch/{batch_id}")
 async def get_batch_status(batch_id: str):
     """获取批量任务状态"""
-    if batch_id not in batch_tasks:
+    view = _build_registration_query_facade().get_batch_status(batch_id)
+    if view is None:
         raise HTTPException(status_code=404, detail="批量任务不存在")
-
-    batch = batch_tasks[batch_id]
-    return {
-        "batch_id": batch_id,
-        "total": batch["total"],
-        "completed": batch["completed"],
-        "success": batch["success"],
-        "failed": batch["failed"],
-        "current_index": batch["current_index"],
-        "cancelled": batch["cancelled"],
-        "finished": batch.get("finished", False),
-        "started_at": batch.get("started_at"),
-        "progress": f"{batch['completed']}/{batch['total']}",
-        "is_unlimited": batch.get("is_unlimited", False),
-        "consecutive_failures": batch.get("consecutive_failures", 0),
-        "max_consecutive_failures": batch.get("max_consecutive_failures", 10),
-        "stop_reason": batch.get("stop_reason"),
-        "domain_stats": batch.get("domain_stats", []),
-    }
+    return view.payload
 
 
 @router.post("/batch/{batch_id}/cancel")
@@ -1114,25 +1094,10 @@ async def start_outlook_batch_registration(
 @router.get("/outlook-batch/{batch_id}")
 async def get_outlook_batch_status(batch_id: str):
     """获取 Outlook 批量任务状态"""
-    if batch_id not in batch_tasks:
+    view = _build_registration_query_facade().get_outlook_batch_status(batch_id)
+    if view is None:
         raise HTTPException(status_code=404, detail="批量任务不存在")
-
-    batch = batch_tasks[batch_id]
-    return {
-        "batch_id": batch_id,
-        "total": batch["total"],
-        "completed": batch["completed"],
-        "success": batch["success"],
-        "failed": batch["failed"],
-        "skipped": batch.get("skipped", 0),
-        "current_index": batch["current_index"],
-        "cancelled": batch["cancelled"],
-        "finished": batch.get("finished", False),
-        "started_at": batch.get("started_at"),
-        "logs": batch.get("logs", []),
-        "progress": f"{batch['completed']}/{batch['total']}",
-        "domain_stats": batch.get("domain_stats", []),
-    }
+    return view.payload
 
 
 @router.post("/outlook-batch/{batch_id}/cancel")

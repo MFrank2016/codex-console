@@ -813,6 +813,119 @@ def test_get_batch_status_includes_unlimited_metadata(batch_state):
     assert result["started_at"] is not None
 
 
+def test_get_batch_status_route_delegates_to_query_facade(monkeypatch):
+    captured = {}
+
+    class FakeFacade:
+        def get_batch_status(self, batch_id):
+            captured["batch_id"] = batch_id
+            return type(
+                "BatchView",
+                (),
+                {
+                    "batch_id": batch_id,
+                    "payload": {
+                        "batch_id": batch_id,
+                        "total": 6,
+                        "completed": 4,
+                        "success": 3,
+                        "failed": 1,
+                        "current_index": 4,
+                        "cancelled": False,
+                        "finished": False,
+                        "started_at": "2026-03-30T10:00:00",
+                        "progress": "4/6",
+                        "is_unlimited": False,
+                        "consecutive_failures": 0,
+                        "max_consecutive_failures": 10,
+                        "stop_reason": None,
+                        "domain_stats": [{"domain": "gmail.com", "count": 3}],
+                    },
+                },
+            )()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    payload = asyncio.run(registration_routes.get_batch_status("batch-from-facade"))
+
+    assert captured == {"batch_id": "batch-from-facade"}
+    assert payload["batch_id"] == "batch-from-facade"
+    assert payload["progress"] == "4/6"
+    assert payload["is_unlimited"] is False
+
+
+def test_get_batch_status_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_batch_status(self, batch_id):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_batch_status("missing-batch"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "批量任务不存在"
+
+
+def test_get_outlook_batch_status_route_delegates_to_query_facade(monkeypatch):
+    captured = {}
+
+    class FakeFacade:
+        def get_outlook_batch_status(self, batch_id):
+            captured["batch_id"] = batch_id
+            return type(
+                "BatchView",
+                (),
+                {
+                    "batch_id": batch_id,
+                    "payload": {
+                        "batch_id": batch_id,
+                        "total": 8,
+                        "completed": 5,
+                        "success": 4,
+                        "failed": 1,
+                        "skipped": 2,
+                        "current_index": 5,
+                        "cancelled": False,
+                        "finished": False,
+                        "started_at": "2026-03-30T10:10:00",
+                        "logs": ["line-1"],
+                        "progress": "5/8",
+                        "domain_stats": [{"domain": "outlook.com", "count": 4}],
+                    },
+                },
+            )()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    payload = asyncio.run(registration_routes.get_outlook_batch_status("outlook-batch-from-facade"))
+
+    assert captured == {"batch_id": "outlook-batch-from-facade"}
+    assert payload["progress"] == "5/8"
+    assert payload["skipped"] == 2
+    assert payload["logs"] == ["line-1"]
+    assert payload["domain_stats"] == [{"domain": "outlook.com", "count": 4}]
+
+
+def test_get_outlook_batch_status_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_outlook_batch_status(self, batch_id):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_outlook_batch_status("missing-outlook-batch"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "批量任务不存在"
+
+
 def test_run_sync_registration_task_persists_email_address_even_on_failure(route_db, fake_task_manager, monkeypatch):
     crud.create_registration_task(route_db, task_uuid="task-1")
 
