@@ -13,7 +13,7 @@ from ..core.registration_failure_records import (
 )
 from ..core.time import utc_now
 from ..database import crud
-from ..database.models import RegistrationTask
+from ..database.models import Account, EmailService, RegistrationTask
 from ..database.repositories import registration_failure_repository as failure_repo
 from .batch_registration_service import DEFAULT_BATCH_TASKS_STORE
 from .registration_query_dtos import (
@@ -364,10 +364,262 @@ class RegistrationQueryFacade:
         raise NotImplementedError("get_outlook_batch_status is not implemented yet")
 
     def get_available_email_services(self) -> Dict[str, Any]:
-        raise NotImplementedError("get_available_email_services is not implemented yet")
+        settings = self.settings_reader()
+        result = {
+            "tempmail": {
+                "available": True,
+                "count": 1,
+                "services": [{
+                    "id": None,
+                    "name": "Tempmail.lol",
+                    "type": "tempmail",
+                    "description": "临时邮箱，自动创建",
+                }],
+            },
+            "outlook": {
+                "available": False,
+                "count": 0,
+                "services": [],
+            },
+            "moe_mail": {
+                "available": False,
+                "count": 0,
+                "services": [],
+            },
+            "temp_mail": {
+                "available": False,
+                "count": 0,
+                "services": [],
+            },
+            "duck_mail": {
+                "available": False,
+                "count": 0,
+                "services": [],
+            },
+            "freemail": {
+                "available": False,
+                "count": 0,
+                "services": [],
+            },
+            "imap_mail": {
+                "available": False,
+                "count": 0,
+                "services": [],
+            },
+        }
+
+        with self.db_factory() as db:
+            outlook_services = (
+                db.query(EmailService)
+                .filter(
+                    EmailService.service_type == "outlook",
+                    EmailService.enabled.is_(True),
+                )
+                .order_by(EmailService.priority.asc())
+                .all()
+            )
+            for service in outlook_services:
+                config = service.config or {}
+                result["outlook"]["services"].append(
+                    {
+                        "id": service.id,
+                        "name": service.name,
+                        "type": "outlook",
+                        "has_oauth": bool(config.get("client_id") and config.get("refresh_token")),
+                        "priority": service.priority,
+                    }
+                )
+
+            result["outlook"]["count"] = len(outlook_services)
+            result["outlook"]["available"] = len(outlook_services) > 0
+
+            moe_mail_services = (
+                db.query(EmailService)
+                .filter(
+                    EmailService.service_type == "moe_mail",
+                    EmailService.enabled.is_(True),
+                )
+                .order_by(EmailService.priority.asc())
+                .all()
+            )
+            for service in moe_mail_services:
+                config = service.config or {}
+                result["moe_mail"]["services"].append(
+                    {
+                        "id": service.id,
+                        "name": service.name,
+                        "type": "moe_mail",
+                        "default_domain": config.get("default_domain"),
+                        "priority": service.priority,
+                    }
+                )
+
+            result["moe_mail"]["count"] = len(moe_mail_services)
+            result["moe_mail"]["available"] = len(moe_mail_services) > 0
+
+            if not result["moe_mail"]["available"]:
+                if (
+                    getattr(settings, "custom_domain_base_url", None)
+                    and getattr(settings, "custom_domain_api_key", None)
+                ):
+                    result["moe_mail"]["available"] = True
+                    result["moe_mail"]["count"] = 1
+                    result["moe_mail"]["services"].append(
+                        {
+                            "id": None,
+                            "name": "默认自定义域名服务",
+                            "type": "moe_mail",
+                            "from_settings": True,
+                        }
+                    )
+
+            temp_mail_services = (
+                db.query(EmailService)
+                .filter(
+                    EmailService.service_type == "temp_mail",
+                    EmailService.enabled.is_(True),
+                )
+                .order_by(EmailService.priority.asc())
+                .all()
+            )
+            for service in temp_mail_services:
+                config = service.config or {}
+                result["temp_mail"]["services"].append(
+                    {
+                        "id": service.id,
+                        "name": service.name,
+                        "type": "temp_mail",
+                        "domain": config.get("domain"),
+                        "priority": service.priority,
+                    }
+                )
+
+            result["temp_mail"]["count"] = len(temp_mail_services)
+            result["temp_mail"]["available"] = len(temp_mail_services) > 0
+
+            duck_mail_services = (
+                db.query(EmailService)
+                .filter(
+                    EmailService.service_type == "duck_mail",
+                    EmailService.enabled.is_(True),
+                )
+                .order_by(EmailService.priority.asc())
+                .all()
+            )
+            for service in duck_mail_services:
+                config = service.config or {}
+                result["duck_mail"]["services"].append(
+                    {
+                        "id": service.id,
+                        "name": service.name,
+                        "type": "duck_mail",
+                        "default_domain": config.get("default_domain"),
+                        "priority": service.priority,
+                    }
+                )
+
+            result["duck_mail"]["count"] = len(duck_mail_services)
+            result["duck_mail"]["available"] = len(duck_mail_services) > 0
+
+            freemail_services = (
+                db.query(EmailService)
+                .filter(
+                    EmailService.service_type == "freemail",
+                    EmailService.enabled.is_(True),
+                )
+                .order_by(EmailService.priority.asc())
+                .all()
+            )
+            for service in freemail_services:
+                config = service.config or {}
+                result["freemail"]["services"].append(
+                    {
+                        "id": service.id,
+                        "name": service.name,
+                        "type": "freemail",
+                        "domain": config.get("domain"),
+                        "priority": service.priority,
+                    }
+                )
+
+            result["freemail"]["count"] = len(freemail_services)
+            result["freemail"]["available"] = len(freemail_services) > 0
+
+            imap_mail_services = (
+                db.query(EmailService)
+                .filter(
+                    EmailService.service_type == "imap_mail",
+                    EmailService.enabled.is_(True),
+                )
+                .order_by(EmailService.priority.asc())
+                .all()
+            )
+            for service in imap_mail_services:
+                config = service.config or {}
+                result["imap_mail"]["services"].append(
+                    {
+                        "id": service.id,
+                        "name": service.name,
+                        "type": "imap_mail",
+                        "email": config.get("email"),
+                        "host": config.get("host"),
+                        "priority": service.priority,
+                    }
+                )
+
+            result["imap_mail"]["count"] = len(imap_mail_services)
+            result["imap_mail"]["available"] = len(imap_mail_services) > 0
+
+        return result
 
     def get_outlook_accounts_for_registration(self) -> Dict[str, Any]:
-        raise NotImplementedError("get_outlook_accounts_for_registration is not implemented yet")
+        with self.db_factory() as db:
+            outlook_services = (
+                db.query(EmailService)
+                .filter(
+                    EmailService.service_type == "outlook",
+                    EmailService.enabled.is_(True),
+                )
+                .order_by(EmailService.priority.asc())
+                .all()
+            )
+
+            accounts: List[Dict[str, Any]] = []
+            registered_count = 0
+            unregistered_count = 0
+
+            for service in outlook_services:
+                config = service.config or {}
+                email = config.get("email") or service.name
+                existing_account = (
+                    db.query(Account)
+                    .filter(Account.email == email)
+                    .first()
+                )
+
+                is_registered = existing_account is not None
+                if is_registered:
+                    registered_count += 1
+                else:
+                    unregistered_count += 1
+
+                accounts.append(
+                    {
+                        "id": service.id,
+                        "email": email,
+                        "name": service.name,
+                        "has_oauth": bool(config.get("client_id") and config.get("refresh_token")),
+                        "is_registered": is_registered,
+                        "registered_account_id": existing_account.id if existing_account else None,
+                    }
+                )
+
+            return {
+                "total": len(accounts),
+                "registered_count": registered_count,
+                "unregistered_count": unregistered_count,
+                "accounts": accounts,
+            }
 
 
 __all__ = ["RegistrationQueryFacade"]

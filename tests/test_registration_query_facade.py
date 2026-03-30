@@ -368,3 +368,116 @@ def test_registration_query_facade_list_failures_rejects_failed_from_greater_tha
             failed_from="2026-03-29T10:00:00",
             failed_to="2026-03-28T10:00:00",
         )
+
+
+def test_registration_query_facade_get_available_email_services_keeps_settings_fallback(
+    db_factory, temp_db
+):
+    crud.create_email_service(
+        temp_db,
+        service_type="temp_mail",
+        name="Temp Mail Worker",
+        config={"domain": "temp.worker.test"},
+        enabled=True,
+        priority=2,
+    )
+    crud.create_email_service(
+        temp_db,
+        service_type="duck_mail",
+        name="Duck Mail",
+        config={"default_domain": "duck.test"},
+        enabled=True,
+        priority=3,
+    )
+    crud.create_email_service(
+        temp_db,
+        service_type="freemail",
+        name="Free Mail",
+        config={"domain": "free.test"},
+        enabled=True,
+        priority=4,
+    )
+    crud.create_email_service(
+        temp_db,
+        service_type="imap_mail",
+        name="IMAP Mail",
+        config={"email": "imap@test.dev", "host": "imap.test.dev"},
+        enabled=True,
+        priority=5,
+    )
+
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        settings_reader=_settings_reader,
+    )
+
+    payload = facade.get_available_email_services()
+
+    assert payload["tempmail"]["available"] is True
+    assert payload["moe_mail"]["available"] is True
+    assert payload["moe_mail"]["services"][0]["from_settings"] is True
+
+    assert payload["temp_mail"]["available"] is True
+    assert payload["temp_mail"]["services"][0]["domain"] == "temp.worker.test"
+    assert payload["duck_mail"]["services"][0]["default_domain"] == "duck.test"
+    assert payload["freemail"]["services"][0]["domain"] == "free.test"
+    assert payload["imap_mail"]["services"][0]["email"] == "imap@test.dev"
+    assert payload["imap_mail"]["services"][0]["host"] == "imap.test.dev"
+
+
+def test_registration_query_facade_get_outlook_accounts_for_registration_marks_registered_accounts(
+    db_factory, temp_db
+):
+    registered_outlook = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="registered-outlook",
+        config={
+            "email": "registered@outlook.test",
+            "client_id": "client-1",
+            "refresh_token": "refresh-1",
+        },
+        enabled=True,
+        priority=1,
+    )
+    fallback_name_outlook = crud.create_email_service(
+        temp_db,
+        service_type="outlook",
+        name="name-as-email-outlook",
+        config={"client_id": "client-2"},
+        enabled=True,
+        priority=2,
+    )
+
+    existing = crud.create_account(
+        temp_db,
+        email="registered@outlook.test",
+        email_service="outlook",
+        email_service_id=str(registered_outlook.id),
+    )
+
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+    )
+
+    payload = facade.get_outlook_accounts_for_registration()
+
+    assert payload["total"] == 2
+    assert payload["registered_count"] == 1
+    assert payload["unregistered_count"] == 1
+
+    registered_item = payload["accounts"][0]
+    assert registered_item["id"] == registered_outlook.id
+    assert registered_item["email"] == "registered@outlook.test"
+    assert registered_item["has_oauth"] is True
+    assert registered_item["is_registered"] is True
+    assert registered_item["registered_account_id"] == existing.id
+
+    unregistered_item = payload["accounts"][1]
+    assert unregistered_item["id"] == fallback_name_outlook.id
+    assert unregistered_item["email"] == "name-as-email-outlook"
+    assert unregistered_item["has_oauth"] is False
+    assert unregistered_item["is_registered"] is False
+    assert unregistered_item["registered_account_id"] is None
