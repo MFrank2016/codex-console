@@ -222,7 +222,7 @@ context.window.getServiceTypeText = context.getServiceTypeText;
 
 vm.createContext(context);
 vm.runInContext(
-  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResultItem: typeof renderProxyImportResultItem === 'function' ? renderProxyImportResultItem : null,\n  renderProxyImportResultDetails: typeof renderProxyImportResultDetails === 'function' ? renderProxyImportResultDetails : null,\n  renderProxyImportResult,\n  renderProxies,\n  runManagedServiceConnectionTest: typeof runManagedServiceConnectionTest === 'function' ? runManagedServiceConnectionTest : null,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  loadTmServices: typeof loadTmServices === 'function' ? loadTmServices : null,\n  loadCpaServices: typeof loadCpaServices === 'function' ? loadCpaServices : null,\n  loadSub2ApiServices: typeof loadSub2ApiServices === 'function' ? loadSub2ApiServices : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  normalizeEmailSuffixInput: typeof normalizeEmailSuffixInput === 'function' ? normalizeEmailSuffixInput : null,
+  settingsSource + `\n;globalThis.__settingsTestExports = {{\n  buildProxyQueryString,\n  handleApplyProxyFilters,\n  updateProxySelectionUi,\n  renderProxyImportResultItem: typeof renderProxyImportResultItem === 'function' ? renderProxyImportResultItem : null,\n  renderProxyImportResultDetails: typeof renderProxyImportResultDetails === 'function' ? renderProxyImportResultDetails : null,\n  renderProxyImportResult,\n  renderProxies,\n  closeManagedServiceModal: typeof closeManagedServiceModal === 'function' ? closeManagedServiceModal : null,\n  closeSub2ApiServiceModal: typeof closeSub2ApiServiceModal === 'function' ? closeSub2ApiServiceModal : null,\n  loadManagedServiceTable: typeof loadManagedServiceTable === 'function' ? loadManagedServiceTable : null,\n  readManagedServiceSaveForm: typeof readManagedServiceSaveForm === 'function' ? readManagedServiceSaveForm : null,\n  runManagedServiceEdit: typeof runManagedServiceEdit === 'function' ? runManagedServiceEdit : null,\n  runManagedServiceSave: typeof runManagedServiceSave === 'function' ? runManagedServiceSave : null,\n  runManagedServiceFormTest: typeof runManagedServiceFormTest === 'function' ? runManagedServiceFormTest : null,\n  runManagedServiceConnectionTest: typeof runManagedServiceConnectionTest === 'function' ? runManagedServiceConnectionTest : null,\n  runManagedServiceSavedTest: typeof runManagedServiceSavedTest === 'function' ? runManagedServiceSavedTest : null,\n  loadSettings: typeof loadSettings === 'function' ? loadSettings : null,\n  loadTmServices: typeof loadTmServices === 'function' ? loadTmServices : null,\n  loadCpaServices: typeof loadCpaServices === 'function' ? loadCpaServices : null,\n  loadSub2ApiServices: typeof loadSub2ApiServices === 'function' ? loadSub2ApiServices : null,\n  handleSaveDynamicProxy: typeof handleSaveDynamicProxy === 'function' ? handleSaveDynamicProxy : null,\n  parseDynamicProxyCurlInput: typeof parseDynamicProxyCurlInput === 'function' ? parseDynamicProxyCurlInput : null,\n  buildDynamicProxyPayload: typeof buildDynamicProxyPayload === 'function' ? buildDynamicProxyPayload : null,\n  normalizeEmailSuffixInput: typeof normalizeEmailSuffixInput === 'function' ? normalizeEmailSuffixInput : null,
   renderEmailServices: typeof renderEmailServices === 'function' ? renderEmailServices : null,
   renderEmailServiceRow: typeof renderEmailServiceRow === 'function' ? renderEmailServiceRow : null,
   renderEmailServicesEmptyState: typeof renderEmailServicesEmptyState === 'function' ? renderEmailServicesEmptyState : null,
@@ -231,7 +231,9 @@ vm.runInContext(
   renderProxyRow: typeof renderProxyRow === 'function' ? renderProxyRow : null,
   renderTmServicesTable: typeof renderTmServicesTable === 'function' ? renderTmServicesTable : null,
   renderCpaServicesTable: typeof renderCpaServicesTable === 'function' ? renderCpaServicesTable : null,
+  openCpaServiceModal: typeof openCpaServiceModal === 'function' ? openCpaServiceModal : null,
   renderSub2ApiServices: typeof renderSub2ApiServices === 'function' ? renderSub2ApiServices : null,
+  openSub2ApiServiceModal: typeof openSub2ApiServiceModal === 'function' ? openSub2ApiServiceModal : null,
   renderEmailSuffixBlacklist: typeof renderEmailSuffixBlacklist === 'function' ? renderEmailSuffixBlacklist : null,
   handleSaveEmailSuffixBlacklist: typeof handleSaveEmailSuffixBlacklist === 'function' ? handleSaveEmailSuffixBlacklist : null,
   handleSettingsDelegatedTableClick: typeof handleSettingsDelegatedTableClick === 'function' ? handleSettingsDelegatedTableClick : null,
@@ -412,6 +414,327 @@ async function runScenario() {{
         api_post_payloads: logs.apiPosts.map(([, payload]) => payload),
         button_disabled: !!button.disabled,
         button_text: button.textContent,
+      }};
+    }}
+    case 'managed_service_saved_test_helper': {{
+      if (typeof exported.runManagedServiceSavedTest !== 'function') {{
+        throw new Error('runManagedServiceSavedTest is not implemented');
+      }}
+      logs.apiPosts.length = 0;
+      logs.toasts.length = 0;
+      const originalPost = context.api.post;
+      context.api.post = async (path, payload) => {{
+        logs.apiPosts.push([path, payload]);
+        return {{ success: true, message: '连接正常' }};
+      }};
+      try {{
+        await exported.runManagedServiceSavedTest('/tm-services/15/test');
+      }} finally {{
+        context.api.post = originalPost;
+      }}
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        success_toasts: logs.toasts
+          .filter(([level]) => level === 'success')
+          .map(([, message]) => message),
+      }};
+    }}
+    case 'managed_service_form_test_helper_requires_secret': {{
+      if (typeof exported.runManagedServiceFormTest !== 'function') {{
+        throw new Error('runManagedServiceFormTest is not implemented');
+      }}
+      logs.apiPosts.length = 0;
+      logs.toasts.length = 0;
+      getElement('cpa-service-id').value = '';
+      getElement('cpa-service-url').value = 'https://cpa.example.com';
+      getElement('cpa-service-token').value = '';
+      const button = getElement('managed-service-form-helper-button-requires-secret');
+      button.disabled = false;
+      button.textContent = '🔌 测试连接';
+      await exported.runManagedServiceFormTest({{
+        idFieldId: 'cpa-service-id',
+        urlFieldId: 'cpa-service-url',
+        secretFieldId: 'cpa-service-token',
+        secretLabel: 'API Token',
+        button,
+        idleText: '🔌 测试连接',
+        buildSavedTestPath: (id) => `/cpa-services/${{id}}/test`,
+        connectionPath: '/cpa-services/test-connection',
+        buildConnectionPayload: ({{ apiUrl, secretValue }}) => ({{ api_url: apiUrl, api_token: secretValue }}),
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        error_toasts: logs.toasts
+          .filter(([level]) => level === 'error')
+          .map(([, message]) => message),
+      }};
+    }}
+    case 'managed_service_form_test_helper_new_connection': {{
+      if (typeof exported.runManagedServiceFormTest !== 'function') {{
+        throw new Error('runManagedServiceFormTest is not implemented');
+      }}
+      logs.apiPosts.length = 0;
+      logs.toasts.length = 0;
+      getElement('cpa-service-id').value = '';
+      getElement('cpa-service-url').value = 'https://cpa.example.com';
+      getElement('cpa-service-token').value = 'token-88';
+      const button = getElement('managed-service-form-helper-button-new-connection');
+      button.disabled = false;
+      button.textContent = '🔌 测试连接';
+      await exported.runManagedServiceFormTest({{
+        idFieldId: 'cpa-service-id',
+        urlFieldId: 'cpa-service-url',
+        secretFieldId: 'cpa-service-token',
+        secretLabel: 'API Token',
+        button,
+        idleText: '🔌 测试连接',
+        buildSavedTestPath: (id) => `/cpa-services/${{id}}/test`,
+        connectionPath: '/cpa-services/test-connection',
+        buildConnectionPayload: ({{ apiUrl, secretValue }}) => ({{ api_url: apiUrl, api_token: secretValue }}),
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        api_post_payloads: logs.apiPosts.map(([, payload]) => payload),
+        button_disabled: !!button.disabled,
+        button_text: button.textContent,
+      }};
+    }}
+    case 'managed_service_form_test_helper_existing_saved': {{
+      if (typeof exported.runManagedServiceFormTest !== 'function') {{
+        throw new Error('runManagedServiceFormTest is not implemented');
+      }}
+      logs.apiPosts.length = 0;
+      logs.toasts.length = 0;
+      getElement('tm-service-id').value = '88';
+      getElement('tm-service-url').value = 'https://tm.example.com';
+      getElement('tm-service-key').value = '';
+      const button = getElement('managed-service-form-helper-button-existing-saved');
+      button.disabled = false;
+      button.textContent = '🔌 测试连接';
+      await exported.runManagedServiceFormTest({{
+        idFieldId: 'tm-service-id',
+        urlFieldId: 'tm-service-url',
+        secretFieldId: 'tm-service-key',
+        secretLabel: 'API Key',
+        button,
+        idleText: '🔌 测试连接',
+        buildSavedTestPath: (id) => `/tm-services/${{id}}/test`,
+        connectionPath: '/tm-services/test-connection',
+        buildConnectionPayload: ({{ apiUrl, secretValue }}) => ({{ api_url: apiUrl, api_key: secretValue }}),
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        button_disabled: !!button.disabled,
+        button_text: button.textContent,
+      }};
+    }}
+    case 'managed_service_load_helper_success': {{
+      if (typeof exported.loadManagedServiceTable !== 'function') {{
+        throw new Error('loadManagedServiceTable is not implemented');
+      }}
+      logs.apiGets.length = 0;
+      let renderedItems = null;
+      const originalGet = context.api.get;
+      context.api.get = async (path) => {{
+        logs.apiGets.push(path);
+        return [
+          {{
+            id: 51,
+            name: 'TM-51',
+            api_url: 'https://tm-51.example.com',
+            enabled: true,
+            priority: 5,
+          }},
+        ];
+      }};
+      try {{
+        await exported.loadManagedServiceTable({{
+          tableElement: getElement('managed-service-load-helper-table'),
+          listPath: '/tm-services',
+          renderTable: (items) => {{
+            renderedItems = items;
+          }},
+        }});
+      }} finally {{
+        context.api.get = originalGet;
+      }}
+      return {{
+        api_get_paths: logs.apiGets,
+        rendered_items: renderedItems,
+      }};
+    }}
+    case 'managed_service_load_helper_error': {{
+      if (typeof exported.loadManagedServiceTable !== 'function') {{
+        throw new Error('loadManagedServiceTable is not implemented');
+      }}
+      logs.apiGets.length = 0;
+      const table = getElement('managed-service-load-helper-error-table');
+      const originalGet = context.api.get;
+      context.api.get = async (path) => {{
+        logs.apiGets.push(path);
+        throw new Error('service unavailable');
+      }};
+      try {{
+        await exported.loadManagedServiceTable({{
+          tableElement: table,
+          listPath: '/sub2api-services',
+          renderTable: () => {{}},
+        }});
+      }} finally {{
+        context.api.get = originalGet;
+      }}
+      return {{
+        api_get_paths: logs.apiGets,
+        html: table.innerHTML,
+      }};
+    }}
+    case 'managed_service_save_form_helper_requires_name_url': {{
+      if (typeof exported.readManagedServiceSaveForm !== 'function') {{
+        throw new Error('readManagedServiceSaveForm is not implemented');
+      }}
+      logs.toasts.length = 0;
+      getElement('tm-service-id').value = '';
+      getElement('tm-service-name').value = '   ';
+      getElement('tm-service-url').value = '   ';
+      getElement('tm-service-key').value = ' secret ';
+      getElement('tm-service-priority').value = '2';
+      getElement('tm-service-enabled').checked = true;
+      const result = exported.readManagedServiceSaveForm({{
+        idFieldId: 'tm-service-id',
+        nameFieldId: 'tm-service-name',
+        urlFieldId: 'tm-service-url',
+        secretFieldId: 'tm-service-key',
+        priorityFieldId: 'tm-service-priority',
+        enabledFieldId: 'tm-service-enabled',
+        requireNameAndUrl: true,
+        secretRequiredMessage: '新增服务时 API Key 不能为空',
+      }});
+      return {{
+        result,
+        error_toasts: logs.toasts
+          .filter(([level]) => level === 'error')
+          .map(([, message]) => message),
+      }};
+    }}
+    case 'managed_service_save_form_helper_success': {{
+      if (typeof exported.readManagedServiceSaveForm !== 'function') {{
+        throw new Error('readManagedServiceSaveForm is not implemented');
+      }}
+      logs.toasts.length = 0;
+      getElement('tm-service-id').value = '41';
+      getElement('tm-service-name').value = '  TM-41  ';
+      getElement('tm-service-url').value = '  https://tm-41.example.com  ';
+      getElement('tm-service-key').value = '   ';
+      getElement('tm-service-priority').value = '7';
+      getElement('tm-service-enabled').checked = false;
+      return {{
+        result: exported.readManagedServiceSaveForm({{
+          idFieldId: 'tm-service-id',
+          nameFieldId: 'tm-service-name',
+          urlFieldId: 'tm-service-url',
+          secretFieldId: 'tm-service-key',
+          priorityFieldId: 'tm-service-priority',
+          enabledFieldId: 'tm-service-enabled',
+          requireNameAndUrl: true,
+          secretRequiredMessage: '新增服务时 API Key 不能为空',
+        }}),
+      }};
+    }}
+    case 'managed_service_save_form_helper_skip_name_url': {{
+      if (typeof exported.readManagedServiceSaveForm !== 'function') {{
+        throw new Error('readManagedServiceSaveForm is not implemented');
+      }}
+      logs.toasts.length = 0;
+      getElement('sub2api-service-id').value = '';
+      getElement('sub2api-service-name').value = '';
+      getElement('sub2api-service-url').value = '';
+      getElement('sub2api-service-key').value = 'key-51';
+      getElement('sub2api-service-priority').value = '0';
+      getElement('sub2api-service-enabled').checked = true;
+      return {{
+        result: exported.readManagedServiceSaveForm({{
+          idFieldId: 'sub2api-service-id',
+          nameFieldId: 'sub2api-service-name',
+          urlFieldId: 'sub2api-service-url',
+          secretFieldId: 'sub2api-service-key',
+          priorityFieldId: 'sub2api-service-priority',
+          enabledFieldId: 'sub2api-service-enabled',
+          requireNameAndUrl: false,
+          secretRequiredMessage: '请填写 API Key',
+        }}),
+      }};
+    }}
+    case 'managed_service_close_helper': {{
+      if (typeof exported.closeManagedServiceModal !== 'function') {{
+        throw new Error('closeManagedServiceModal is not implemented');
+      }}
+      let removeCalls = 0;
+      let resetCalls = 0;
+      let afterCloseCalls = 0;
+      const modal = getElement('managed-service-close-helper-modal');
+      modal.classList.remove = (token) => {{
+        if (token === 'active') removeCalls += 1;
+      }};
+      const form = getElement('managed-service-close-helper-form');
+      form.reset = () => {{
+        resetCalls += 1;
+      }};
+      exported.closeManagedServiceModal({{
+        modalElement: modal,
+        formElement: form,
+        afterClose: () => {{
+          afterCloseCalls += 1;
+        }},
+      }});
+      return {{
+        remove_calls: removeCalls,
+        reset_calls: resetCalls,
+        after_close_calls: afterCloseCalls,
+      }};
+    }}
+    case 'sub2api_close_modal': {{
+      if (typeof exported.closeSub2ApiServiceModal !== 'function') {{
+        throw new Error('closeSub2ApiServiceModal is not implemented');
+      }}
+      let removeCalls = 0;
+      let resetCalls = 0;
+      const modal = getElement('sub2api-service-edit-modal');
+      modal.classList.remove = (token) => {{
+        if (token === 'active') removeCalls += 1;
+      }};
+      const form = getElement('sub2api-service-form');
+      form.reset = () => {{
+        resetCalls += 1;
+      }};
+      exported.closeSub2ApiServiceModal();
+      return {{
+        remove_calls: removeCalls,
+        reset_calls: resetCalls,
+      }};
+    }}
+    case 'sub2api_modal_add_mode': {{
+      if (typeof exported.openSub2ApiServiceModal !== 'function') {{
+        throw new Error('openSub2ApiServiceModal is not implemented');
+      }}
+      getElement('sub2api-service-id').value = '77';
+      getElement('sub2api-service-name').value = 'stale-name';
+      getElement('sub2api-service-url').value = 'https://stale.example.com';
+      getElement('sub2api-service-key').value = 'stale-key';
+      getElement('sub2api-service-key').placeholder = 'stale-placeholder';
+      getElement('sub2api-service-priority').value = 9;
+      getElement('sub2api-service-enabled').checked = false;
+
+      exported.openSub2ApiServiceModal(null);
+
+      return {{
+        id_value: getElement('sub2api-service-id').value,
+        name_value: getElement('sub2api-service-name').value,
+        url_value: getElement('sub2api-service-url').value,
+        key_value: getElement('sub2api-service-key').value,
+        key_placeholder: getElement('sub2api-service-key').placeholder,
+        priority_value: getElement('sub2api-service-priority').value,
+        enabled_checked: !!getElement('sub2api-service-enabled').checked,
+        title_text: getElement('sub2api-service-modal-title').textContent,
       }};
     }}
     case 'proxy_row_actions': {{
@@ -766,6 +1089,144 @@ async function runScenario() {{
         html: getElement('tm-services-table').innerHTML,
       }};
     }}
+    case 'managed_service_edit_helper_success': {{
+      if (typeof exported.runManagedServiceEdit !== 'function') {{
+        throw new Error('runManagedServiceEdit is not implemented');
+      }}
+      logs.apiGets.length = 0;
+      let capturedService = null;
+      const originalGet = context.api.get;
+      context.api.get = async (path) => {{
+        logs.apiGets.push(path);
+        return {{
+          id: 21,
+          name: 'TM-21',
+          api_url: 'https://tm-21.example.com',
+          enabled: true,
+          priority: 6,
+          has_key: true,
+        }};
+      }};
+      try {{
+        await exported.runManagedServiceEdit({{
+          detailPath: '/tm-services/21',
+          openModal: (service) => {{
+            capturedService = service;
+          }},
+        }});
+      }} finally {{
+        context.api.get = originalGet;
+      }}
+      return {{
+        api_get_paths: logs.apiGets,
+        captured_service: capturedService,
+      }};
+    }}
+    case 'managed_service_edit_helper_error': {{
+      if (typeof exported.runManagedServiceEdit !== 'function') {{
+        throw new Error('runManagedServiceEdit is not implemented');
+      }}
+      logs.apiGets.length = 0;
+      logs.toasts.length = 0;
+      const originalGet = context.api.get;
+      context.api.get = async (path) => {{
+        logs.apiGets.push(path);
+        throw new Error('service unavailable');
+      }};
+      try {{
+        await exported.runManagedServiceEdit({{
+          detailPath: '/sub2api-services/8',
+          openModal: () => {{}},
+          errorPrefix: '加载失败',
+        }});
+      }} finally {{
+        context.api.get = originalGet;
+      }}
+      return {{
+        api_get_paths: logs.apiGets,
+        error_toasts: logs.toasts
+          .filter(([level]) => level === 'error')
+          .map(([, message]) => message),
+      }};
+    }}
+    case 'managed_service_save_helper_create': {{
+      if (typeof exported.runManagedServiceSave !== 'function') {{
+        throw new Error('runManagedServiceSave is not implemented');
+      }}
+      logs.apiPosts.length = 0;
+      logs.apiPatches.length = 0;
+      logs.toasts.length = 0;
+      let closeCalls = 0;
+      let reloadCalls = 0;
+      await exported.runManagedServiceSave({{
+        id: '',
+        payload: {{
+          name: 'TM-31',
+          api_url: 'https://tm-31.example.com',
+          priority: 3,
+          enabled: true,
+        }},
+        secretField: 'api_key',
+        secretValue: 'secret-31',
+        createPath: '/tm-services',
+        updatePath: '/tm-services/31',
+        closeModal: () => {{
+          closeCalls += 1;
+        }},
+        reloadFn: async () => {{
+          reloadCalls += 1;
+        }},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        api_post_payloads: logs.apiPosts.map(([, payload]) => payload),
+        api_patch_paths: logs.apiPatches.map(([path]) => path),
+        success_toasts: logs.toasts
+          .filter(([level]) => level === 'success')
+          .map(([, message]) => message),
+        close_calls: closeCalls,
+        reload_calls: reloadCalls,
+      }};
+    }}
+    case 'managed_service_save_helper_update': {{
+      if (typeof exported.runManagedServiceSave !== 'function') {{
+        throw new Error('runManagedServiceSave is not implemented');
+      }}
+      logs.apiPosts.length = 0;
+      logs.apiPatches.length = 0;
+      logs.toasts.length = 0;
+      let closeCalls = 0;
+      let reloadCalls = 0;
+      await exported.runManagedServiceSave({{
+        id: '31',
+        payload: {{
+          name: 'TM-31',
+          api_url: 'https://tm-31.example.com',
+          priority: 4,
+          enabled: false,
+        }},
+        secretField: 'api_key',
+        secretValue: '',
+        createPath: '/tm-services',
+        updatePath: '/tm-services/31',
+        closeModal: () => {{
+          closeCalls += 1;
+        }},
+        reloadFn: async () => {{
+          reloadCalls += 1;
+        }},
+      }});
+      return {{
+        api_post_paths: logs.apiPosts.map(([path]) => path),
+        api_patch_paths: logs.apiPatches.map(([path]) => path),
+        api_patch_payloads: logs.apiPatches.map(([, payload]) => payload),
+        success_toasts: logs.toasts
+          .filter(([level]) => level === 'success')
+          .map(([, message]) => message),
+        close_calls: closeCalls,
+        reload_calls: reloadCalls,
+      }};
+    }}
     case 'delegated_tm_service_edit': {{
       if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
         throw new Error('handleSettingsDelegatedTableClick is not implemented');
@@ -809,6 +1270,31 @@ async function runScenario() {{
         api_post_paths: logs.apiPosts.map(([path]) => path),
       }};
     }}
+    case 'cpa_modal_add_mode': {{
+      if (typeof exported.openCpaServiceModal !== 'function') {{
+        throw new Error('openCpaServiceModal is not implemented');
+      }}
+      getElement('cpa-service-id').value = '88';
+      getElement('cpa-service-name').value = 'stale-cpa';
+      getElement('cpa-service-url').value = 'https://stale-cpa.example.com';
+      getElement('cpa-service-token').value = 'stale-token';
+      getElement('cpa-service-token').placeholder = 'stale-token-placeholder';
+      getElement('cpa-service-priority').value = 7;
+      getElement('cpa-service-enabled').checked = false;
+
+      exported.openCpaServiceModal(null);
+
+      return {{
+        id_value: getElement('cpa-service-id').value,
+        name_value: getElement('cpa-service-name').value,
+        url_value: getElement('cpa-service-url').value,
+        token_value: getElement('cpa-service-token').value,
+        token_placeholder: getElement('cpa-service-token').placeholder,
+        priority_value: getElement('cpa-service-priority').value,
+        enabled_checked: !!getElement('cpa-service-enabled').checked,
+        title_text: getElement('cpa-service-modal-title').textContent,
+      }};
+    }}
     case 'render_sub2api_service_rows': {{
       if (typeof exported.renderSub2ApiServices !== 'function') {{
         throw new Error('renderSub2ApiServices is not implemented');
@@ -832,6 +1318,28 @@ async function runScenario() {{
           }},
         }},
       }});
+      return {{
+        api_delete_paths: logs.apiDeletes,
+      }};
+    }}
+    case 'delegated_sub2api_service_delete_cancelled': {{
+      if (typeof exported.handleSettingsDelegatedTableClick !== 'function') {{
+        throw new Error('handleSettingsDelegatedTableClick is not implemented');
+      }}
+      const originalConfirm = context.confirm;
+      context.confirm = async () => false;
+      try {{
+        await exported.handleSettingsDelegatedTableClick({{
+          target: {{
+            dataset: {{ managedServiceAction: 'delete', managedServiceType: 'sub2api', serviceId: '13', serviceName: 'Sub2API-13' }},
+            closest(selector) {{
+              return selector === '[data-managed-service-action][data-managed-service-type][data-service-id]' ? this : null;
+            }},
+          }},
+        }});
+      }} finally {{
+        context.confirm = originalConfirm;
+      }}
       return {{
         api_delete_paths: logs.apiDeletes,
       }};

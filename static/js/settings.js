@@ -2179,14 +2179,28 @@ async function handleTestDynamicProxy() {
 
 // ============== Team Manager 服务管理 ==============
 
-async function loadTmServices() {
-    if (!elements.tmServicesTable) return;
+async function loadManagedServiceTable({
+    tableElement,
+    listPath,
+    renderTable,
+}) {
+    if (!tableElement) return;
     try {
-        const services = await api.get('/tm-services');
-        renderTmServicesTable(services);
+        const services = await api.get(listPath);
+        if (typeof renderTable === 'function') {
+            renderTable(services);
+        }
     } catch (e) {
-        setSettingsTableFeedback(elements.tmServicesTable, e.message || '加载失败', { tone: 'danger' });
+        setSettingsTableFeedback(tableElement, e.message || '加载失败', { tone: 'danger' });
     }
+}
+
+async function loadTmServices() {
+    await loadManagedServiceTable({
+        tableElement: elements.tmServicesTable,
+        listPath: '/tm-services',
+        renderTable: renderTmServicesTable,
+    });
 }
 
 function renderTmServicesTable(services) {
@@ -2196,87 +2210,238 @@ function renderTmServicesTable(services) {
     });
 }
 
-function openTmServiceModal(service = null) {
-    document.getElementById('tm-service-id').value = service ? service.id : '';
-    document.getElementById('tm-service-name').value = service ? service.name : '';
-    document.getElementById('tm-service-url').value = service ? service.api_url : '';
-    document.getElementById('tm-service-key').value = '';
-    document.getElementById('tm-service-priority').value = service ? service.priority : 0;
-    document.getElementById('tm-service-enabled').checked = service ? service.enabled : true;
-    if (service) {
-        document.getElementById('tm-service-key').placeholder = service.has_key ? '已配置，留空保持不变' : '请输入 API Key';
-    } else {
-        document.getElementById('tm-service-key').placeholder = '请输入 API Key';
+function applyManagedServiceModalFields({
+    service = null,
+    idFieldId,
+    nameFieldId,
+    urlFieldId,
+    secretFieldId,
+    priorityFieldId,
+    enabledFieldId,
+    titleElement,
+    modalElement,
+    addTitle,
+    editTitle,
+    defaultSecretPlaceholder = '',
+    configuredSecretPlaceholder = '',
+    configuredSecretFlag = 'has_key',
+}) {
+    const hasService = !!service;
+    const secretInput = document.getElementById(secretFieldId);
+    const hasConfiguredSecret = hasService && configuredSecretFlag
+        ? Boolean(service[configuredSecretFlag])
+        : false;
+
+    document.getElementById(idFieldId).value = hasService ? service.id : '';
+    document.getElementById(nameFieldId).value = hasService ? (service.name || '') : '';
+    document.getElementById(urlFieldId).value = hasService ? (service.api_url || '') : '';
+    secretInput.value = '';
+    document.getElementById(priorityFieldId).value = hasService ? (service.priority ?? 0) : 0;
+    document.getElementById(enabledFieldId).checked = hasService ? service.enabled !== false : true;
+
+    if (defaultSecretPlaceholder || configuredSecretPlaceholder) {
+        secretInput.placeholder = hasConfiguredSecret && configuredSecretPlaceholder
+            ? configuredSecretPlaceholder
+            : defaultSecretPlaceholder;
     }
-    elements.tmServiceModalTitle.textContent = service ? '编辑 Team Manager 服务' : '添加 Team Manager 服务';
-    elements.tmServiceEditModal.classList.add('active');
+
+    titleElement.textContent = hasService ? editTitle : addTitle;
+    modalElement.classList.add('active');
+}
+
+function openTmServiceModal(service = null) {
+    applyManagedServiceModalFields({
+        service,
+        idFieldId: 'tm-service-id',
+        nameFieldId: 'tm-service-name',
+        urlFieldId: 'tm-service-url',
+        secretFieldId: 'tm-service-key',
+        priorityFieldId: 'tm-service-priority',
+        enabledFieldId: 'tm-service-enabled',
+        titleElement: elements.tmServiceModalTitle,
+        modalElement: elements.tmServiceEditModal,
+        addTitle: '添加 Team Manager 服务',
+        editTitle: '编辑 Team Manager 服务',
+        defaultSecretPlaceholder: '请输入 API Key',
+        configuredSecretPlaceholder: '已配置，留空保持不变',
+    });
+}
+
+function closeManagedServiceModal({
+    modalElement,
+    formElement = null,
+    afterClose = null,
+}) {
+    modalElement?.classList?.remove?.('active');
+    formElement?.reset?.();
+    if (typeof afterClose === 'function') {
+        afterClose();
+    }
 }
 
 function closeTmServiceModal() {
-    elements.tmServiceEditModal.classList.remove('active');
+    closeManagedServiceModal({
+        modalElement: elements.tmServiceEditModal,
+    });
+}
+
+async function runManagedServiceEdit({
+    detailPath,
+    openModal,
+    errorPrefix = '获取服务信息失败',
+}) {
+    try {
+        const service = await api.get(detailPath);
+        if (typeof openModal === 'function') {
+            openModal(service);
+        }
+    } catch (e) {
+        toast.error(`${errorPrefix}: ${e.message}`);
+    }
 }
 
 async function editTmService(id) {
-    try {
-        const service = await api.get(`/tm-services/${id}`);
-        openTmServiceModal(service);
-    } catch (e) {
-        toast.error('获取服务信息失败: ' + e.message);
-    }
+    await runManagedServiceEdit({
+        detailPath: `/tm-services/${id}`,
+        openModal: openTmServiceModal,
+    });
 }
 
-async function handleSaveTmService(e) {
-    e.preventDefault();
-    const id = document.getElementById('tm-service-id').value;
-    const name = document.getElementById('tm-service-name').value.trim();
-    const apiUrl = document.getElementById('tm-service-url').value.trim();
-    const apiKey = document.getElementById('tm-service-key').value.trim();
-    const priority = parseInt(document.getElementById('tm-service-priority').value) || 0;
-    const enabled = document.getElementById('tm-service-enabled').checked;
-
-    if (!name || !apiUrl) {
-        toast.error('名称和 API URL 不能为空');
-        return;
-    }
-    if (!id && !apiKey) {
-        toast.error('新增服务时 API Key 不能为空');
-        return;
-    }
-
+async function runManagedServiceSave({
+    id,
+    payload,
+    secretField = '',
+    secretValue = '',
+    createPath,
+    updatePath,
+    closeModal,
+    reloadFn,
+    createSuccessMessage = '服务已添加',
+    updateSuccessMessage = '服务已更新',
+}) {
     try {
-        const payload = { name, api_url: apiUrl, priority, enabled };
-        if (apiKey) payload.api_key = apiKey;
+        const requestPayload = { ...(payload || {}) };
+        if (secretField && secretValue) {
+            requestPayload[secretField] = secretValue;
+        }
 
         if (id) {
-            await api.patch(`/tm-services/${id}`, payload);
-            toast.success('服务已更新');
+            await api.patch(updatePath, requestPayload);
+            toast.success(updateSuccessMessage);
         } else {
-            payload.api_key = apiKey;
-            await api.post('/tm-services', payload);
-            toast.success('服务已添加');
+            await api.post(createPath, requestPayload);
+            toast.success(createSuccessMessage);
         }
-        closeTmServiceModal();
-        loadTmServices();
+
+        if (typeof closeModal === 'function') {
+            closeModal();
+        }
+        if (typeof reloadFn === 'function') {
+            await reloadFn();
+        }
     } catch (e) {
         toast.error('保存失败: ' + e.message);
     }
 }
 
+function readManagedServiceSaveForm({
+    idFieldId,
+    nameFieldId,
+    urlFieldId,
+    secretFieldId,
+    priorityFieldId,
+    enabledFieldId,
+    requireNameAndUrl = true,
+    secretRequiredMessage,
+}) {
+    const id = document.getElementById(idFieldId).value;
+    const name = document.getElementById(nameFieldId).value.trim();
+    const apiUrl = document.getElementById(urlFieldId).value.trim();
+    const secretValue = document.getElementById(secretFieldId).value.trim();
+    const priority = parseInt(document.getElementById(priorityFieldId).value) || 0;
+    const enabled = document.getElementById(enabledFieldId).checked;
+
+    if (requireNameAndUrl && (!name || !apiUrl)) {
+        toast.error('名称和 API URL 不能为空');
+        return null;
+    }
+
+    if (!id && !secretValue && secretRequiredMessage) {
+        toast.error(secretRequiredMessage);
+        return null;
+    }
+
+    return {
+        id,
+        payload: {
+            name,
+            api_url: apiUrl,
+            priority,
+            enabled,
+        },
+        secret_value: secretValue,
+    };
+}
+
+async function handleSaveTmService(e) {
+    e.preventDefault();
+    const formState = readManagedServiceSaveForm({
+        idFieldId: 'tm-service-id',
+        nameFieldId: 'tm-service-name',
+        urlFieldId: 'tm-service-url',
+        secretFieldId: 'tm-service-key',
+        priorityFieldId: 'tm-service-priority',
+        enabledFieldId: 'tm-service-enabled',
+        requireNameAndUrl: true,
+        secretRequiredMessage: '新增服务时 API Key 不能为空',
+    });
+    if (!formState) {
+        return;
+    }
+
+    await runManagedServiceSave({
+        id: formState.id,
+        payload: formState.payload,
+        secretField: 'api_key',
+        secretValue: formState.secret_value,
+        createPath: '/tm-services',
+        updatePath: `/tm-services/${formState.id}`,
+        closeModal: closeTmServiceModal,
+        reloadFn: loadTmServices,
+    });
+}
+
 async function deleteTmService(id, name) {
-    const confirmed = await confirm(`确定要删除 Team Manager 服务「${name}」吗？`);
+    await runManagedServiceDelete({
+        confirmMessage: `确定要删除 Team Manager 服务「${name}」吗？`,
+        deletePath: `/tm-services/${id}`,
+        reloadFn: loadTmServices,
+    });
+}
+
+async function runManagedServiceDelete({
+    confirmMessage,
+    deletePath,
+    reloadFn,
+    successMessage = '已删除',
+}) {
+    const confirmed = await confirm(confirmMessage);
     if (!confirmed) return;
+
     try {
-        await api.delete(`/tm-services/${id}`);
-        toast.success('已删除');
-        loadTmServices();
+        await api.delete(deletePath);
+        toast.success(successMessage);
+        if (typeof reloadFn === 'function') {
+            await reloadFn();
+        }
     } catch (e) {
         toast.error('删除失败: ' + e.message);
     }
 }
 
-async function testTmServiceById(id) {
+async function runManagedServiceSavedTest(savedTestPath) {
     try {
-        const result = await api.post(`/tm-services/${id}/test`);
+        const result = await api.post(savedTestPath);
         if (result.success) {
             toast.success(result.message);
         } else {
@@ -2285,6 +2450,10 @@ async function testTmServiceById(id) {
     } catch (e) {
         toast.error('测试失败: ' + e.message);
     }
+}
+
+async function testTmServiceById(id) {
+    await runManagedServiceSavedTest(`/tm-services/${id}/test`);
 }
 
 async function runManagedServiceConnectionTest({
@@ -2324,28 +2493,54 @@ async function runManagedServiceConnectionTest({
     }
 }
 
-async function handleTestTmService() {
-    const apiUrl = document.getElementById('tm-service-url').value.trim();
-    const apiKey = document.getElementById('tm-service-key').value.trim();
-    const id = document.getElementById('tm-service-id').value;
+async function runManagedServiceFormTest({
+    idFieldId,
+    urlFieldId,
+    secretFieldId,
+    secretLabel,
+    button,
+    idleText,
+    buildSavedTestPath,
+    connectionPath,
+    buildConnectionPayload,
+}) {
+    const apiUrl = document.getElementById(urlFieldId).value.trim();
+    const secretValue = document.getElementById(secretFieldId).value.trim();
+    const id = document.getElementById(idFieldId).value;
 
     if (!apiUrl) {
         toast.error('请先填写 API URL');
         return;
     }
-    if (!id && !apiKey) {
-        toast.error('请先填写 API Key');
+    if (!id && !secretValue) {
+        toast.error(`请先填写 ${secretLabel}`);
         return;
     }
 
     await runManagedServiceConnectionTest({
         id,
-        secretValue: apiKey,
+        secretValue,
+        button,
+        idleText,
+        savedTestPath: typeof buildSavedTestPath === 'function' ? buildSavedTestPath(id) : '',
+        connectionPath,
+        connectionPayload: typeof buildConnectionPayload === 'function'
+            ? buildConnectionPayload({ id, apiUrl, secretValue })
+            : {},
+    });
+}
+
+async function handleTestTmService() {
+    await runManagedServiceFormTest({
+        idFieldId: 'tm-service-id',
+        urlFieldId: 'tm-service-url',
+        secretFieldId: 'tm-service-key',
+        secretLabel: 'API Key',
         button: elements.testTmServiceBtn,
         idleText: '🔌 测试连接',
-        savedTestPath: `/tm-services/${id}/test`,
+        buildSavedTestPath: (id) => `/tm-services/${id}/test`,
         connectionPath: '/tm-services/test-connection',
-        connectionPayload: { api_url: apiUrl, api_key: apiKey },
+        buildConnectionPayload: ({ apiUrl, secretValue }) => ({ api_url: apiUrl, api_key: secretValue }),
     });
 }
 
@@ -2353,13 +2548,11 @@ async function handleTestTmService() {
 // ============== CPA 服务管理 ==============
 
 async function loadCpaServices() {
-    if (!elements.cpaServicesTable) return;
-    try {
-        const services = await api.get('/cpa-services');
-        renderCpaServicesTable(services);
-    } catch (e) {
-        setSettingsTableFeedback(elements.cpaServicesTable, e.message || '加载失败', { tone: 'danger' });
-    }
+    await loadManagedServiceTable({
+        tableElement: elements.cpaServicesTable,
+        listPath: '/cpa-services',
+        renderTable: renderCpaServicesTable,
+    });
 }
 
 function renderCpaServicesTable(services) {
@@ -2370,114 +2563,88 @@ function renderCpaServicesTable(services) {
 }
 
 function openCpaServiceModal(service = null) {
-    document.getElementById('cpa-service-id').value = service ? service.id : '';
-    document.getElementById('cpa-service-name').value = service ? service.name : '';
-    document.getElementById('cpa-service-url').value = service ? service.api_url : '';
-    document.getElementById('cpa-service-token').value = '';
-    document.getElementById('cpa-service-priority').value = service ? service.priority : 0;
-    document.getElementById('cpa-service-enabled').checked = service ? service.enabled : true;
-    elements.cpaServiceModalTitle.textContent = service ? '编辑 CPA 服务' : '添加 CPA 服务';
-    elements.cpaServiceEditModal.classList.add('active');
+    applyManagedServiceModalFields({
+        service,
+        idFieldId: 'cpa-service-id',
+        nameFieldId: 'cpa-service-name',
+        urlFieldId: 'cpa-service-url',
+        secretFieldId: 'cpa-service-token',
+        priorityFieldId: 'cpa-service-priority',
+        enabledFieldId: 'cpa-service-enabled',
+        titleElement: elements.cpaServiceModalTitle,
+        modalElement: elements.cpaServiceEditModal,
+        addTitle: '添加 CPA 服务',
+        editTitle: '编辑 CPA 服务',
+        defaultSecretPlaceholder: '请输入 API Token',
+        configuredSecretPlaceholder: '已配置，留空保持不变',
+        configuredSecretFlag: 'has_token',
+    });
 }
 
 function closeCpaServiceModal() {
-    elements.cpaServiceEditModal.classList.remove('active');
+    closeManagedServiceModal({
+        modalElement: elements.cpaServiceEditModal,
+    });
 }
 
 async function editCpaService(id) {
-    try {
-        const service = await api.get(`/cpa-services/${id}`);
-        openCpaServiceModal(service);
-    } catch (e) {
-        toast.error('获取服务信息失败: ' + e.message);
-    }
+    await runManagedServiceEdit({
+        detailPath: `/cpa-services/${id}`,
+        openModal: openCpaServiceModal,
+    });
 }
 
 async function handleSaveCpaService(e) {
     e.preventDefault();
-    const id = document.getElementById('cpa-service-id').value;
-    const name = document.getElementById('cpa-service-name').value.trim();
-    const apiUrl = document.getElementById('cpa-service-url').value.trim();
-    const apiToken = document.getElementById('cpa-service-token').value.trim();
-    const priority = parseInt(document.getElementById('cpa-service-priority').value) || 0;
-    const enabled = document.getElementById('cpa-service-enabled').checked;
-
-    if (!name || !apiUrl) {
-        toast.error('名称和 API URL 不能为空');
+    const formState = readManagedServiceSaveForm({
+        idFieldId: 'cpa-service-id',
+        nameFieldId: 'cpa-service-name',
+        urlFieldId: 'cpa-service-url',
+        secretFieldId: 'cpa-service-token',
+        priorityFieldId: 'cpa-service-priority',
+        enabledFieldId: 'cpa-service-enabled',
+        requireNameAndUrl: true,
+        secretRequiredMessage: '新增服务时 API Token 不能为空',
+    });
+    if (!formState) {
         return;
     }
-    if (!id && !apiToken) {
-        toast.error('新增服务时 API Token 不能为空');
-        return;
-    }
 
-    try {
-        const payload = { name, api_url: apiUrl, priority, enabled };
-        if (apiToken) payload.api_token = apiToken;
-
-        if (id) {
-            await api.patch(`/cpa-services/${id}`, payload);
-            toast.success('服务已更新');
-        } else {
-            payload.api_token = apiToken;
-            await api.post('/cpa-services', payload);
-            toast.success('服务已添加');
-        }
-        closeCpaServiceModal();
-        loadCpaServices();
-    } catch (e) {
-        toast.error('保存失败: ' + e.message);
-    }
+    await runManagedServiceSave({
+        id: formState.id,
+        payload: formState.payload,
+        secretField: 'api_token',
+        secretValue: formState.secret_value,
+        createPath: '/cpa-services',
+        updatePath: `/cpa-services/${formState.id}`,
+        closeModal: closeCpaServiceModal,
+        reloadFn: loadCpaServices,
+    });
 }
 
 async function deleteCpaService(id, name) {
-    const confirmed = await confirm(`确定要删除 CPA 服务「${name}」吗？`);
-    if (!confirmed) return;
-    try {
-        await api.delete(`/cpa-services/${id}`);
-        toast.success('已删除');
-        loadCpaServices();
-    } catch (e) {
-        toast.error('删除失败: ' + e.message);
-    }
+    await runManagedServiceDelete({
+        confirmMessage: `确定要删除 CPA 服务「${name}」吗？`,
+        deletePath: `/cpa-services/${id}`,
+        reloadFn: loadCpaServices,
+    });
 }
 
 async function testCpaServiceById(id) {
-    try {
-        const result = await api.post(`/cpa-services/${id}/test`);
-        if (result.success) {
-            toast.success(result.message);
-        } else {
-            toast.error(result.message);
-        }
-    } catch (e) {
-        toast.error('测试失败: ' + e.message);
-    }
+    await runManagedServiceSavedTest(`/cpa-services/${id}/test`);
 }
 
 async function handleTestCpaService() {
-    const apiUrl = document.getElementById('cpa-service-url').value.trim();
-    const apiToken = document.getElementById('cpa-service-token').value.trim();
-    const id = document.getElementById('cpa-service-id').value;
-
-    if (!apiUrl) {
-        toast.error('请先填写 API URL');
-        return;
-    }
-    // 新增时必须有 token，编辑时 token 可为空（用已保存的）
-    if (!id && !apiToken) {
-        toast.error('请先填写 API Token');
-        return;
-    }
-
-    await runManagedServiceConnectionTest({
-        id,
-        secretValue: apiToken,
+    await runManagedServiceFormTest({
+        idFieldId: 'cpa-service-id',
+        urlFieldId: 'cpa-service-url',
+        secretFieldId: 'cpa-service-token',
+        secretLabel: 'API Token',
         button: elements.testCpaServiceBtn,
         idleText: '🔌 测试连接',
-        savedTestPath: `/cpa-services/${id}/test`,
+        buildSavedTestPath: (id) => `/cpa-services/${id}/test`,
         connectionPath: '/cpa-services/test-connection',
-        connectionPayload: { api_url: apiUrl, api_token: apiToken },
+        buildConnectionPayload: ({ apiUrl, secretValue }) => ({ api_url: apiUrl, api_token: secretValue }),
     });
 }
 
@@ -2488,14 +2655,11 @@ async function handleTestCpaService() {
 let _sub2apiEditingId = null;
 
 async function loadSub2ApiServices() {
-    try {
-        const services = await api.get('/sub2api-services');
-        renderSub2ApiServices(services);
-    } catch (e) {
-        if (elements.sub2ApiServicesTable) {
-            setSettingsTableFeedback(elements.sub2ApiServicesTable, e.message || '加载失败', { tone: 'danger' });
-        }
-    }
+    await loadManagedServiceTable({
+        tableElement: elements.sub2ApiServicesTable,
+        listPath: '/sub2api-services',
+        renderTable: renderSub2ApiServices,
+    });
 }
 
 function renderSub2ApiServices(services) {
@@ -2508,111 +2672,94 @@ function renderSub2ApiServices(services) {
 
 function openSub2ApiServiceModal(svc = null) {
     _sub2apiEditingId = svc ? svc.id : null;
-    elements.sub2ApiServiceModalTitle.textContent = svc ? '编辑 Sub2API 服务' : '添加 Sub2API 服务';
     elements.sub2ApiServiceForm.reset();
-    document.getElementById('sub2api-service-id').value = svc ? svc.id : '';
-    if (svc) {
-        document.getElementById('sub2api-service-name').value = svc.name || '';
-        document.getElementById('sub2api-service-url').value = svc.api_url || '';
-        document.getElementById('sub2api-service-priority').value = svc.priority ?? 0;
-        document.getElementById('sub2api-service-enabled').checked = svc.enabled !== false;
-        document.getElementById('sub2api-service-key').placeholder = svc.has_key ? '已配置，留空保持不变' : '请输入 API Key';
-    }
-    elements.sub2ApiServiceEditModal.classList.add('active');
+    applyManagedServiceModalFields({
+        service: svc,
+        idFieldId: 'sub2api-service-id',
+        nameFieldId: 'sub2api-service-name',
+        urlFieldId: 'sub2api-service-url',
+        secretFieldId: 'sub2api-service-key',
+        priorityFieldId: 'sub2api-service-priority',
+        enabledFieldId: 'sub2api-service-enabled',
+        titleElement: elements.sub2ApiServiceModalTitle,
+        modalElement: elements.sub2ApiServiceEditModal,
+        addTitle: '添加 Sub2API 服务',
+        editTitle: '编辑 Sub2API 服务',
+        defaultSecretPlaceholder: '请输入 API Key',
+        configuredSecretPlaceholder: '已配置，留空保持不变',
+    });
 }
 
 function closeSub2ApiServiceModal() {
-    elements.sub2ApiServiceEditModal.classList.remove('active');
-    elements.sub2ApiServiceForm.reset();
-    _sub2apiEditingId = null;
+    closeManagedServiceModal({
+        modalElement: elements.sub2ApiServiceEditModal,
+        formElement: elements.sub2ApiServiceForm,
+        afterClose: () => {
+            _sub2apiEditingId = null;
+        },
+    });
 }
 
 async function editSub2ApiService(id) {
-    try {
-        const svc = await api.get(`/sub2api-services/${id}`);
-        openSub2ApiServiceModal(svc);
-    } catch (e) {
-        toast.error('加载失败: ' + e.message);
-    }
+    await runManagedServiceEdit({
+        detailPath: `/sub2api-services/${id}`,
+        openModal: openSub2ApiServiceModal,
+        errorPrefix: '加载失败',
+    });
 }
 
 async function deleteSub2ApiService(id, name) {
-    if (!confirm(`确认删除 Sub2API 服务「${name}」？`)) return;
-    try {
-        await api.delete(`/sub2api-services/${id}`);
-        toast.success('服务已删除');
-        loadSub2ApiServices();
-    } catch (e) {
-        toast.error('删除失败: ' + e.message);
-    }
+    await runManagedServiceDelete({
+        confirmMessage: `确认删除 Sub2API 服务「${name}」？`,
+        deletePath: `/sub2api-services/${id}`,
+        reloadFn: loadSub2ApiServices,
+        successMessage: '服务已删除',
+    });
 }
 
 async function handleSaveSub2ApiService(e) {
     e.preventDefault();
-    const id = document.getElementById('sub2api-service-id').value;
-    const data = {
-        name: document.getElementById('sub2api-service-name').value,
-        api_url: document.getElementById('sub2api-service-url').value,
-        api_key: document.getElementById('sub2api-service-key').value || undefined,
-        priority: parseInt(document.getElementById('sub2api-service-priority').value) || 0,
-        enabled: document.getElementById('sub2api-service-enabled').checked,
-    };
-    if (!id && !data.api_key) {
-        toast.error('请填写 API Key');
+    const formState = readManagedServiceSaveForm({
+        idFieldId: 'sub2api-service-id',
+        nameFieldId: 'sub2api-service-name',
+        urlFieldId: 'sub2api-service-url',
+        secretFieldId: 'sub2api-service-key',
+        priorityFieldId: 'sub2api-service-priority',
+        enabledFieldId: 'sub2api-service-enabled',
+        requireNameAndUrl: false,
+        secretRequiredMessage: '请填写 API Key',
+    });
+    if (!formState) {
         return;
     }
-    if (!data.api_key) delete data.api_key;
 
-    try {
-        if (id) {
-            await api.patch(`/sub2api-services/${id}`, data);
-            toast.success('服务已更新');
-        } else {
-            await api.post('/sub2api-services', data);
-            toast.success('服务已添加');
-        }
-        closeSub2ApiServiceModal();
-        loadSub2ApiServices();
-    } catch (e) {
-        toast.error('保存失败: ' + e.message);
-    }
+    await runManagedServiceSave({
+        id: formState.id,
+        payload: formState.payload,
+        secretField: 'api_key',
+        secretValue: formState.secret_value,
+        createPath: '/sub2api-services',
+        updatePath: `/sub2api-services/${formState.id}`,
+        closeModal: closeSub2ApiServiceModal,
+        reloadFn: loadSub2ApiServices,
+    });
 }
 
 async function testSub2ApiServiceById(id) {
-    try {
-        const result = await api.post(`/sub2api-services/${id}/test`);
-        if (result.success) {
-            toast.success(result.message);
-        } else {
-            toast.error(result.message);
-        }
-    } catch (e) {
-        toast.error('测试失败: ' + e.message);
-    }
+    await runManagedServiceSavedTest(`/sub2api-services/${id}/test`);
 }
 
 async function handleTestSub2ApiService() {
-    const apiUrl = document.getElementById('sub2api-service-url').value.trim();
-    const apiKey = document.getElementById('sub2api-service-key').value.trim();
-    const id = document.getElementById('sub2api-service-id').value;
-
-    if (!apiUrl) {
-        toast.error('请先填写 API URL');
-        return;
-    }
-    if (!id && !apiKey) {
-        toast.error('请先填写 API Key');
-        return;
-    }
-
-    await runManagedServiceConnectionTest({
-        id,
-        secretValue: apiKey,
+    await runManagedServiceFormTest({
+        idFieldId: 'sub2api-service-id',
+        urlFieldId: 'sub2api-service-url',
+        secretFieldId: 'sub2api-service-key',
+        secretLabel: 'API Key',
         button: elements.testSub2ApiServiceBtn,
         idleText: '🔌 测试连接',
-        savedTestPath: `/sub2api-services/${id}/test`,
+        buildSavedTestPath: (id) => `/sub2api-services/${id}/test`,
         connectionPath: '/sub2api-services/test-connection',
-        connectionPayload: { api_url: apiUrl, api_key: apiKey },
+        buildConnectionPayload: ({ apiUrl, secretValue }) => ({ api_url: apiUrl, api_key: secretValue }),
     });
 }
 
