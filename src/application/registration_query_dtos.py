@@ -11,9 +11,21 @@ class RegistrationTaskView:
     id: int
     task_uuid: str
     status: str
+    email: str | None = None
+    email_service_id: int | None = None
+    pipeline_key: str | None = None
+    current_step_key: str | None = None
+    pipeline_status: str | None = None
+    total_duration_ms: int | None = None
+    proxy: str | None = None
+    proxy_ip: str | None = None
+    error_message: str | None = None
     steps: List[Dict[str, Any]] = field(default_factory=list)
     result: Dict[str, Any] | None = None
     logs: str | None = None
+    created_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
 
 
 @dataclass(frozen=True)

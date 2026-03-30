@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from dataclasses import asdict, fields
 
 import pytest
 
@@ -117,3 +118,49 @@ def test_registration_query_facade_list_tasks_prefers_db_steps_over_runtime_when
     view = facade.list_tasks(page=1, page_size=20, status=None)
 
     assert view.tasks[0].steps[0]["step_key"] == "db-step"
+
+
+def test_registration_query_facade_task_view_exposes_explicit_contract_fields(
+    db_factory, temp_db
+):
+    task = crud.create_registration_task(
+        temp_db,
+        task_uuid="task-dto-contract",
+        pipeline_key="codexgen_pipeline",
+        email_address="contract@example.com",
+        email_service_id=42,
+        proxy="http://proxy.example.com:8080",
+    )
+    crud.update_registration_task(
+        temp_db,
+        task.task_uuid,
+        result={"metadata": {"proxy_ip": "8.8.4.4"}},
+    )
+
+    facade = RegistrationQueryFacade(db_factory=db_factory, task_manager=FakeTaskManager())
+
+    view = facade.get_task_detail(task.task_uuid)
+
+    assert view is not None
+    declared_fields = {item.name for item in fields(type(view))}
+    expected_fields = {
+        "email",
+        "email_service_id",
+        "pipeline_key",
+        "current_step_key",
+        "pipeline_status",
+        "total_duration_ms",
+        "proxy",
+        "proxy_ip",
+        "error_message",
+        "created_at",
+        "started_at",
+        "completed_at",
+    }
+    assert expected_fields.issubset(declared_fields)
+
+    payload = asdict(view)
+    assert payload["email"] == "contract@example.com"
+    assert payload["proxy_ip"] == "8.8.4.4"
+    assert payload["pipeline_key"] == "codexgen_pipeline"
+    assert payload["created_at"] is not None

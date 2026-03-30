@@ -74,31 +74,26 @@ class RegistrationQueryFacade:
         metadata = result_payload.get("metadata") if isinstance(result_payload, dict) else {}
         proxy_ip = metadata.get("proxy_ip") if isinstance(metadata, dict) else None
         email = str(task.email_address or result_payload.get("email") or "").strip() or None
-        view = RegistrationTaskView(
+        return RegistrationTaskView(
             id=task.id,
             task_uuid=task.task_uuid,
             status=task.status,
+            email=email,
+            email_service_id=task.email_service_id,
+            pipeline_key=task.pipeline_key,
+            current_step_key=task.current_step_key,
+            pipeline_status=task.pipeline_status,
+            total_duration_ms=task.total_duration_ms,
+            proxy=task.proxy,
+            proxy_ip=str(proxy_ip).strip() if proxy_ip else None,
+            error_message=task.error_message,
             steps=list(steps or []),
             result=task.result,
             logs=task.logs,
+            created_at=task.created_at.isoformat() if task.created_at else None,
+            started_at=task.started_at.isoformat() if task.started_at else None,
+            completed_at=task.completed_at.isoformat() if task.completed_at else None,
         )
-        extra_fields = {
-            "email": email,
-            "email_service_id": task.email_service_id,
-            "pipeline_key": task.pipeline_key,
-            "current_step_key": task.current_step_key,
-            "pipeline_status": task.pipeline_status,
-            "total_duration_ms": task.total_duration_ms,
-            "proxy": task.proxy,
-            "proxy_ip": str(proxy_ip).strip() if proxy_ip else None,
-            "error_message": task.error_message,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-        }
-        for field_name, field_value in extra_fields.items():
-            object.__setattr__(view, field_name, field_value)
-        return view
 
     def list_tasks(
         self,

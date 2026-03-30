@@ -278,21 +278,21 @@ def _task_view_to_response(task_view: Any) -> RegistrationTaskResponse:
         id=task_view.id,
         task_uuid=task_view.task_uuid,
         status=task_view.status,
-        email=getattr(task_view, "email", None),
-        email_service_id=getattr(task_view, "email_service_id", None),
-        pipeline_key=getattr(task_view, "pipeline_key", None),
-        current_step_key=getattr(task_view, "current_step_key", None),
-        pipeline_status=getattr(task_view, "pipeline_status", None),
-        total_duration_ms=getattr(task_view, "total_duration_ms", None),
-        proxy=getattr(task_view, "proxy", None),
-        proxy_ip=getattr(task_view, "proxy_ip", None),
-        logs=getattr(task_view, "logs", None),
-        result=getattr(task_view, "result", None),
-        error_message=getattr(task_view, "error_message", None),
-        steps=list(getattr(task_view, "steps", []) or []),
-        created_at=getattr(task_view, "created_at", None),
-        started_at=getattr(task_view, "started_at", None),
-        completed_at=getattr(task_view, "completed_at", None),
+        email=task_view.email,
+        email_service_id=task_view.email_service_id,
+        pipeline_key=task_view.pipeline_key,
+        current_step_key=task_view.current_step_key,
+        pipeline_status=task_view.pipeline_status,
+        total_duration_ms=task_view.total_duration_ms,
+        proxy=task_view.proxy,
+        proxy_ip=task_view.proxy_ip,
+        logs=task_view.logs,
+        result=task_view.result,
+        error_message=task_view.error_message,
+        steps=list(task_view.steps or []),
+        created_at=task_view.created_at,
+        started_at=task_view.started_at,
+        completed_at=task_view.completed_at,
     )
 
 
@@ -979,7 +979,7 @@ async def list_tasks(
 async def get_task(task_uuid: str):
     """获取任务详情"""
     task_view = _build_registration_query_facade().get_task_detail(task_uuid)
-    if not task_view:
+    if task_view is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return _task_view_to_response(task_view)
 
@@ -995,7 +995,7 @@ async def get_task_logs(task_uuid: str):
     - 不应再作为实时主来源
     """
     payload = _build_registration_query_facade().get_task_logs(task_uuid)
-    if not payload:
+    if payload is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return payload
 

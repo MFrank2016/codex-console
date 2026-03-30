@@ -341,9 +341,21 @@ def test_list_tasks_route_delegates_to_query_facade(monkeypatch):
                     "id": 1,
                     "task_uuid": "task-via-facade",
                     "status": "pending",
+                    "email": None,
+                    "email_service_id": None,
+                    "pipeline_key": None,
+                    "current_step_key": None,
+                    "pipeline_status": None,
+                    "total_duration_ms": None,
+                    "proxy": None,
+                    "proxy_ip": None,
                     "steps": [],
                     "result": None,
                     "logs": None,
+                    "error_message": None,
+                    "created_at": None,
+                    "started_at": None,
+                    "completed_at": None,
                 },
             )()
             return type("TaskListView", (), {"total": 1, "tasks": [task_view]})()
@@ -375,9 +387,21 @@ def test_get_task_route_delegates_to_query_facade(monkeypatch):
                     "id": 2,
                     "task_uuid": task_uuid,
                     "status": "completed",
+                    "email": "demo@example.com",
+                    "email_service_id": 1,
+                    "pipeline_key": "current_pipeline",
+                    "current_step_key": "done",
+                    "pipeline_status": "completed",
+                    "total_duration_ms": 1000,
+                    "proxy": "http://proxy.example.com:8080",
+                    "proxy_ip": "1.1.1.1",
                     "steps": [{"step_key": "done"}],
                     "result": {"success": True},
                     "logs": "line-1",
+                    "error_message": None,
+                    "created_at": "2026-03-30T00:00:00",
+                    "started_at": "2026-03-30T00:00:01",
+                    "completed_at": "2026-03-30T00:00:02",
                 },
             )()
             return view
@@ -394,6 +418,20 @@ def test_get_task_route_delegates_to_query_facade(monkeypatch):
     assert captured == {"task_uuid": "task-via-facade"}
     assert response.task_uuid == "task-via-facade"
     assert response.steps[0]["step_key"] == "done"
+
+
+def test_get_task_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_task_detail(self, task_uuid):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_task("missing-task"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "任务不存在"
 
 
 def test_get_task_logs_route_delegates_to_query_facade(monkeypatch):
@@ -419,6 +457,20 @@ def test_get_task_logs_route_delegates_to_query_facade(monkeypatch):
 
     assert captured == {"task_uuid": "task-log-via-facade"}
     assert payload["logs"] == ["line-1", "line-2"]
+
+
+def test_get_task_logs_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_task_logs(self, task_uuid):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_task_logs("missing-task"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "任务不存在"
 
 
 def test_registration_stats_route_delegates_to_query_facade(monkeypatch):
