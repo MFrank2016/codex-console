@@ -143,6 +143,8 @@ class RegistrationEngine:
         self._signup_otp_code: Optional[str] = None
         self._login_otp_code: Optional[str] = None
         self._step_token_info: Dict[str, Any] = {}
+        self._auth_continue_url: Optional[str] = None
+        self._auth_page_type: Optional[str] = None
         self.generated_user_profile: Optional[Dict[str, Any]] = None
         self.proxy_ip: Optional[str] = None
         self.ip_location: Optional[str] = None
@@ -415,6 +417,7 @@ class RegistrationEngine:
             # 解析响应判断账号状态
             try:
                 response_data = response.json()
+                self._capture_auth_flow_response(response_data)
                 page_type = response_data.get("page", {}).get("type", "")
                 self._log(f"响应页面类型: {page_type}")
 
@@ -494,6 +497,7 @@ class RegistrationEngine:
                 )
 
             response_data = response.json()
+            self._capture_auth_flow_response(response_data)
             page_type = response_data.get("page", {}).get("type", "")
             self._log(f"登录密码响应页面类型: {page_type}")
 
@@ -520,6 +524,77 @@ class RegistrationEngine:
         self.oauth_start = None
         self.session_token = None
         self._otp_sent_at = None
+        self._auth_continue_url = None
+        self._auth_page_type = None
+
+    def _capture_auth_flow_response(self, payload: Dict[str, Any] | None) -> None:
+        """记录最近一步认证链路返回的 continue_url / page.type。"""
+        if not isinstance(payload, dict):
+            self._auth_continue_url = None
+            self._auth_page_type = None
+            return
+
+        page_type = str(((payload.get("page") or {}).get("type")) or "").strip()
+        continue_url = str(payload.get("continue_url") or "").strip()
+
+        self._auth_page_type = page_type or None
+        if continue_url:
+            self._auth_continue_url = continue_url
+            return
+
+        lowered_page_type = page_type.lower()
+        if "consent" in lowered_page_type or "organization" in lowered_page_type:
+            self._auth_continue_url = "https://auth.openai.com/sign-in-with-chatgpt/codex/consent"
+        else:
+            self._auth_continue_url = None
+
+    def _parse_workspace_id_from_auth_cookie(self) -> Optional[str]:
+        """静默解析 auth cookie 中的 workspace id。"""
+        if not self.session:
+            return None
+
+        auth_cookie = self.session.cookies.get("oai-client-auth-session")
+        if not auth_cookie:
+            return None
+
+        try:
+            import base64
+            import json as json_module
+
+            payload = auth_cookie.split(".")[0]
+            pad = "=" * ((4 - (len(payload) % 4)) % 4)
+            decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
+            auth_json = json_module.loads(decoded.decode("utf-8"))
+            workspaces = auth_json.get("workspaces") or []
+            workspace_id = str((workspaces[0] or {}).get("id") or "").strip() if workspaces else ""
+            return workspace_id or None
+        except Exception:
+            return None
+
+    def _resolve_workspace_and_callback(self) -> Tuple[Optional[str], Optional[str]]:
+        """
+        优先走 workspace/select 链路；若 auth cookie 缺 workspace，则回退到最近一步
+        响应里的 consent continue_url，贴近参考项目的处理方式。
+        """
+        workspace_id = self._parse_workspace_id_from_auth_cookie()
+        if workspace_id:
+            self._log(f"Workspace ID: {workspace_id}")
+            continue_url = self._select_workspace(workspace_id)
+            if continue_url:
+                callback_url = self._follow_redirects(continue_url)
+                if callback_url:
+                    return workspace_id, callback_url
+                self._log("workspace 链路未拿到 callback，尝试 consent fallback", "warning")
+        else:
+            self._log("授权 Cookie 里没有 workspace 信息，尝试直接复用 consent continue_url", "warning")
+
+        consent_continue_url = str(self._auth_continue_url or "").strip()
+        if consent_continue_url:
+            callback_url = self._follow_redirects(consent_continue_url)
+            if callback_url:
+                return workspace_id, callback_url
+
+        return workspace_id, None
 
     def _prepare_authorize_flow(self, label: str) -> Tuple[Optional[str], Optional[str]]:
         """初始化当前阶段的授权流程，返回 device id 和 sentinel token。"""
@@ -557,24 +632,12 @@ class RegistrationEngine:
             result.error_message = "验证码校验失败"
             return False
 
-        self._log("摸一下 Workspace ID，看看该坐哪桌...")
-        workspace_id = self._get_workspace_id()
-        if not workspace_id:
-            result.error_message = "获取 Workspace ID 失败"
-            return False
-
-        result.workspace_id = workspace_id
-
-        self._log("选择 Workspace，安排个靠谱座位...")
-        continue_url = self._select_workspace(workspace_id)
-        if not continue_url:
-            result.error_message = "选择 Workspace 失败"
-            return False
-
-        self._log("顺着重定向面包屑往前走，别跟丢了...")
-        callback_url = self._follow_redirects(continue_url)
+        self._log("摸一下 consent / workspace 链路，看看 token 应该从哪条门出去...")
+        workspace_id, callback_url = self._resolve_workspace_and_callback()
+        if workspace_id:
+            result.workspace_id = workspace_id
         if not callback_url:
-            result.error_message = "跟随重定向链失败"
+            result.error_message = "解析 consent / callback 链路失败"
             return False
 
         self._log("处理 OAuth 回调，准备把 token 请出来...")
@@ -758,6 +821,11 @@ class RegistrationEngine:
             )
 
             self._log(f"验证码校验状态: {response.status_code}")
+            if response.status_code == 200:
+                try:
+                    self._capture_auth_flow_response(response.json())
+                except Exception:
+                    self._capture_auth_flow_response(None)
             return response.status_code == 200
 
         except Exception as e:
@@ -800,43 +868,22 @@ class RegistrationEngine:
     def _get_workspace_id(self) -> Optional[str]:
         """获取 Workspace ID"""
         try:
+            if not self.session:
+                self._log("当前会话未初始化，无法读取授权 Cookie", "error")
+                return None
+
             auth_cookie = self.session.cookies.get("oai-client-auth-session")
             if not auth_cookie:
                 self._log("未能获取到授权 Cookie", "error")
                 return None
 
-            # 解码 JWT
-            import base64
-            import json as json_module
-
-            try:
-                segments = auth_cookie.split(".")
-                if len(segments) < 1:
-                    self._log("授权 Cookie 格式错误", "error")
-                    return None
-
-                # 解码第一个 segment
-                payload = segments[0]
-                pad = "=" * ((4 - (len(payload) % 4)) % 4)
-                decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
-                auth_json = json_module.loads(decoded.decode("utf-8"))
-
-                workspaces = auth_json.get("workspaces") or []
-                if not workspaces:
-                    self._log("授权 Cookie 里没有 workspace 信息", "error")
-                    return None
-
-                workspace_id = str((workspaces[0] or {}).get("id") or "").strip()
-                if not workspace_id:
-                    self._log("无法解析 workspace_id", "error")
-                    return None
-
-                self._log(f"Workspace ID: {workspace_id}")
-                return workspace_id
-
-            except Exception as e:
-                self._log(f"解析授权 Cookie 失败: {e}", "error")
+            workspace_id = self._parse_workspace_id_from_auth_cookie()
+            if not workspace_id:
+                self._log("授权 Cookie 里没有 workspace 信息", "error")
                 return None
+
+            self._log(f"Workspace ID: {workspace_id}")
+            return workspace_id
 
         except Exception as e:
             self._log(f"获取 Workspace ID 失败: {e}", "error")
@@ -877,6 +924,8 @@ class RegistrationEngine:
         """跟随重定向链，寻找回调 URL"""
         try:
             current_url = start_url
+            if current_url and "code=" in current_url and "state=" in current_url:
+                return current_url
             max_redirects = 6
 
             for i in range(max_redirects):
@@ -892,6 +941,10 @@ class RegistrationEngine:
 
                 # 如果不是重定向状态码，停止
                 if response.status_code not in [301, 302, 303, 307, 308]:
+                    final_url = str(getattr(response, "url", "") or current_url)
+                    if "code=" in final_url and "state=" in final_url:
+                        self._log(f"最终 URL 已带回调参数: {final_url[:100]}...")
+                        return final_url
                     self._log(f"非重定向状态码: {response.status_code}")
                     break
 
@@ -914,6 +967,11 @@ class RegistrationEngine:
             return None
 
         except Exception as e:
+            match = re.search(r'(https?://localhost[^\s\'"]+)', str(e))
+            if match and "code=" in match.group(1):
+                callback_url = match.group(1)
+                self._log(f"从异常里提取到回调 URL: {callback_url[:100]}...", "warning")
+                return callback_url
             self._log(f"跟随重定向失败: {e}", "error")
             return None
 
@@ -1081,21 +1139,13 @@ class RegistrationEngine:
         return {}
 
     def run_resolve_consent_and_workspace_step(self) -> dict[str, Any]:
-        workspace_id = self._get_workspace_id()
-        if not workspace_id:
-            raise RuntimeError("workspace id missing")
-
-        continue_url = self._select_workspace(workspace_id)
-        if not continue_url:
-            raise RuntimeError("select workspace failed")
-
-        callback_url = self._follow_redirects(continue_url)
+        workspace_id, callback_url = self._resolve_workspace_and_callback()
         if not callback_url:
             raise RuntimeError("oauth callback url missing")
 
         return {
             "metadata": {
-                "workspace_id": workspace_id,
+                "workspace_id": workspace_id or "",
                 "oauth_callback_url": callback_url,
             }
         }
@@ -1146,6 +1196,8 @@ class RegistrationEngine:
             self._is_existing_account = False
             self._token_acquisition_requires_login = False
             self._otp_sent_at = None
+            self._auth_continue_url = None
+            self._auth_page_type = None
 
             self._log("=" * 60)
             self._log("注册流程启动，开始替你敲门")

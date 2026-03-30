@@ -181,6 +181,20 @@ def _response_with_login_cookies(workspace_id="ws-1", session_token="session-1")
     return DummyResponse(status_code=200, payload={}, on_return=setter)
 
 
+def _response_with_consent_continue_url(session_token="session-1"):
+    def setter(session):
+        session.cookies["__Secure-next-auth.session-token"] = session_token
+
+    return DummyResponse(
+        status_code=200,
+        payload={
+            "page": {"type": "consent"},
+            "continue_url": "https://auth.example.test/sign-in-with-chatgpt/codex/consent",
+        },
+        on_return=setter,
+    )
+
+
 def test_check_sentinel_sends_non_empty_pow(monkeypatch):
     session = QueueSession([
         ("POST", OPENAI_API_ENDPOINTS["sentinel"], DummyResponse(payload={"token": "sentinel-token"})),
@@ -349,6 +363,43 @@ def test_existing_account_login_uses_auto_sent_otp_without_manual_send(monkeypat
     assert len(email_service.otp_requests) == 1
     assert email_service.otp_requests[0]["otp_sent_at"] is not None
     assert result.metadata["token_acquired_via_relogin"] is False
+
+
+def test_existing_account_login_uses_consent_continue_url_when_workspace_cookie_missing(monkeypatch):
+    _patch_blacklist_query(monkeypatch)
+    session = QueueSession([
+        ("GET", "https://auth.example.test/flow/1", _response_with_did("did-1")),
+        (
+            "POST",
+            OPENAI_API_ENDPOINTS["signup"],
+            DummyResponse(payload={"page": {"type": OPENAI_PAGE_TYPES["EMAIL_OTP_VERIFICATION"]}}),
+        ),
+        ("POST", OPENAI_API_ENDPOINTS["validate_otp"], _response_with_consent_continue_url("session-no-workspace")),
+        (
+            "GET",
+            "https://auth.example.test/sign-in-with-chatgpt/codex/consent",
+            DummyResponse(
+                status_code=302,
+                headers={"Location": "http://localhost:1455/auth/callback?code=code-1&state=state-1"},
+            ),
+        ),
+    ])
+
+    email_service = FakeEmailService(["246810"])
+    engine = RegistrationEngine(email_service)
+    fake_oauth = FakeOAuthManager()
+    engine.http_client = FakeOpenAIClient([session], ["sentinel-1"])
+    engine.oauth_manager = fake_oauth
+
+    result = engine.run()
+
+    assert result.success is True
+    assert result.source == "login"
+    assert result.workspace_id == ""
+    assert result.session_token == "session-no-workspace"
+    assert fake_oauth.start_calls == 1
+    assert sum(1 for call in session.calls if call["url"] == OPENAI_API_ENDPOINTS["send_otp"]) == 0
+    assert sum(1 for call in session.calls if call["url"] == OPENAI_API_ENDPOINTS["select_workspace"]) == 0
 
 
 def test_run_create_email_step_returns_payload(monkeypatch):

@@ -351,22 +351,10 @@ class CodexgenPipelineRuntime:
         return {}
 
     def run_resolve_consent_and_workspace_step(self) -> dict[str, Any]:
-        workspace_id = self._engine._get_workspace_id()  # noqa: SLF001
-        if not workspace_id:
-            raise RuntimeError("workspace id missing")
-        continue_url = self._engine._select_workspace(workspace_id)  # noqa: SLF001
-        if not continue_url:
-            raise RuntimeError("select workspace failed")
-        callback_url = self._engine._follow_redirects(continue_url)  # noqa: SLF001
-        if not callback_url:
-            raise RuntimeError("oauth callback url missing")
-        return {
-            "metadata": {
-                "workspace_id": workspace_id,
-                "oauth_callback_url": callback_url,
-                "codexgen_consent_chain": True,
-            }
-        }
+        result = self._engine.run_resolve_consent_and_workspace_step()
+        metadata = dict(result.get("metadata") or {})
+        metadata["codexgen_consent_chain"] = True
+        return {"metadata": metadata}
 
     def run_exchange_oauth_token_step(self, *, callback_url: str | None) -> dict[str, Any]:
         if not callback_url:

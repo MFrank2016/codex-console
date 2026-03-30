@@ -307,9 +307,13 @@ class TempMailService(BaseEmailService):
                 if jwt:
                     response = self._make_request(
                         "GET",
-                        "/user_api/mails",
+                        "/api/mails",
                         params={"limit": 20, "offset": 0},
-                        headers={"x-user-token": jwt, "Content-Type": "application/json", "Accept": "application/json"},
+                        headers={
+                            "Authorization": f"Bearer {jwt}",
+                            "Content-Type": "application/json",
+                            "Accept": "application/json",
+                        },
                     )
                 else:
                     response = self._make_request(
