@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Callable, ContextManager, Dict, Optional
+from typing import Any, Callable, ContextManager, Dict, List, Optional
 
 from ..config.settings import get_settings
 from ..core.time import utc_now
+from ..database import crud
+from ..database.models import RegistrationTask
 from ..database.repositories import registration_failure_repository as failure_repo
 from .batch_registration_service import DEFAULT_BATCH_TASKS_STORE
 from .registration_query_dtos import (
@@ -40,7 +42,63 @@ class RegistrationQueryFacade:
         self.settings_reader = settings_reader
         self.batch_tasks = batch_tasks_store if batch_tasks_store is not None else DEFAULT_BATCH_TASKS_STORE
 
-    # Read-side scaffolding (not implemented yet)
+    def _step_run_to_dict(self, step_run: Any) -> Dict[str, Any]:
+        return {
+            "id": step_run.id,
+            "step_key": step_run.step_key,
+            "step_order": step_run.step_order,
+            "step_impl": step_run.step_impl,
+            "status": step_run.status,
+            "duration_ms": step_run.duration_ms,
+            "error_message": step_run.error_message,
+            "started_at": step_run.started_at.isoformat() if step_run.started_at else None,
+            "completed_at": step_run.completed_at.isoformat() if step_run.completed_at else None,
+        }
+
+    def _collect_task_steps(self, db: Any, task_uuid: str) -> List[Dict[str, Any]]:
+        step_rows = crud.get_pipeline_step_runs_by_task_uuid(db, task_uuid)
+        if step_rows:
+            return [self._step_run_to_dict(row) for row in step_rows]
+
+        if hasattr(self.task_manager, "get_task_steps"):
+            return self.task_manager.get_task_steps(task_uuid)
+        return []
+
+    def task_to_response(
+        self,
+        task: RegistrationTask,
+        *,
+        steps: Optional[List[Dict[str, Any]]] = None,
+    ) -> RegistrationTaskView:
+        result_payload = task.result if isinstance(task.result, dict) else {}
+        metadata = result_payload.get("metadata") if isinstance(result_payload, dict) else {}
+        proxy_ip = metadata.get("proxy_ip") if isinstance(metadata, dict) else None
+        email = str(task.email_address or result_payload.get("email") or "").strip() or None
+        view = RegistrationTaskView(
+            id=task.id,
+            task_uuid=task.task_uuid,
+            status=task.status,
+            steps=list(steps or []),
+            result=task.result,
+            logs=task.logs,
+        )
+        extra_fields = {
+            "email": email,
+            "email_service_id": task.email_service_id,
+            "pipeline_key": task.pipeline_key,
+            "current_step_key": task.current_step_key,
+            "pipeline_status": task.pipeline_status,
+            "total_duration_ms": task.total_duration_ms,
+            "proxy": task.proxy,
+            "proxy_ip": str(proxy_ip).strip() if proxy_ip else None,
+            "error_message": task.error_message,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        }
+        for field_name, field_value in extra_fields.items():
+            object.__setattr__(view, field_name, field_value)
+        return view
 
     def list_tasks(
         self,
@@ -49,16 +107,71 @@ class RegistrationQueryFacade:
         page_size: int,
         status: Optional[str],
     ) -> RegistrationTaskListView:
-        raise NotImplementedError("list_tasks is not implemented yet")
+        with self.db_factory() as db:
+            query = db.query(RegistrationTask)
+            if status:
+                query = query.filter(RegistrationTask.status == status)
+
+            total = query.count()
+            offset = (page - 1) * page_size
+            tasks = (
+                query.order_by(RegistrationTask.created_at.desc())
+                .offset(offset)
+                .limit(page_size)
+                .all()
+            )
+
+            return RegistrationTaskListView(
+                total=total,
+                tasks=[
+                    self.task_to_response(
+                        task,
+                        steps=self._collect_task_steps(db, task.task_uuid),
+                    )
+                    for task in tasks
+                ],
+            )
 
     def get_task_detail(self, task_uuid: str) -> Optional[RegistrationTaskView]:
-        raise NotImplementedError("get_task_detail is not implemented yet")
+        with self.db_factory() as db:
+            task = crud.get_registration_task(db, task_uuid)
+            if not task:
+                return None
+            return self.task_to_response(task, steps=self._collect_task_steps(db, task_uuid))
 
     def get_task_logs(self, task_uuid: str) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("get_task_logs is not implemented yet")
+        with self.db_factory() as db:
+            task = crud.get_registration_task(db, task_uuid)
+            if not task:
+                return None
+
+            logs = task.logs or ""
+            return {
+                "task_uuid": task_uuid,
+                "status": task.status,
+                "logs": logs.split("\n") if logs else [],
+            }
 
     def get_registration_stats(self) -> RegistrationStatsView:
-        raise NotImplementedError("get_registration_stats is not implemented yet")
+        from sqlalchemy import func
+
+        with self.db_factory() as db:
+            status_stats = (
+                db.query(
+                    RegistrationTask.status,
+                    func.count(RegistrationTask.id),
+                )
+                .group_by(RegistrationTask.status)
+                .all()
+            )
+            today = self.utc_now_provider().date()
+            today_count = db.query(func.count(RegistrationTask.id)).filter(
+                func.date(RegistrationTask.created_at) == today
+            ).scalar()
+            return RegistrationStatsView(
+                by_status={status: count for status, count in status_stats},
+                today_count=int(today_count or 0),
+            )
 
     def build_failure_summary(
         self,

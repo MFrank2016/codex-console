@@ -49,6 +49,7 @@ def test_registration_query_facade_list_tasks_prefers_runtime_steps_when_db_step
         temp_db, task_uuid="task-facade-1", pipeline_key="current_pipeline"
     )
     task_manager = FakeTaskManager()
+    task_manager.get_task_steps = lambda task_uuid: list(task_manager._task_steps.get(task_uuid, []))
     task_manager.set_task_steps(
         "task-facade-1",
         [{"step_key": "runtime-only", "status": "running"}],
@@ -65,3 +66,54 @@ def test_registration_query_facade_list_tasks_prefers_runtime_steps_when_db_step
     assert view.total == 1
     assert view.tasks[0].task_uuid == "task-facade-1"
     assert view.tasks[0].steps == [{"step_key": "runtime-only", "status": "running"}]
+
+
+def test_registration_query_facade_get_task_detail_returns_none_for_missing_task(db_factory):
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+    )
+
+    assert facade.get_task_detail("missing-task") is None
+
+
+def test_registration_query_facade_task_logs_keeps_legacy_split_lines(db_factory, temp_db):
+    task = crud.create_registration_task(temp_db, task_uuid="task-log-1")
+    crud.update_registration_task(temp_db, task.task_uuid, logs="line-1\nline-2")
+
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+    )
+
+    payload = facade.get_task_logs("task-log-1")
+    assert payload["task_uuid"] == "task-log-1"
+    assert payload["logs"] == ["line-1", "line-2"]
+
+
+def test_registration_query_facade_list_tasks_prefers_db_steps_over_runtime_when_rows_exist(
+    db_factory, temp_db
+):
+    task = crud.create_registration_task(temp_db, task_uuid="task-db-steps-1")
+    crud.create_pipeline_step_run(
+        temp_db,
+        task_uuid=task.task_uuid,
+        pipeline_key="current_pipeline",
+        step_key="db-step",
+        step_order=1,
+        step_impl="demo",
+        status="completed",
+    )
+    task_manager = FakeTaskManager()
+    task_manager.get_task_steps = lambda task_uuid: list(task_manager._task_steps.get(task_uuid, []))
+    task_manager.set_task_steps(
+        task.task_uuid,
+        [{"step_key": "runtime-step", "status": "running"}],
+        task_progress={"step_index": 1, "total_steps": 2, "progress_percent": 50},
+    )
+
+    facade = RegistrationQueryFacade(db_factory=db_factory, task_manager=task_manager)
+
+    view = facade.list_tasks(page=1, page_size=20, status=None)
+
+    assert view.tasks[0].steps[0]["step_key"] == "db-step"

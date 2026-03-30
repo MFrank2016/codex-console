@@ -273,55 +273,26 @@ class OutlookBatchRegistrationResponse(BaseModel):
 
 # ============== Helper Functions ==============
 
-def _step_run_to_dict(step_run) -> dict:
-    return {
-        "id": step_run.id,
-        "step_key": step_run.step_key,
-        "step_order": step_run.step_order,
-        "step_impl": step_run.step_impl,
-        "status": step_run.status,
-        "duration_ms": step_run.duration_ms,
-        "error_message": step_run.error_message,
-        "started_at": step_run.started_at.isoformat() if step_run.started_at else None,
-        "completed_at": step_run.completed_at.isoformat() if step_run.completed_at else None,
-    }
-
-
-def _collect_task_steps(db, task_uuid: str) -> List[dict]:
-    step_rows = crud.get_pipeline_step_runs_by_task_uuid(db, task_uuid)
-    if step_rows:
-        return [_step_run_to_dict(row) for row in step_rows]
-
-    if hasattr(task_manager, "get_task_steps"):
-        return task_manager.get_task_steps(task_uuid)
-    return []
-
-
-def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = None) -> RegistrationTaskResponse:
-    """转换任务模型为响应"""
-    result_payload = task.result if isinstance(task.result, dict) else {}
-    metadata = result_payload.get("metadata") if isinstance(result_payload, dict) else {}
-    proxy_ip = metadata.get("proxy_ip") if isinstance(metadata, dict) else None
-    email = str(task.email_address or result_payload.get("email") or "").strip() or None
+def _task_view_to_response(task_view: Any) -> RegistrationTaskResponse:
     return RegistrationTaskResponse(
-        id=task.id,
-        task_uuid=task.task_uuid,
-        status=task.status,
-        email=email,
-        email_service_id=task.email_service_id,
-        pipeline_key=task.pipeline_key,
-        current_step_key=task.current_step_key,
-        pipeline_status=task.pipeline_status,
-        total_duration_ms=task.total_duration_ms,
-        proxy=task.proxy,
-        proxy_ip=str(proxy_ip).strip() if proxy_ip else None,
-        logs=task.logs,
-        result=task.result,
-        error_message=task.error_message,
-        steps=list(steps or []),
-        created_at=task.created_at.isoformat() if task.created_at else None,
-        started_at=task.started_at.isoformat() if task.started_at else None,
-        completed_at=task.completed_at.isoformat() if task.completed_at else None,
+        id=task_view.id,
+        task_uuid=task_view.task_uuid,
+        status=task_view.status,
+        email=getattr(task_view, "email", None),
+        email_service_id=getattr(task_view, "email_service_id", None),
+        pipeline_key=getattr(task_view, "pipeline_key", None),
+        current_step_key=getattr(task_view, "current_step_key", None),
+        pipeline_status=getattr(task_view, "pipeline_status", None),
+        total_duration_ms=getattr(task_view, "total_duration_ms", None),
+        proxy=getattr(task_view, "proxy", None),
+        proxy_ip=getattr(task_view, "proxy_ip", None),
+        logs=getattr(task_view, "logs", None),
+        result=getattr(task_view, "result", None),
+        error_message=getattr(task_view, "error_message", None),
+        steps=list(getattr(task_view, "steps", []) or []),
+        created_at=getattr(task_view, "created_at", None),
+        started_at=getattr(task_view, "started_at", None),
+        completed_at=getattr(task_view, "completed_at", None),
     )
 
 
@@ -993,34 +964,24 @@ async def list_tasks(
     status: Optional[str] = Query(None),
 ):
     """获取任务列表"""
-    with get_db() as db:
-        query = db.query(RegistrationTask)
-
-        if status:
-            query = query.filter(RegistrationTask.status == status)
-
-        total = query.count()
-        offset = (page - 1) * page_size
-        tasks = query.order_by(RegistrationTask.created_at.desc()).offset(offset).limit(page_size).all()
-
-        response_tasks: List[RegistrationTaskResponse] = []
-        for task in tasks:
-            response_tasks.append(task_to_response(task, steps=_collect_task_steps(db, task.task_uuid)))
-
-        return TaskListResponse(
-            total=total,
-            tasks=response_tasks
-        )
+    view = _build_registration_query_facade().list_tasks(
+        page=page,
+        page_size=page_size,
+        status=status,
+    )
+    return TaskListResponse(
+        total=view.total,
+        tasks=[_task_view_to_response(task_view) for task_view in view.tasks],
+    )
 
 
 @router.get("/tasks/{task_uuid}", response_model=RegistrationTaskResponse)
 async def get_task(task_uuid: str):
     """获取任务详情"""
-    with get_db() as db:
-        task = crud.get_registration_task(db, task_uuid)
-        if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
-        return task_to_response(task, steps=_collect_task_steps(db, task_uuid))
+    task_view = _build_registration_query_facade().get_task_detail(task_uuid)
+    if not task_view:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return _task_view_to_response(task_view)
 
 
 @router.get("/tasks/{task_uuid}/logs")
@@ -1033,17 +994,10 @@ async def get_task_logs(task_uuid: str):
     - alias 底层委托给共享 realtime stream helper，本接口仅为旧页面/脚本保留
     - 不应再作为实时主来源
     """
-    with get_db() as db:
-        task = crud.get_registration_task(db, task_uuid)
-        if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
-
-        logs = task.logs or ""
-        return {
-            "task_uuid": task_uuid,
-            "status": task.status,
-            "logs": logs.split("\n") if logs else []
-        }
+    payload = _build_registration_query_facade().get_task_logs(task_uuid)
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
 
 
 @router.post("/tasks/{task_uuid}/cancel")
@@ -1081,25 +1035,11 @@ async def delete_task(task_uuid: str):
 @router.get("/stats")
 async def get_registration_stats():
     """获取注册统计信息"""
-    with get_db() as db:
-        from sqlalchemy import func
-
-        # 按状态统计
-        status_stats = db.query(
-            RegistrationTask.status,
-            func.count(RegistrationTask.id)
-        ).group_by(RegistrationTask.status).all()
-
-        # 今日注册数
-        today = utc_now_naive().date()
-        today_count = db.query(func.count(RegistrationTask.id)).filter(
-            func.date(RegistrationTask.created_at) == today
-        ).scalar()
-
-        return {
-            "by_status": {status: count for status, count in status_stats},
-            "today_count": today_count
-        }
+    stats = _build_registration_query_facade().get_registration_stats()
+    return {
+        "by_status": stats.by_status,
+        "today_count": stats.today_count,
+    }
 
 
 @router.get("/available-services")

@@ -328,6 +328,123 @@ def test_list_tasks_returns_proxy_ip_from_result_metadata(route_db):
     assert matched.proxy_ip == "7.7.7.7"
 
 
+def test_list_tasks_route_delegates_to_query_facade(monkeypatch):
+    captured: dict = {}
+
+    class FakeFacade:
+        def list_tasks(self, **kwargs):
+            captured.update(kwargs)
+            task_view = type(
+                "TaskView",
+                (),
+                {
+                    "id": 1,
+                    "task_uuid": "task-via-facade",
+                    "status": "pending",
+                    "steps": [],
+                    "result": None,
+                    "logs": None,
+                },
+            )()
+            return type("TaskListView", (), {"total": 1, "tasks": [task_view]})()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    response = asyncio.run(registration_routes.list_tasks(page=2, page_size=7, status="running"))
+
+    assert captured == {"page": 2, "page_size": 7, "status": "running"}
+    assert response.total == 1
+    assert response.tasks[0].task_uuid == "task-via-facade"
+
+
+def test_get_task_route_delegates_to_query_facade(monkeypatch):
+    captured: dict = {}
+
+    class FakeFacade:
+        def get_task_detail(self, task_uuid):
+            captured["task_uuid"] = task_uuid
+            view = type(
+                "TaskView",
+                (),
+                {
+                    "id": 2,
+                    "task_uuid": task_uuid,
+                    "status": "completed",
+                    "steps": [{"step_key": "done"}],
+                    "result": {"success": True},
+                    "logs": "line-1",
+                },
+            )()
+            return view
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    response = asyncio.run(registration_routes.get_task("task-via-facade"))
+
+    assert captured == {"task_uuid": "task-via-facade"}
+    assert response.task_uuid == "task-via-facade"
+    assert response.steps[0]["step_key"] == "done"
+
+
+def test_get_task_logs_route_delegates_to_query_facade(monkeypatch):
+    captured: dict = {}
+
+    class FakeFacade:
+        def get_task_logs(self, task_uuid):
+            captured["task_uuid"] = task_uuid
+            return {
+                "task_uuid": task_uuid,
+                "status": "running",
+                "logs": ["line-1", "line-2"],
+            }
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    payload = asyncio.run(registration_routes.get_task_logs("task-log-via-facade"))
+
+    assert captured == {"task_uuid": "task-log-via-facade"}
+    assert payload["logs"] == ["line-1", "line-2"]
+
+
+def test_registration_stats_route_delegates_to_query_facade(monkeypatch):
+    class FakeFacade:
+        def get_registration_stats(self):
+            return type(
+                "StatsView",
+                (),
+                {"by_status": {"pending": 3, "completed": 2}, "today_count": 5},
+            )()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    payload = asyncio.run(registration_routes.get_registration_stats())
+
+    assert payload == {
+        "by_status": {"pending": 3, "completed": 2},
+        "today_count": 5,
+    }
+
+
 class FakeTaskManager:
     def __init__(self):
         self._status = {}
