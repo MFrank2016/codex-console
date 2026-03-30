@@ -185,11 +185,12 @@ class RegistrationQueryFacade:
         *,
         failed_from_raw: Optional[str | datetime],
         failed_to_raw: Optional[str | datetime],
+        now: Optional[datetime] = None,
     ) -> tuple[datetime, datetime]:
         return resolve_failure_window(
             failed_from_raw=self._coerce_window_raw_value(failed_from_raw),
             failed_to_raw=self._coerce_window_raw_value(failed_to_raw),
-            now=self.utc_now_provider(),
+            now=now if now is not None else self.utc_now_provider(),
         )
 
     def _build_failure_filters(
@@ -265,9 +266,11 @@ class RegistrationQueryFacade:
         failed_from: Optional[str | datetime] = None,
         failed_to: Optional[str | datetime] = None,
     ) -> RegistrationFailureSummaryView:
+        now = self.utc_now_provider()
         window_from, window_to = self._resolve_failure_window(
             failed_from_raw=failed_from,
             failed_to_raw=failed_to,
+            now=now,
         )
         filters = self._build_failure_filters(
             pipeline_key=pipeline_key,
@@ -281,7 +284,6 @@ class RegistrationQueryFacade:
             failed_to=window_to,
         )
 
-        now = self.utc_now_provider()
         with self.db_factory() as db:
             summary = self.failure_repository.build_registration_failure_summary(
                 db,

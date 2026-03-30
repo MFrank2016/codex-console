@@ -287,6 +287,43 @@ def test_registration_query_facade_build_failure_summary_today_count_honors_prox
     assert summary.today_failed_attempts == 1
 
 
+def test_registration_query_facade_build_failure_summary_uses_single_now_for_window_and_today_count(
+    db_factory, temp_db
+):
+    _create_failure(
+        temp_db,
+        task_uuid="task-shanghai-day-edge",
+        failed_at=datetime(2026, 3, 28, 15, 30, 0),
+        email="edge@blocked.test",
+        email_suffix="blocked.test",
+    )
+
+    now_values = iter(
+        [
+            datetime(2026, 3, 28, 15, 59, 59, tzinfo=UTC),  # 上海 2026-03-28 23:59:59
+            datetime(2026, 3, 28, 16, 0, 1, tzinfo=UTC),  # 上海 2026-03-29 00:00:01
+        ]
+    )
+    provider_call_count = 0
+
+    def _utc_now_provider():
+        nonlocal provider_call_count
+        provider_call_count += 1
+        return next(now_values)
+
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        utc_now_provider=_utc_now_provider,
+    )
+
+    summary = facade.build_failure_summary()
+
+    assert summary.total_failed_attempts == 1
+    assert summary.today_failed_attempts == 1
+    assert provider_call_count == 1
+
+
 def test_registration_query_facade_list_failures_treats_naive_datetime_as_asia_shanghai(
     db_factory, temp_db
 ):
