@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, ContextManager, Dict, List, Optional
 
 from ..config.settings import get_settings
+from ..core.registration_failure_records import (
+    RegistrationFailureQuery,
+    current_shanghai_day_window_utc_naive,
+    resolve_failure_window,
+)
 from ..core.time import utc_now
 from ..database import crud
 from ..database.models import RegistrationTask
@@ -168,6 +173,85 @@ class RegistrationQueryFacade:
                 today_count=int(today_count or 0),
             )
 
+    def _coerce_window_raw_value(self, value: Optional[str | datetime]) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
+
+    def _resolve_failure_window(
+        self,
+        *,
+        failed_from_raw: Optional[str | datetime],
+        failed_to_raw: Optional[str | datetime],
+    ) -> tuple[datetime, datetime]:
+        return resolve_failure_window(
+            failed_from_raw=self._coerce_window_raw_value(failed_from_raw),
+            failed_to_raw=self._coerce_window_raw_value(failed_to_raw),
+            now=self.utc_now_provider(),
+        )
+
+    def _build_failure_filters(
+        self,
+        *,
+        pipeline_key: Optional[str],
+        registration_mode: Optional[str],
+        email_service_type: Optional[str],
+        email_suffix: Optional[str],
+        email_service_id: Optional[int],
+        proxy_ip: Optional[str],
+        error_keyword: Optional[str],
+        failed_from: datetime,
+        failed_to: datetime,
+    ) -> RegistrationFailureQuery:
+        return RegistrationFailureQuery(
+            pipeline_key=str(pipeline_key or "").strip() or None,
+            registration_mode=str(registration_mode or "").strip() or None,
+            email_service_type=str(email_service_type or "").strip() or None,
+            email_suffix=str(email_suffix or "").strip() or None,
+            email_service_id=int(email_service_id) if email_service_id is not None else None,
+            proxy_ip=str(proxy_ip or "").strip() or None,
+            error_keyword=str(error_keyword or "").strip() or None,
+            failed_from=failed_from,
+            failed_to=failed_to,
+        )
+
+    def _current_day_intersection_count(
+        self,
+        db: Any,
+        *,
+        now: datetime,
+        filters: RegistrationFailureQuery,
+    ) -> int:
+        day_start, day_end_exclusive = current_shanghai_day_window_utc_naive(now)
+        # repository 层使用 <= failed_to，因此这里把“次日 00:00:00 的开区间上界”
+        # 转成“当天 23:59:59.999999 的闭区间上界”，避免出现 off-by-one。
+        day_end_inclusive = day_end_exclusive - timedelta(microseconds=1)
+
+        effective_from = max(filters.failed_from, day_start) if filters.failed_from else day_start
+        effective_to = min(filters.failed_to, day_end_inclusive) if filters.failed_to else day_end_inclusive
+        if effective_from > effective_to:
+            return 0
+
+        today_filters = RegistrationFailureQuery(
+            pipeline_key=filters.pipeline_key,
+            registration_mode=filters.registration_mode,
+            email_service_type=filters.email_service_type,
+            email_suffix=filters.email_suffix,
+            email_service_id=filters.email_service_id,
+            proxy_ip=filters.proxy_ip,
+            error_keyword=filters.error_keyword,
+            failed_from=effective_from,
+            failed_to=effective_to,
+        )
+        return int(
+            self.failure_repository.count_registration_failure_records(
+                db,
+                filters=today_filters,
+            )
+        )
+
     def build_failure_summary(
         self,
         *,
@@ -178,10 +262,44 @@ class RegistrationQueryFacade:
         email_service_id: Optional[int] = None,
         proxy_ip: Optional[str] = None,
         error_keyword: Optional[str] = None,
-        failed_from: Optional[datetime] = None,
-        failed_to: Optional[datetime] = None,
+        failed_from: Optional[str | datetime] = None,
+        failed_to: Optional[str | datetime] = None,
     ) -> RegistrationFailureSummaryView:
-        raise NotImplementedError("build_failure_summary is not implemented yet")
+        window_from, window_to = self._resolve_failure_window(
+            failed_from_raw=failed_from,
+            failed_to_raw=failed_to,
+        )
+        filters = self._build_failure_filters(
+            pipeline_key=pipeline_key,
+            registration_mode=registration_mode,
+            email_service_type=email_service_type,
+            email_suffix=email_suffix,
+            email_service_id=email_service_id,
+            proxy_ip=proxy_ip,
+            error_keyword=error_keyword,
+            failed_from=window_from,
+            failed_to=window_to,
+        )
+
+        now = self.utc_now_provider()
+        with self.db_factory() as db:
+            summary = self.failure_repository.build_registration_failure_summary(
+                db,
+                filters=filters,
+            )
+            today_failed_attempts = self._current_day_intersection_count(
+                db,
+                now=now,
+                filters=filters,
+            )
+
+        return RegistrationFailureSummaryView(
+            total_failed_attempts=int(summary.get("total_failed_attempts", 0)),
+            top_email_suffixes=list(summary.get("top_email_suffixes", [])),
+            top_error_codes=list(summary.get("top_error_codes", [])),
+            top_proxy_ips=list(summary.get("top_proxy_ips", [])),
+            today_failed_attempts=today_failed_attempts,
+        )
 
     def list_failures(
         self,
@@ -193,12 +311,49 @@ class RegistrationQueryFacade:
         email_service_id: Optional[int] = None,
         proxy_ip: Optional[str] = None,
         error_keyword: Optional[str] = None,
-        failed_from: Optional[datetime] = None,
-        failed_to: Optional[datetime] = None,
+        failed_from: Optional[str | datetime] = None,
+        failed_to: Optional[str | datetime] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> RegistrationFailureListView:
-        raise NotImplementedError("list_failures is not implemented yet")
+        window_from, window_to = self._resolve_failure_window(
+            failed_from_raw=failed_from,
+            failed_to_raw=failed_to,
+        )
+        safe_page = max(1, int(page or 1))
+        safe_page_size = min(100, max(1, int(page_size or 20)))
+        filters = self._build_failure_filters(
+            pipeline_key=pipeline_key,
+            registration_mode=registration_mode,
+            email_service_type=email_service_type,
+            email_suffix=email_suffix,
+            email_service_id=email_service_id,
+            proxy_ip=proxy_ip,
+            error_keyword=error_keyword,
+            failed_from=window_from,
+            failed_to=window_to,
+        )
+
+        with self.db_factory() as db:
+            total = self.failure_repository.count_registration_failure_records(db, filters=filters)
+            items = self.failure_repository.list_registration_failure_records(
+                db,
+                filters=filters,
+                page=safe_page,
+                page_size=safe_page_size,
+            )
+
+        serialized_items: List[Dict[str, Any]] = []
+        for item in items:
+            if hasattr(item, "to_dict"):
+                serialized_items.append(item.to_dict())
+            else:
+                serialized_items.append(dict(item))
+
+        return RegistrationFailureListView(
+            total=int(total or 0),
+            items=serialized_items,
+        )
 
     def get_batch_status(self, batch_id: str) -> RegistrationBatchStatusView:
         raise NotImplementedError("get_batch_status is not implemented yet")

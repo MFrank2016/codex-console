@@ -7,6 +7,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.application.registration_query_dtos import (
+    RegistrationFailureListView,
+    RegistrationFailureSummaryView,
+)
 from src.database.models import Base
 from src.database.repositories import registration_failure_repository as failure_repo
 from src.database import session as session_module
@@ -402,3 +406,90 @@ def test_registration_failures_summary_filters_by_proxy_ip_and_email_service_id(
     body = response.json()
     assert body["total_failed_attempts"] == 2
     assert body["top_proxy_ips"][0] == {"value": "8.8.4.4", "count": 2}
+
+
+def test_registration_failures_summary_route_delegates_to_facade(client, auth_cookie, monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _FakeFacade:
+        def build_failure_summary(self, **kwargs):
+            captured.update(kwargs)
+            return RegistrationFailureSummaryView(
+                total_failed_attempts=3,
+                today_failed_attempts=2,
+                top_email_suffixes=[{"value": "blocked.test", "count": 3}],
+                top_error_codes=[{"value": "registration_disallowed", "count": 3}],
+                top_proxy_ips=[{"value": "8.8.8.8", "count": 3}],
+            )
+
+    def _boom_get_db():
+        raise AssertionError("route 不应直接调用 get_db")
+
+    monkeypatch.setattr(registration_routes, "get_db", _boom_get_db)
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: _FakeFacade())
+
+    response = client.get(
+        "/api/registration/failures/summary"
+        "?pipeline_key=current_pipeline"
+        "&failed_from=2026-03-28T00:00:00"
+        "&failed_to=2026-03-28T10:00:00",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["today_failed_attempts"] == 2
+    assert captured["pipeline_key"] == "current_pipeline"
+    assert captured["failed_from"] == "2026-03-28T00:00:00"
+    assert captured["failed_to"] == "2026-03-28T10:00:00"
+
+
+def test_registration_failures_list_route_delegates_to_facade_without_page_normalization(
+    client, auth_cookie, monkeypatch
+):
+    captured: dict[str, object] = {}
+
+    class _FakeFacade:
+        def list_failures(self, **kwargs):
+            captured.update(kwargs)
+            return RegistrationFailureListView(
+                total=7,
+                items=[{"id": 1, "task_uuid": "task-1", "attempt_no": 1, "pipeline_key": "current_pipeline", "registration_mode": "batch", "error_code": "proxy_error", "error_detail": "timeout"}],
+            )
+
+    def _boom_get_db():
+        raise AssertionError("route 不应直接调用 get_db")
+
+    monkeypatch.setattr(registration_routes, "get_db", _boom_get_db)
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: _FakeFacade())
+
+    response = client.get(
+        "/api/registration/failures?page=0&page_size=999&failed_from=2026-03-28T00:00:00",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 7
+    assert captured["page"] == 0
+    assert captured["page_size"] == 999
+    assert captured["failed_from"] == "2026-03-28T00:00:00"
+
+
+def test_registration_failures_routes_convert_facade_value_error_to_http_400(
+    client, auth_cookie, monkeypatch
+):
+    class _FakeFacade:
+        def build_failure_summary(self, **kwargs):
+            raise ValueError("bad summary window")
+
+        def list_failures(self, **kwargs):
+            raise ValueError("bad list window")
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: _FakeFacade())
+
+    summary_resp = client.get("/api/registration/failures/summary", cookies=auth_cookie)
+    list_resp = client.get("/api/registration/failures", cookies=auth_cookie)
+
+    assert summary_resp.status_code == 400
+    assert summary_resp.json()["detail"] == "bad summary window"
+    assert list_resp.status_code == 400
+    assert list_resp.json()["detail"] == "bad list window"

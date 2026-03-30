@@ -6,24 +6,18 @@ import asyncio
 import logging
 import uuid
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, List, Optional, Dict, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...database import crud
-from ...database.repositories import registration_failure_repository as failure_repo
 from ...database.session import get_db
 from ...database.models import RegistrationTask, Proxy
 from ...core.registration_batch_metrics import apply_task_outcome, build_domain_stats
 from ...core.registration_batch_stats import finalize_batch_statistics
 from ...core.registration_job import run_registration_job
-from ...core.registration_failure_records import (
-    RegistrationFailureQuery,
-    current_shanghai_day_window_utc_naive,
-    resolve_failure_window,
-)
 from ...application import (
     BatchRegistrationService,
     ProxyDispatchService,
@@ -100,6 +94,7 @@ def _build_registration_query_facade() -> RegistrationQueryFacade:
         db_factory=get_db,
         task_manager=task_manager,
         batch_tasks_store=batch_tasks,  # 测试中如需隔离，调用方应传入独立 dict 副本
+        utc_now_provider=utc_now,
     )
 
 
@@ -308,54 +303,6 @@ def snapshot_to_response(snapshot: RegistrationTaskSnapshot) -> RegistrationTask
     )
 
 
-def _build_failure_filters(
-    *,
-    pipeline_key: Optional[str],
-    registration_mode: Optional[str],
-    email_service_type: Optional[str],
-    email_suffix: Optional[str],
-    email_service_id: Optional[int],
-    proxy_ip: Optional[str],
-    error_keyword: Optional[str],
-    failed_from: datetime,
-    failed_to: datetime,
-) -> RegistrationFailureQuery:
-    return RegistrationFailureQuery(
-        pipeline_key=str(pipeline_key or "").strip() or None,
-        registration_mode=str(registration_mode or "").strip() or None,
-        email_service_type=str(email_service_type or "").strip() or None,
-        email_suffix=str(email_suffix or "").strip() or None,
-        email_service_id=int(email_service_id) if email_service_id is not None else None,
-        proxy_ip=str(proxy_ip or "").strip() or None,
-        error_keyword=str(error_keyword or "").strip() or None,
-        failed_from=failed_from,
-        failed_to=failed_to,
-    )
-
-
-def _current_day_intersection_count(db, *, now: datetime, filters: RegistrationFailureQuery) -> int:
-    day_start, day_end_exclusive = current_shanghai_day_window_utc_naive(now)
-    # repository 层使用 <= failed_to，因此这里把“次日 00:00:00 的开区间上界”
-    # 转成“当天 23:59:59.999999 的闭区间上界”，避免出现 off-by-one。
-    day_end_inclusive = day_end_exclusive - timedelta(microseconds=1)
-
-    effective_from = max(filters.failed_from, day_start) if filters.failed_from else day_start
-    effective_to = min(filters.failed_to, day_end_inclusive) if filters.failed_to else day_end_inclusive
-    if effective_from > effective_to:
-        return 0
-
-    today_filters = RegistrationFailureQuery(
-        pipeline_key=filters.pipeline_key,
-        registration_mode=filters.registration_mode,
-        email_service_type=filters.email_service_type,
-        email_suffix=filters.email_suffix,
-        error_keyword=filters.error_keyword,
-        failed_from=effective_from,
-        failed_to=effective_to,
-    )
-    return failure_repo.count_registration_failure_records(db, filters=today_filters)
-
-
 @router.get("/failures/summary", response_model=RegistrationFailureSummaryResponse)
 async def get_registration_failures_summary(
     request: Request,
@@ -370,35 +317,28 @@ async def get_registration_failures_summary(
     failed_to: Optional[str] = None,
 ):
     require_authenticated(request)
-    now = utc_now()
+    facade = _build_registration_query_facade()
     try:
-        window_from, window_to = resolve_failure_window(
-            failed_from_raw=failed_from,
-            failed_to_raw=failed_to,
-            now=now,
+        summary = facade.build_failure_summary(
+            pipeline_key=pipeline_key,
+            registration_mode=registration_mode,
+            email_service_type=email_service_type,
+            email_suffix=email_suffix,
+            email_service_id=email_service_id,
+            proxy_ip=proxy_ip,
+            error_keyword=error_keyword,
+            failed_from=failed_from,
+            failed_to=failed_to,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    filters = _build_failure_filters(
-        pipeline_key=pipeline_key,
-        registration_mode=registration_mode,
-        email_service_type=email_service_type,
-        email_suffix=email_suffix,
-        email_service_id=email_service_id,
-        proxy_ip=proxy_ip,
-        error_keyword=error_keyword,
-        failed_from=window_from,
-        failed_to=window_to,
-    )
-
-    with get_db() as db:
-        summary = failure_repo.build_registration_failure_summary(db, filters=filters)
-        today_failed_attempts = _current_day_intersection_count(db, now=now, filters=filters)
-
     return {
-        **summary,
-        "today_failed_attempts": today_failed_attempts,
+        "total_failed_attempts": summary.total_failed_attempts,
+        "today_failed_attempts": summary.today_failed_attempts,
+        "top_email_suffixes": summary.top_email_suffixes,
+        "top_error_codes": summary.top_error_codes,
+        "top_proxy_ips": summary.top_proxy_ips,
     }
 
 
@@ -418,41 +358,27 @@ async def get_registration_failures(
     page_size: int = 20,
 ):
     require_authenticated(request)
+    facade = _build_registration_query_facade()
     try:
-        window_from, window_to = resolve_failure_window(
-            failed_from_raw=failed_from,
-            failed_to_raw=failed_to,
-            now=utc_now(),
+        result = facade.list_failures(
+            pipeline_key=pipeline_key,
+            registration_mode=registration_mode,
+            email_service_type=email_service_type,
+            email_suffix=email_suffix,
+            email_service_id=email_service_id,
+            proxy_ip=proxy_ip,
+            error_keyword=error_keyword,
+            failed_from=failed_from,
+            failed_to=failed_to,
+            page=page,
+            page_size=page_size,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    safe_page = max(1, int(page or 1))
-    safe_page_size = min(100, max(1, int(page_size or 20)))
-    filters = _build_failure_filters(
-        pipeline_key=pipeline_key,
-        registration_mode=registration_mode,
-        email_service_type=email_service_type,
-        email_suffix=email_suffix,
-        email_service_id=email_service_id,
-        proxy_ip=proxy_ip,
-        error_keyword=error_keyword,
-        failed_from=window_from,
-        failed_to=window_to,
-    )
-
-    with get_db() as db:
-        total = failure_repo.count_registration_failure_records(db, filters=filters)
-        items = failure_repo.list_registration_failure_records(
-            db,
-            filters=filters,
-            page=safe_page,
-            page_size=safe_page_size,
-        )
-
     return {
-        "total": total,
-        "items": [item.to_dict() for item in items],
+        "total": result.total,
+        "items": result.items,
     }
 
 
