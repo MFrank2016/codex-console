@@ -328,6 +328,175 @@ def test_list_tasks_returns_proxy_ip_from_result_metadata(route_db):
     assert matched.proxy_ip == "7.7.7.7"
 
 
+def test_list_tasks_route_delegates_to_query_facade(monkeypatch):
+    captured: dict = {}
+
+    class FakeFacade:
+        def list_tasks(self, **kwargs):
+            captured.update(kwargs)
+            task_view = type(
+                "TaskView",
+                (),
+                {
+                    "id": 1,
+                    "task_uuid": "task-via-facade",
+                    "status": "pending",
+                    "email": None,
+                    "email_service_id": None,
+                    "pipeline_key": None,
+                    "current_step_key": None,
+                    "pipeline_status": None,
+                    "total_duration_ms": None,
+                    "proxy": None,
+                    "proxy_ip": None,
+                    "steps": [],
+                    "result": None,
+                    "logs": None,
+                    "error_message": None,
+                    "created_at": None,
+                    "started_at": None,
+                    "completed_at": None,
+                },
+            )()
+            return type("TaskListView", (), {"total": 1, "tasks": [task_view]})()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    response = asyncio.run(registration_routes.list_tasks(page=2, page_size=7, status="running"))
+
+    assert captured == {"page": 2, "page_size": 7, "status": "running"}
+    assert response.total == 1
+    assert response.tasks[0].task_uuid == "task-via-facade"
+
+
+def test_get_task_route_delegates_to_query_facade(monkeypatch):
+    captured: dict = {}
+
+    class FakeFacade:
+        def get_task_detail(self, task_uuid):
+            captured["task_uuid"] = task_uuid
+            view = type(
+                "TaskView",
+                (),
+                {
+                    "id": 2,
+                    "task_uuid": task_uuid,
+                    "status": "completed",
+                    "email": "demo@example.com",
+                    "email_service_id": 1,
+                    "pipeline_key": "current_pipeline",
+                    "current_step_key": "done",
+                    "pipeline_status": "completed",
+                    "total_duration_ms": 1000,
+                    "proxy": "http://proxy.example.com:8080",
+                    "proxy_ip": "1.1.1.1",
+                    "steps": [{"step_key": "done"}],
+                    "result": {"success": True},
+                    "logs": "line-1",
+                    "error_message": None,
+                    "created_at": "2026-03-30T00:00:00",
+                    "started_at": "2026-03-30T00:00:01",
+                    "completed_at": "2026-03-30T00:00:02",
+                },
+            )()
+            return view
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    response = asyncio.run(registration_routes.get_task("task-via-facade"))
+
+    assert captured == {"task_uuid": "task-via-facade"}
+    assert response.task_uuid == "task-via-facade"
+    assert response.steps[0]["step_key"] == "done"
+
+
+def test_get_task_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_task_detail(self, task_uuid):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_task("missing-task"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "任务不存在"
+
+
+def test_get_task_logs_route_delegates_to_query_facade(monkeypatch):
+    captured: dict = {}
+
+    class FakeFacade:
+        def get_task_logs(self, task_uuid):
+            captured["task_uuid"] = task_uuid
+            return {
+                "task_uuid": task_uuid,
+                "status": "running",
+                "logs": ["line-1", "line-2"],
+            }
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    payload = asyncio.run(registration_routes.get_task_logs("task-log-via-facade"))
+
+    assert captured == {"task_uuid": "task-log-via-facade"}
+    assert payload["logs"] == ["line-1", "line-2"]
+
+
+def test_get_task_logs_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_task_logs(self, task_uuid):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_task_logs("missing-task"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "任务不存在"
+
+
+def test_registration_stats_route_delegates_to_query_facade(monkeypatch):
+    class FakeFacade:
+        def get_registration_stats(self):
+            return type(
+                "StatsView",
+                (),
+                {"by_status": {"pending": 3, "completed": 2}, "today_count": 5},
+            )()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(
+        registration_routes,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("route should delegate to facade")),
+    )
+
+    payload = asyncio.run(registration_routes.get_registration_stats())
+
+    assert payload == {
+        "by_status": {"pending": 3, "completed": 2},
+        "today_count": 5,
+    }
+
+
 class FakeTaskManager:
     def __init__(self):
         self._status = {}
@@ -642,6 +811,119 @@ def test_get_batch_status_includes_unlimited_metadata(batch_state):
     assert result["stop_reason"] is None
     assert result["domain_stats"] == []
     assert result["started_at"] is not None
+
+
+def test_get_batch_status_route_delegates_to_query_facade(monkeypatch):
+    captured = {}
+
+    class FakeFacade:
+        def get_batch_status(self, batch_id):
+            captured["batch_id"] = batch_id
+            return type(
+                "BatchView",
+                (),
+                {
+                    "batch_id": batch_id,
+                    "payload": {
+                        "batch_id": batch_id,
+                        "total": 6,
+                        "completed": 4,
+                        "success": 3,
+                        "failed": 1,
+                        "current_index": 4,
+                        "cancelled": False,
+                        "finished": False,
+                        "started_at": "2026-03-30T10:00:00",
+                        "progress": "4/6",
+                        "is_unlimited": False,
+                        "consecutive_failures": 0,
+                        "max_consecutive_failures": 10,
+                        "stop_reason": None,
+                        "domain_stats": [{"domain": "gmail.com", "count": 3}],
+                    },
+                },
+            )()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    payload = asyncio.run(registration_routes.get_batch_status("batch-from-facade"))
+
+    assert captured == {"batch_id": "batch-from-facade"}
+    assert payload["batch_id"] == "batch-from-facade"
+    assert payload["progress"] == "4/6"
+    assert payload["is_unlimited"] is False
+
+
+def test_get_batch_status_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_batch_status(self, batch_id):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_batch_status("missing-batch"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "批量任务不存在"
+
+
+def test_get_outlook_batch_status_route_delegates_to_query_facade(monkeypatch):
+    captured = {}
+
+    class FakeFacade:
+        def get_outlook_batch_status(self, batch_id):
+            captured["batch_id"] = batch_id
+            return type(
+                "BatchView",
+                (),
+                {
+                    "batch_id": batch_id,
+                    "payload": {
+                        "batch_id": batch_id,
+                        "total": 8,
+                        "completed": 5,
+                        "success": 4,
+                        "failed": 1,
+                        "skipped": 2,
+                        "current_index": 5,
+                        "cancelled": False,
+                        "finished": False,
+                        "started_at": "2026-03-30T10:10:00",
+                        "logs": ["line-1"],
+                        "progress": "5/8",
+                        "domain_stats": [{"domain": "outlook.com", "count": 4}],
+                    },
+                },
+            )()
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    payload = asyncio.run(registration_routes.get_outlook_batch_status("outlook-batch-from-facade"))
+
+    assert captured == {"batch_id": "outlook-batch-from-facade"}
+    assert payload["progress"] == "5/8"
+    assert payload["skipped"] == 2
+    assert payload["logs"] == ["line-1"]
+    assert payload["domain_stats"] == [{"domain": "outlook.com", "count": 4}]
+
+
+def test_get_outlook_batch_status_route_returns_404_when_facade_returns_none(monkeypatch):
+    class FakeFacade:
+        def get_outlook_batch_status(self, batch_id):
+            return None
+
+    monkeypatch.setattr(registration_routes, "_build_registration_query_facade", lambda: FakeFacade())
+    monkeypatch.setattr(registration_routes, "batch_tasks", None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(registration_routes.get_outlook_batch_status("missing-outlook-batch"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "批量任务不存在"
 
 
 def test_run_sync_registration_task_persists_email_address_even_on_failure(route_db, fake_task_manager, monkeypatch):

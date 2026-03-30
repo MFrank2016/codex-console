@@ -5,26 +5,22 @@
 import asyncio
 import logging
 import uuid
-import random
-from datetime import datetime, timedelta
-from typing import Any, List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...database import crud
-from ...database.repositories import registration_failure_repository as failure_repo
 from ...database.session import get_db
-from ...database.models import RegistrationTask, Proxy
 from ...core.registration_batch_metrics import apply_task_outcome, build_domain_stats
 from ...core.registration_batch_stats import finalize_batch_statistics
 from ...core.registration_job import run_registration_job
-from ...core.registration_failure_records import (
-    RegistrationFailureQuery,
-    current_shanghai_day_window_utc_naive,
-    resolve_failure_window,
+from ...application import (
+    BatchRegistrationService,
+    ProxyDispatchService,
+    RegistrationQueryFacade,
+    RegistrationService,
 )
-from ...application import BatchRegistrationService, ProxyDispatchService, RegistrationService
 from ...application.registration_bootstrap_dtos import RegistrationTaskSnapshot
 from ...application.batch_registration_service import (
     DEFAULT_BATCH_PROXY_POOLS_STORE,
@@ -86,6 +82,18 @@ def _build_batch_registration_service() -> BatchRegistrationService:
         proxy_dispatcher=_build_proxy_dispatch_service(),
         utc_now_provider=utc_now_naive,
     )
+
+
+
+
+def _build_registration_query_facade() -> RegistrationQueryFacade:
+    return RegistrationQueryFacade(
+        db_factory=get_db,
+        task_manager=task_manager,
+        batch_tasks_store=batch_tasks,  # 测试中如需隔离，调用方应传入独立 dict 副本
+        utc_now_provider=utc_now,
+    )
+
 
 
 # ============== Pydantic Models ==============
@@ -257,55 +265,26 @@ class OutlookBatchRegistrationResponse(BaseModel):
 
 # ============== Helper Functions ==============
 
-def _step_run_to_dict(step_run) -> dict:
-    return {
-        "id": step_run.id,
-        "step_key": step_run.step_key,
-        "step_order": step_run.step_order,
-        "step_impl": step_run.step_impl,
-        "status": step_run.status,
-        "duration_ms": step_run.duration_ms,
-        "error_message": step_run.error_message,
-        "started_at": step_run.started_at.isoformat() if step_run.started_at else None,
-        "completed_at": step_run.completed_at.isoformat() if step_run.completed_at else None,
-    }
-
-
-def _collect_task_steps(db, task_uuid: str) -> List[dict]:
-    step_rows = crud.get_pipeline_step_runs_by_task_uuid(db, task_uuid)
-    if step_rows:
-        return [_step_run_to_dict(row) for row in step_rows]
-
-    if hasattr(task_manager, "get_task_steps"):
-        return task_manager.get_task_steps(task_uuid)
-    return []
-
-
-def task_to_response(task: RegistrationTask, *, steps: Optional[List[dict]] = None) -> RegistrationTaskResponse:
-    """转换任务模型为响应"""
-    result_payload = task.result if isinstance(task.result, dict) else {}
-    metadata = result_payload.get("metadata") if isinstance(result_payload, dict) else {}
-    proxy_ip = metadata.get("proxy_ip") if isinstance(metadata, dict) else None
-    email = str(task.email_address or result_payload.get("email") or "").strip() or None
+def _task_view_to_response(task_view: Any) -> RegistrationTaskResponse:
     return RegistrationTaskResponse(
-        id=task.id,
-        task_uuid=task.task_uuid,
-        status=task.status,
-        email=email,
-        email_service_id=task.email_service_id,
-        pipeline_key=task.pipeline_key,
-        current_step_key=task.current_step_key,
-        pipeline_status=task.pipeline_status,
-        total_duration_ms=task.total_duration_ms,
-        proxy=task.proxy,
-        proxy_ip=str(proxy_ip).strip() if proxy_ip else None,
-        logs=task.logs,
-        result=task.result,
-        error_message=task.error_message,
-        steps=list(steps or []),
-        created_at=task.created_at.isoformat() if task.created_at else None,
-        started_at=task.started_at.isoformat() if task.started_at else None,
-        completed_at=task.completed_at.isoformat() if task.completed_at else None,
+        id=task_view.id,
+        task_uuid=task_view.task_uuid,
+        status=task_view.status,
+        email=task_view.email,
+        email_service_id=task_view.email_service_id,
+        pipeline_key=task_view.pipeline_key,
+        current_step_key=task_view.current_step_key,
+        pipeline_status=task_view.pipeline_status,
+        total_duration_ms=task_view.total_duration_ms,
+        proxy=task_view.proxy,
+        proxy_ip=task_view.proxy_ip,
+        logs=task_view.logs,
+        result=task_view.result,
+        error_message=task_view.error_message,
+        steps=list(task_view.steps or []),
+        created_at=task_view.created_at,
+        started_at=task_view.started_at,
+        completed_at=task_view.completed_at,
     )
 
 
@@ -319,54 +298,6 @@ def snapshot_to_response(snapshot: RegistrationTaskSnapshot) -> RegistrationTask
         pipeline_key=snapshot.pipeline_key,
         proxy=snapshot.proxy,
     )
-
-
-def _build_failure_filters(
-    *,
-    pipeline_key: Optional[str],
-    registration_mode: Optional[str],
-    email_service_type: Optional[str],
-    email_suffix: Optional[str],
-    email_service_id: Optional[int],
-    proxy_ip: Optional[str],
-    error_keyword: Optional[str],
-    failed_from: datetime,
-    failed_to: datetime,
-) -> RegistrationFailureQuery:
-    return RegistrationFailureQuery(
-        pipeline_key=str(pipeline_key or "").strip() or None,
-        registration_mode=str(registration_mode or "").strip() or None,
-        email_service_type=str(email_service_type or "").strip() or None,
-        email_suffix=str(email_suffix or "").strip() or None,
-        email_service_id=int(email_service_id) if email_service_id is not None else None,
-        proxy_ip=str(proxy_ip or "").strip() or None,
-        error_keyword=str(error_keyword or "").strip() or None,
-        failed_from=failed_from,
-        failed_to=failed_to,
-    )
-
-
-def _current_day_intersection_count(db, *, now: datetime, filters: RegistrationFailureQuery) -> int:
-    day_start, day_end_exclusive = current_shanghai_day_window_utc_naive(now)
-    # repository 层使用 <= failed_to，因此这里把“次日 00:00:00 的开区间上界”
-    # 转成“当天 23:59:59.999999 的闭区间上界”，避免出现 off-by-one。
-    day_end_inclusive = day_end_exclusive - timedelta(microseconds=1)
-
-    effective_from = max(filters.failed_from, day_start) if filters.failed_from else day_start
-    effective_to = min(filters.failed_to, day_end_inclusive) if filters.failed_to else day_end_inclusive
-    if effective_from > effective_to:
-        return 0
-
-    today_filters = RegistrationFailureQuery(
-        pipeline_key=filters.pipeline_key,
-        registration_mode=filters.registration_mode,
-        email_service_type=filters.email_service_type,
-        email_suffix=filters.email_suffix,
-        error_keyword=filters.error_keyword,
-        failed_from=effective_from,
-        failed_to=effective_to,
-    )
-    return failure_repo.count_registration_failure_records(db, filters=today_filters)
 
 
 @router.get("/failures/summary", response_model=RegistrationFailureSummaryResponse)
@@ -383,35 +314,28 @@ async def get_registration_failures_summary(
     failed_to: Optional[str] = None,
 ):
     require_authenticated(request)
-    now = utc_now()
+    facade = _build_registration_query_facade()
     try:
-        window_from, window_to = resolve_failure_window(
-            failed_from_raw=failed_from,
-            failed_to_raw=failed_to,
-            now=now,
+        summary = facade.build_failure_summary(
+            pipeline_key=pipeline_key,
+            registration_mode=registration_mode,
+            email_service_type=email_service_type,
+            email_suffix=email_suffix,
+            email_service_id=email_service_id,
+            proxy_ip=proxy_ip,
+            error_keyword=error_keyword,
+            failed_from=failed_from,
+            failed_to=failed_to,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    filters = _build_failure_filters(
-        pipeline_key=pipeline_key,
-        registration_mode=registration_mode,
-        email_service_type=email_service_type,
-        email_suffix=email_suffix,
-        email_service_id=email_service_id,
-        proxy_ip=proxy_ip,
-        error_keyword=error_keyword,
-        failed_from=window_from,
-        failed_to=window_to,
-    )
-
-    with get_db() as db:
-        summary = failure_repo.build_registration_failure_summary(db, filters=filters)
-        today_failed_attempts = _current_day_intersection_count(db, now=now, filters=filters)
-
     return {
-        **summary,
-        "today_failed_attempts": today_failed_attempts,
+        "total_failed_attempts": summary.total_failed_attempts,
+        "today_failed_attempts": summary.today_failed_attempts,
+        "top_email_suffixes": summary.top_email_suffixes,
+        "top_error_codes": summary.top_error_codes,
+        "top_proxy_ips": summary.top_proxy_ips,
     }
 
 
@@ -431,41 +355,27 @@ async def get_registration_failures(
     page_size: int = 20,
 ):
     require_authenticated(request)
+    facade = _build_registration_query_facade()
     try:
-        window_from, window_to = resolve_failure_window(
-            failed_from_raw=failed_from,
-            failed_to_raw=failed_to,
-            now=utc_now(),
+        result = facade.list_failures(
+            pipeline_key=pipeline_key,
+            registration_mode=registration_mode,
+            email_service_type=email_service_type,
+            email_suffix=email_suffix,
+            email_service_id=email_service_id,
+            proxy_ip=proxy_ip,
+            error_keyword=error_keyword,
+            failed_from=failed_from,
+            failed_to=failed_to,
+            page=page,
+            page_size=page_size,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    safe_page = max(1, int(page or 1))
-    safe_page_size = min(100, max(1, int(page_size or 20)))
-    filters = _build_failure_filters(
-        pipeline_key=pipeline_key,
-        registration_mode=registration_mode,
-        email_service_type=email_service_type,
-        email_suffix=email_suffix,
-        email_service_id=email_service_id,
-        proxy_ip=proxy_ip,
-        error_keyword=error_keyword,
-        failed_from=window_from,
-        failed_to=window_to,
-    )
-
-    with get_db() as db:
-        total = failure_repo.count_registration_failure_records(db, filters=filters)
-        items = failure_repo.list_registration_failure_records(
-            db,
-            filters=filters,
-            page=safe_page,
-            page_size=safe_page_size,
-        )
-
     return {
-        "total": total,
-        "items": [item.to_dict() for item in items],
+        "total": result.total,
+        "items": result.items,
     }
 
 
@@ -932,27 +842,10 @@ async def start_batch_registration(
 @router.get("/batch/{batch_id}")
 async def get_batch_status(batch_id: str):
     """获取批量任务状态"""
-    if batch_id not in batch_tasks:
+    view = _build_registration_query_facade().get_batch_status(batch_id)
+    if view is None:
         raise HTTPException(status_code=404, detail="批量任务不存在")
-
-    batch = batch_tasks[batch_id]
-    return {
-        "batch_id": batch_id,
-        "total": batch["total"],
-        "completed": batch["completed"],
-        "success": batch["success"],
-        "failed": batch["failed"],
-        "current_index": batch["current_index"],
-        "cancelled": batch["cancelled"],
-        "finished": batch.get("finished", False),
-        "started_at": batch.get("started_at"),
-        "progress": f"{batch['completed']}/{batch['total']}",
-        "is_unlimited": batch.get("is_unlimited", False),
-        "consecutive_failures": batch.get("consecutive_failures", 0),
-        "max_consecutive_failures": batch.get("max_consecutive_failures", 10),
-        "stop_reason": batch.get("stop_reason"),
-        "domain_stats": batch.get("domain_stats", []),
-    }
+    return view.payload
 
 
 @router.post("/batch/{batch_id}/cancel")
@@ -977,34 +870,24 @@ async def list_tasks(
     status: Optional[str] = Query(None),
 ):
     """获取任务列表"""
-    with get_db() as db:
-        query = db.query(RegistrationTask)
-
-        if status:
-            query = query.filter(RegistrationTask.status == status)
-
-        total = query.count()
-        offset = (page - 1) * page_size
-        tasks = query.order_by(RegistrationTask.created_at.desc()).offset(offset).limit(page_size).all()
-
-        response_tasks: List[RegistrationTaskResponse] = []
-        for task in tasks:
-            response_tasks.append(task_to_response(task, steps=_collect_task_steps(db, task.task_uuid)))
-
-        return TaskListResponse(
-            total=total,
-            tasks=response_tasks
-        )
+    view = _build_registration_query_facade().list_tasks(
+        page=page,
+        page_size=page_size,
+        status=status,
+    )
+    return TaskListResponse(
+        total=view.total,
+        tasks=[_task_view_to_response(task_view) for task_view in view.tasks],
+    )
 
 
 @router.get("/tasks/{task_uuid}", response_model=RegistrationTaskResponse)
 async def get_task(task_uuid: str):
     """获取任务详情"""
-    with get_db() as db:
-        task = crud.get_registration_task(db, task_uuid)
-        if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
-        return task_to_response(task, steps=_collect_task_steps(db, task_uuid))
+    task_view = _build_registration_query_facade().get_task_detail(task_uuid)
+    if task_view is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return _task_view_to_response(task_view)
 
 
 @router.get("/tasks/{task_uuid}/logs")
@@ -1017,17 +900,10 @@ async def get_task_logs(task_uuid: str):
     - alias 底层委托给共享 realtime stream helper，本接口仅为旧页面/脚本保留
     - 不应再作为实时主来源
     """
-    with get_db() as db:
-        task = crud.get_registration_task(db, task_uuid)
-        if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
-
-        logs = task.logs or ""
-        return {
-            "task_uuid": task_uuid,
-            "status": task.status,
-            "logs": logs.split("\n") if logs else []
-        }
+    payload = _build_registration_query_facade().get_task_logs(task_uuid)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
 
 
 @router.post("/tasks/{task_uuid}/cancel")
@@ -1065,25 +941,11 @@ async def delete_task(task_uuid: str):
 @router.get("/stats")
 async def get_registration_stats():
     """获取注册统计信息"""
-    with get_db() as db:
-        from sqlalchemy import func
-
-        # 按状态统计
-        status_stats = db.query(
-            RegistrationTask.status,
-            func.count(RegistrationTask.id)
-        ).group_by(RegistrationTask.status).all()
-
-        # 今日注册数
-        today = utc_now_naive().date()
-        today_count = db.query(func.count(RegistrationTask.id)).filter(
-            func.date(RegistrationTask.created_at) == today
-        ).scalar()
-
-        return {
-            "by_status": {status: count for status, count in status_stats},
-            "today_count": today_count
-        }
+    stats = _build_registration_query_facade().get_registration_stats()
+    return {
+        "by_status": stats.by_status,
+        "today_count": stats.today_count,
+    }
 
 
 @router.get("/available-services")
@@ -1096,179 +958,7 @@ async def get_available_email_services():
     - outlook: 已导入的 Outlook 账户
     - moe_mail: 已配置的自定义域名服务
     """
-    from ...database.models import EmailService as EmailServiceModel
-    from ...config.settings import get_settings
-
-    settings = get_settings()
-    result = {
-        "tempmail": {
-            "available": True,
-            "count": 1,
-            "services": [{
-                "id": None,
-                "name": "Tempmail.lol",
-                "type": "tempmail",
-                "description": "临时邮箱，自动创建"
-            }]
-        },
-        "outlook": {
-            "available": False,
-            "count": 0,
-            "services": []
-        },
-        "moe_mail": {
-            "available": False,
-            "count": 0,
-            "services": []
-        },
-        "temp_mail": {
-            "available": False,
-            "count": 0,
-            "services": []
-        },
-        "duck_mail": {
-            "available": False,
-            "count": 0,
-            "services": []
-        },
-        "freemail": {
-            "available": False,
-            "count": 0,
-            "services": []
-        },
-        "imap_mail": {
-            "available": False,
-            "count": 0,
-            "services": []
-        }
-    }
-
-    with get_db() as db:
-        # 获取 Outlook 账户
-        outlook_services = db.query(EmailServiceModel).filter(
-            EmailServiceModel.service_type == "outlook",
-            EmailServiceModel.enabled == True
-        ).order_by(EmailServiceModel.priority.asc()).all()
-
-        for service in outlook_services:
-            config = service.config or {}
-            result["outlook"]["services"].append({
-                "id": service.id,
-                "name": service.name,
-                "type": "outlook",
-                "has_oauth": bool(config.get("client_id") and config.get("refresh_token")),
-                "priority": service.priority
-            })
-
-        result["outlook"]["count"] = len(outlook_services)
-        result["outlook"]["available"] = len(outlook_services) > 0
-
-        # 获取自定义域名服务
-        custom_services = db.query(EmailServiceModel).filter(
-            EmailServiceModel.service_type == "moe_mail",
-            EmailServiceModel.enabled == True
-        ).order_by(EmailServiceModel.priority.asc()).all()
-
-        for service in custom_services:
-            config = service.config or {}
-            result["moe_mail"]["services"].append({
-                "id": service.id,
-                "name": service.name,
-                "type": "moe_mail",
-                "default_domain": config.get("default_domain"),
-                "priority": service.priority
-            })
-
-        result["moe_mail"]["count"] = len(custom_services)
-        result["moe_mail"]["available"] = len(custom_services) > 0
-
-        # 如果数据库中没有自定义域名服务，检查 settings
-        if not result["moe_mail"]["available"]:
-            if settings.custom_domain_base_url and settings.custom_domain_api_key:
-                result["moe_mail"]["available"] = True
-                result["moe_mail"]["count"] = 1
-                result["moe_mail"]["services"].append({
-                    "id": None,
-                    "name": "默认自定义域名服务",
-                    "type": "moe_mail",
-                    "from_settings": True
-                })
-
-        # 获取 TempMail 服务（自部署 Cloudflare Worker 临时邮箱）
-        temp_mail_services = db.query(EmailServiceModel).filter(
-            EmailServiceModel.service_type == "temp_mail",
-            EmailServiceModel.enabled == True
-        ).order_by(EmailServiceModel.priority.asc()).all()
-
-        for service in temp_mail_services:
-            config = service.config or {}
-            result["temp_mail"]["services"].append({
-                "id": service.id,
-                "name": service.name,
-                "type": "temp_mail",
-                "domain": config.get("domain"),
-                "priority": service.priority
-            })
-
-        result["temp_mail"]["count"] = len(temp_mail_services)
-        result["temp_mail"]["available"] = len(temp_mail_services) > 0
-
-        duck_mail_services = db.query(EmailServiceModel).filter(
-            EmailServiceModel.service_type == "duck_mail",
-            EmailServiceModel.enabled == True
-        ).order_by(EmailServiceModel.priority.asc()).all()
-
-        for service in duck_mail_services:
-            config = service.config or {}
-            result["duck_mail"]["services"].append({
-                "id": service.id,
-                "name": service.name,
-                "type": "duck_mail",
-                "default_domain": config.get("default_domain"),
-                "priority": service.priority
-            })
-
-        result["duck_mail"]["count"] = len(duck_mail_services)
-        result["duck_mail"]["available"] = len(duck_mail_services) > 0
-
-        freemail_services = db.query(EmailServiceModel).filter(
-            EmailServiceModel.service_type == "freemail",
-            EmailServiceModel.enabled == True
-        ).order_by(EmailServiceModel.priority.asc()).all()
-
-        for service in freemail_services:
-            config = service.config or {}
-            result["freemail"]["services"].append({
-                "id": service.id,
-                "name": service.name,
-                "type": "freemail",
-                "domain": config.get("domain"),
-                "priority": service.priority
-            })
-
-        result["freemail"]["count"] = len(freemail_services)
-        result["freemail"]["available"] = len(freemail_services) > 0
-
-        imap_mail_services = db.query(EmailServiceModel).filter(
-            EmailServiceModel.service_type == "imap_mail",
-            EmailServiceModel.enabled == True
-        ).order_by(EmailServiceModel.priority.asc()).all()
-
-        for service in imap_mail_services:
-            config = service.config or {}
-            result["imap_mail"]["services"].append({
-                "id": service.id,
-                "name": service.name,
-                "type": "imap_mail",
-                "email": config.get("email"),
-                "host": config.get("host"),
-                "priority": service.priority
-            })
-
-        result["imap_mail"]["count"] = len(imap_mail_services)
-        result["imap_mail"]["available"] = len(imap_mail_services) > 0
-
-    return result
+    return _build_registration_query_facade().get_available_email_services()
 
 
 # ============== Outlook 批量注册 API ==============
@@ -1280,50 +970,8 @@ async def get_outlook_accounts_for_registration():
 
     返回所有已启用的 Outlook 服务，并检查每个邮箱是否已在 accounts 表中注册
     """
-    from ...database.models import EmailService as EmailServiceModel
-    from ...database.models import Account
-
-    with get_db() as db:
-        # 获取所有启用的 Outlook 服务
-        outlook_services = db.query(EmailServiceModel).filter(
-            EmailServiceModel.service_type == "outlook",
-            EmailServiceModel.enabled == True
-        ).order_by(EmailServiceModel.priority.asc()).all()
-
-        accounts = []
-        registered_count = 0
-        unregistered_count = 0
-
-        for service in outlook_services:
-            config = service.config or {}
-            email = config.get("email") or service.name
-
-            # 检查是否已注册（查询 accounts 表）
-            existing_account = db.query(Account).filter(
-                Account.email == email
-            ).first()
-
-            is_registered = existing_account is not None
-            if is_registered:
-                registered_count += 1
-            else:
-                unregistered_count += 1
-
-            accounts.append(OutlookAccountForRegistration(
-                id=service.id,
-                email=email,
-                name=service.name,
-                has_oauth=bool(config.get("client_id") and config.get("refresh_token")),
-                is_registered=is_registered,
-                registered_account_id=existing_account.id if existing_account else None
-            ))
-
-        return OutlookAccountsListResponse(
-            total=len(accounts),
-            registered_count=registered_count,
-            unregistered_count=unregistered_count,
-            accounts=accounts
-        )
+    payload = _build_registration_query_facade().get_outlook_accounts_for_registration()
+    return OutlookAccountsListResponse(**payload)
 
 
 async def run_outlook_batch_registration(
@@ -1446,25 +1094,10 @@ async def start_outlook_batch_registration(
 @router.get("/outlook-batch/{batch_id}")
 async def get_outlook_batch_status(batch_id: str):
     """获取 Outlook 批量任务状态"""
-    if batch_id not in batch_tasks:
+    view = _build_registration_query_facade().get_outlook_batch_status(batch_id)
+    if view is None:
         raise HTTPException(status_code=404, detail="批量任务不存在")
-
-    batch = batch_tasks[batch_id]
-    return {
-        "batch_id": batch_id,
-        "total": batch["total"],
-        "completed": batch["completed"],
-        "success": batch["success"],
-        "failed": batch["failed"],
-        "skipped": batch.get("skipped", 0),
-        "current_index": batch["current_index"],
-        "cancelled": batch["cancelled"],
-        "finished": batch.get("finished", False),
-        "started_at": batch.get("started_at"),
-        "logs": batch.get("logs", []),
-        "progress": f"{batch['completed']}/{batch['total']}",
-        "domain_stats": batch.get("domain_stats", []),
-    }
+    return view.payload
 
 
 @router.post("/outlook-batch/{batch_id}/cancel")
