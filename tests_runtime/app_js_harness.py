@@ -379,6 +379,18 @@ const context = {{
             {{ value: '1.1.1.1', count: 5 }},
             {{ value: 'unknown', count: 2 }},
           ],
+          top_failure_stages: [
+            {{ value: searchParams.get('failure_stage') || 'submit_login_password', count: 7 }},
+            {{ value: 'exchange_oauth_token', count: 5 }},
+          ],
+          top_step_keys: [
+            {{ value: searchParams.get('step_key') || 'submit_login_password', count: 7 }},
+            {{ value: 'exchange_oauth_token', count: 5 }},
+          ],
+          retryable_breakdown: [
+            {{ value: searchParams.get('retryable') === 'true' ? 'retryable' : 'non_retryable', count: 7 }},
+            {{ value: 'non_retryable', count: 5 }},
+          ],
         }};
       }}
 
@@ -396,6 +408,9 @@ const context = {{
               email_suffix: 'blocked.test',
               email_service_id: Number(searchParams.get('email_service_id') || 42),
               proxy_ip: '1.1.1.1',
+              failure_stage: searchParams.get('failure_stage') || 'submit_login_password',
+              step_key: searchParams.get('step_key') || 'submit_login_password',
+              retryable: searchParams.get('retryable') !== 'false',
               error_code: 'registration_disallowed',
               error_detail: 'blocked by upstream',
               failed_at: '2026-03-28T10:00:00Z',
@@ -1437,6 +1452,9 @@ async function runScenario() {{
       getElement('failure-filter-email-suffix').value = 'blocked.test';
       getElement('failure-filter-email-service-id').value = '42';
       getElement('failure-filter-proxy-ip').value = '8.8.8.8';
+      getElement('failure-filter-failure-stage').value = 'submit_login_password';
+      getElement('failure-filter-step-key').value = 'submit_login_password';
+      getElement('failure-filter-retryable').value = 'true';
       getElement('failure-filter-error-keyword').value = 'registration_disallowed';
 
       await exported.loadRegistrationFailureAnalysis();
@@ -1444,6 +1462,8 @@ async function runScenario() {{
       return {{
         api_get_paths: logs.apiGetPaths.slice(),
         summary_total_text: getElement('failure-total-attempts').textContent,
+        top_failure_stages_html: getElement('failure-top-failure-stages').innerHTML,
+        retryable_breakdown_html: getElement('failure-retryable-breakdown').innerHTML,
         table_html: getElement('registration-failure-table-body').innerHTML,
         page_indicator: getElement('failure-page-indicator').textContent,
       }};
@@ -1468,6 +1488,9 @@ async function runScenario() {{
           email_suffix: 'blocked.test',
           email_service_id: 42,
           proxy_ip: '1.1.1.1',
+          failure_stage: 'submit_login_password',
+          step_key: 'submit_login_password',
+          retryable: true,
           error_code: 'unknown',
           error_detail: `HTTP 429: ${{malicious}} Rate limit exceeded`,
           failed_at: '2026-03-28T10:00:00Z',

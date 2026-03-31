@@ -6,6 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .email_suffix_blacklist import RegistrationDisallowedSuffixError, extract_email_suffix
+from .pipeline.errors import PipelineStepExecutionError
 
 SENSITIVE_RESULT_KEYS = {
     "access_token",
@@ -25,6 +26,9 @@ class RegistrationFailureQuery:
     email_suffix: str | None = None
     email_service_id: int | None = None
     proxy_ip: str | None = None
+    failure_stage: str | None = None
+    step_key: str | None = None
+    retryable: bool | None = None
     error_keyword: str | None = None
     failed_from: datetime | None = None
     failed_to: datetime | None = None
@@ -44,6 +48,9 @@ class RegistrationFailureWritePayload:
     birthdate: str | None
     proxy: str | None
     proxy_ip: str | None
+    failure_stage: str | None
+    step_key: str | None
+    retryable: bool
     error_code: str
     error_detail: str
     failed_at: datetime
@@ -150,6 +157,18 @@ def classify_failure_error(
     return "unknown"
 
 
+def extract_structured_failure_from_exception(
+    exc: Exception | None,
+) -> tuple[str | None, str | None, bool]:
+    if isinstance(exc, PipelineStepExecutionError):
+        return (
+            str(exc.context.failure_stage or "").strip() or None,
+            str(exc.context.step_key or "").strip() or None,
+            bool(exc.context.retryable),
+        )
+    return None, None, False
+
+
 def extract_failure_profile(*, engine: Any | None = None, result_payload: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
     source = getattr(engine, "_engine", engine) if engine is not None else None
     profile = None
@@ -190,6 +209,9 @@ def build_failure_write_payload(
     error_message: str | None,
     result_payload: dict[str, Any] | None,
     engine: Any | None,
+    failure_stage: str | None = None,
+    step_key: str | None = None,
+    retryable: bool = False,
     exc: Exception | None = None,
     failed_at: datetime,
 ) -> RegistrationFailureWritePayload | None:
@@ -202,6 +224,7 @@ def build_failure_write_payload(
     proxy_ip = extract_failure_proxy_ip(engine=engine, result_payload=result_payload)
     detail = truncate_error_detail(error_message)
     error_code = classify_failure_error(result_payload=result_payload, error_message=error_message, exc=exc)
+    extracted_failure_stage, extracted_step_key, extracted_retryable = extract_structured_failure_from_exception(exc)
 
     extra_json: dict[str, Any] = {
         "result_payload": redact_result_payload(result_payload or {}),
@@ -222,6 +245,9 @@ def build_failure_write_payload(
         birthdate=birthdate,
         proxy=str(proxy or "").strip() or None,
         proxy_ip=proxy_ip,
+        failure_stage=str(failure_stage or extracted_failure_stage or "").strip() or None,
+        step_key=str(step_key or extracted_step_key or "").strip() or None,
+        retryable=bool(retryable or extracted_retryable),
         error_code=error_code,
         error_detail=detail,
         failed_at=failed_at,
@@ -249,6 +275,9 @@ def write_registration_failure_record(session, payload: RegistrationFailureWrite
         birthdate=payload.birthdate,
         proxy=payload.proxy,
         proxy_ip=payload.proxy_ip,
+        failure_stage=payload.failure_stage,
+        step_key=payload.step_key,
+        retryable=payload.retryable,
         error_code=payload.error_code,
         error_detail=payload.error_detail,
         failed_at=payload.failed_at,

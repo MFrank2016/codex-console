@@ -192,6 +192,9 @@ class RegistrationFailureRecord(Base):
     birthdate = Column(String(32))
     proxy = Column(String(255))
     proxy_ip = Column(String(64))
+    failure_stage = Column(String(64), index=True)
+    step_key = Column(String(64), index=True)
+    retryable = Column(Boolean, nullable=False, default=False)
     error_code = Column(String(64), nullable=False)
     error_detail = Column(Text, nullable=False)
     failed_at = Column(DateTime, nullable=False, index=True)
@@ -214,6 +217,9 @@ class RegistrationFailureRecord(Base):
             "birthdate": self.birthdate,
             "proxy": self.proxy,
             "proxy_ip": self.proxy_ip,
+            "failure_stage": self.failure_stage,
+            "step_key": self.step_key,
+            "retryable": bool(self.retryable),
             "error_code": self.error_code,
             "error_detail": self.error_detail,
             "failed_at": self.failed_at.isoformat() if self.failed_at else None,

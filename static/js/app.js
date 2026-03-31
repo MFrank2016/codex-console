@@ -584,6 +584,9 @@ const elements = {
     failureFilterEmailSuffix: document.getElementById('failure-filter-email-suffix'),
     failureFilterEmailServiceId: document.getElementById('failure-filter-email-service-id'),
     failureFilterProxyIp: document.getElementById('failure-filter-proxy-ip'),
+    failureFilterFailureStage: document.getElementById('failure-filter-failure-stage'),
+    failureFilterStepKey: document.getElementById('failure-filter-step-key'),
+    failureFilterRetryable: document.getElementById('failure-filter-retryable'),
     failureFilterErrorKeyword: document.getElementById('failure-filter-error-keyword'),
     failureFilterFailedFrom: document.getElementById('failure-filter-failed-from'),
     failureFilterFailedTo: document.getElementById('failure-filter-failed-to'),
@@ -592,6 +595,9 @@ const elements = {
     failureTopEmailSuffixes: document.getElementById('failure-top-email-suffixes'),
     failureTopErrorCodes: document.getElementById('failure-top-error-codes'),
     failureTopProxyIps: document.getElementById('failure-top-proxy-ips'),
+    failureTopFailureStages: document.getElementById('failure-top-failure-stages'),
+    failureTopStepKeys: document.getElementById('failure-top-step-keys'),
+    failureRetryableBreakdown: document.getElementById('failure-retryable-breakdown'),
     registrationFailureTableBody: document.getElementById('registration-failure-table-body'),
     failurePrevPageBtn: document.getElementById('failure-prev-page-btn'),
     failureNextPageBtn: document.getElementById('failure-next-page-btn'),
@@ -918,6 +924,9 @@ function collectRegistrationFailureFilters() {
         email_suffix: normalizeRegistrationFailureFilterValue(elements.failureFilterEmailSuffix?.value),
         email_service_id: normalizeRegistrationFailureFilterValue(elements.failureFilterEmailServiceId?.value),
         proxy_ip: normalizeRegistrationFailureFilterValue(elements.failureFilterProxyIp?.value),
+        failure_stage: normalizeRegistrationFailureFilterValue(elements.failureFilterFailureStage?.value),
+        step_key: normalizeRegistrationFailureFilterValue(elements.failureFilterStepKey?.value),
+        retryable: normalizeRegistrationFailureFilterValue(elements.failureFilterRetryable?.value),
         error_keyword: normalizeRegistrationFailureFilterValue(elements.failureFilterErrorKeyword?.value),
         failed_from: normalizeRegistrationFailureFilterValue(elements.failureFilterFailedFrom?.value),
         failed_to: normalizeRegistrationFailureFilterValue(elements.failureFilterFailedTo?.value),
@@ -943,6 +952,9 @@ function buildRegistrationFailureQueryParams(options = {}) {
     appendRegistrationFailureQueryParam(params, 'email_suffix', filters.email_suffix);
     appendRegistrationFailureQueryParam(params, 'email_service_id', filters.email_service_id);
     appendRegistrationFailureQueryParam(params, 'proxy_ip', filters.proxy_ip);
+    appendRegistrationFailureQueryParam(params, 'failure_stage', filters.failure_stage);
+    appendRegistrationFailureQueryParam(params, 'step_key', filters.step_key);
+    appendRegistrationFailureQueryParam(params, 'retryable', filters.retryable);
     appendRegistrationFailureQueryParam(params, 'error_keyword', filters.error_keyword);
     appendRegistrationFailureQueryParam(params, 'failed_from', filters.failed_from);
     appendRegistrationFailureQueryParam(params, 'failed_to', filters.failed_to);
@@ -988,6 +1000,9 @@ function renderRegistrationFailureSummary(summary) {
     renderRegistrationFailureTopList(elements.failureTopEmailSuffixes, payload.top_email_suffixes);
     renderRegistrationFailureTopList(elements.failureTopErrorCodes, payload.top_error_codes);
     renderRegistrationFailureTopList(elements.failureTopProxyIps, payload.top_proxy_ips);
+    renderRegistrationFailureTopList(elements.failureTopFailureStages, payload.top_failure_stages);
+    renderRegistrationFailureTopList(elements.failureTopStepKeys, payload.top_step_keys);
+    renderRegistrationFailureTopList(elements.failureRetryableBreakdown, payload.retryable_breakdown);
 }
 
 function updateRegistrationFailurePagination() {
@@ -1018,6 +1033,7 @@ function buildRegistrationFailureDetailMeta(item) {
         item?.email || '—',
         item?.email_service_id != null ? `service:${item.email_service_id}` : 'service:—',
         item?.proxy_ip || item?.proxy || '—',
+        item?.failure_stage ? `stage:${item.failure_stage}` : 'stage:—',
         item?.failed_at || item?.created_at || '—',
     ];
     return parts.join(' · ');
@@ -1025,11 +1041,32 @@ function buildRegistrationFailureDetailMeta(item) {
 
 function buildRegistrationFailureDetailText(item) {
     const detail = String(item?.error_detail || '—');
-    const sections = [`错误详情\n${detail}`];
+    const sections = [
+        `结构化上下文\nstage=${item?.failure_stage || '—'}\nstep_key=${item?.step_key || '—'}\nretryable=${item?.retryable === true ? 'true' : 'false'}`,
+        `错误详情\n${detail}`,
+    ];
     if (item?.extra_json && Object.keys(item.extra_json).length > 0) {
         sections.push(`扩展上下文\n${JSON.stringify(item.extra_json, null, 2)}`);
     }
     return sections.join('\n\n');
+}
+
+function formatRegistrationFailureStructuredCell(item) {
+    const stage = escapeHtml(item?.failure_stage || '—');
+    const stepKey = escapeHtml(item?.step_key || '—');
+    return `
+        <div class="failure-structured-cell">
+            <strong>${stage}</strong>
+            <span>${stepKey}</span>
+        </div>
+    `;
+}
+
+function formatRegistrationFailureRetryable(item) {
+    if (item?.retryable === true) {
+        return '<span class="failure-retryable-badge failure-retryable-badge--true">可重试</span>';
+    }
+    return '<span class="failure-retryable-badge failure-retryable-badge--false">不可重试</span>';
 }
 
 function openRegistrationFailureDetail(detail) {
@@ -1087,7 +1124,7 @@ function renderRegistrationFailureRows(items) {
     if (rows.length === 0) {
         elements.registrationFailureTableBody.innerHTML = `
             <tr>
-                <td colspan="8">暂无失败记录</td>
+                <td colspan="10">暂无失败记录</td>
             </tr>
         `;
         return;
@@ -1100,6 +1137,8 @@ function renderRegistrationFailureRows(items) {
             <td>${escapeHtml(item.registration_mode || '—')}</td>
             <td>${escapeHtml(item.email_service_id != null ? String(item.email_service_id) : '—')}</td>
             <td>${escapeHtml(item.proxy_ip || '—')}</td>
+            <td>${formatRegistrationFailureStructuredCell(item)}</td>
+            <td>${formatRegistrationFailureRetryable(item)}</td>
             <td>
                 <span>${escapeHtml(item.error_code || 'unknown')}</span>
                 ${isRateLimitFailureItem(item) ? '<span class="failure-badge failure-badge-rate-limit">限流</span>' : ''}
@@ -1149,7 +1188,7 @@ async function loadRegistrationFailureAnalysis() {
         if (elements.registrationFailureTableBody) {
             elements.registrationFailureTableBody.innerHTML = `
                 <tr>
-                    <td colspan="7">加载失败：${escapeHtml(error?.message || 'unknown error')}</td>
+                    <td colspan="10">加载失败：${escapeHtml(error?.message || 'unknown error')}</td>
                 </tr>
             `;
         }

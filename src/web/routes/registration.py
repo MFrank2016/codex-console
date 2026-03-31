@@ -193,6 +193,9 @@ class RegistrationFailureItemResponse(BaseModel):
     birthdate: Optional[str] = None
     proxy: Optional[str] = None
     proxy_ip: Optional[str] = None
+    failure_stage: Optional[str] = None
+    step_key: Optional[str] = None
+    retryable: bool = False
     error_code: str
     error_detail: str
     failed_at: Optional[str] = None
@@ -208,9 +211,12 @@ class RegistrationFailureListResponse(BaseModel):
 class RegistrationFailureSummaryResponse(BaseModel):
     total_failed_attempts: int
     today_failed_attempts: int
-    top_email_suffixes: List[dict]
-    top_error_codes: List[dict]
-    top_proxy_ips: List[dict]
+    top_email_suffixes: List[dict] = Field(default_factory=list)
+    top_error_codes: List[dict] = Field(default_factory=list)
+    top_proxy_ips: List[dict] = Field(default_factory=list)
+    top_failure_stages: List[dict] = Field(default_factory=list)
+    top_step_keys: List[dict] = Field(default_factory=list)
+    retryable_breakdown: List[dict] = Field(default_factory=list)
 
 
 # ============== Outlook 批量注册模型 ==============
@@ -309,6 +315,9 @@ async def get_registration_failures_summary(
     email_suffix: Optional[str] = None,
     email_service_id: Optional[int] = None,
     proxy_ip: Optional[str] = None,
+    failure_stage: Optional[str] = None,
+    step_key: Optional[str] = None,
+    retryable: Optional[bool] = None,
     error_keyword: Optional[str] = None,
     failed_from: Optional[str] = None,
     failed_to: Optional[str] = None,
@@ -323,6 +332,9 @@ async def get_registration_failures_summary(
             email_suffix=email_suffix,
             email_service_id=email_service_id,
             proxy_ip=proxy_ip,
+            failure_stage=failure_stage,
+            step_key=step_key,
+            retryable=retryable,
             error_keyword=error_keyword,
             failed_from=failed_from,
             failed_to=failed_to,
@@ -336,6 +348,9 @@ async def get_registration_failures_summary(
         "top_email_suffixes": summary.top_email_suffixes,
         "top_error_codes": summary.top_error_codes,
         "top_proxy_ips": summary.top_proxy_ips,
+        "top_failure_stages": summary.top_failure_stages,
+        "top_step_keys": summary.top_step_keys,
+        "retryable_breakdown": summary.retryable_breakdown,
     }
 
 
@@ -348,6 +363,9 @@ async def get_registration_failures(
     email_suffix: Optional[str] = None,
     email_service_id: Optional[int] = None,
     proxy_ip: Optional[str] = None,
+    failure_stage: Optional[str] = None,
+    step_key: Optional[str] = None,
+    retryable: Optional[bool] = None,
     error_keyword: Optional[str] = None,
     failed_from: Optional[str] = None,
     failed_to: Optional[str] = None,
@@ -364,6 +382,9 @@ async def get_registration_failures(
             email_suffix=email_suffix,
             email_service_id=email_service_id,
             proxy_ip=proxy_ip,
+            failure_stage=failure_stage,
+            step_key=step_key,
+            retryable=retryable,
             error_keyword=error_keyword,
             failed_from=failed_from,
             failed_to=failed_to,

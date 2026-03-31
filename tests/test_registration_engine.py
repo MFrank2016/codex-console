@@ -2,6 +2,7 @@ import base64
 import json
 import pytest
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 from src.config.constants import EmailServiceType, OPENAI_API_ENDPOINTS, OPENAI_PAGE_TYPES
 from src.core.http_client import OpenAIHTTPClient
@@ -195,6 +196,12 @@ def _response_with_consent_continue_url(session_token="session-1"):
     )
 
 
+def _build_test_jwt(payload: dict) -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode("utf-8")).decode("ascii").rstrip("=")
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{header}.{body}."
+
+
 def test_check_sentinel_sends_non_empty_pow(monkeypatch):
     session = QueueSession([
         ("POST", OPENAI_API_ENDPOINTS["sentinel"], DummyResponse(payload={"token": "sentinel-token"})),
@@ -252,6 +259,54 @@ def test_run_create_account_profile_step_caches_generated_user_profile(monkeypat
 
     assert payload == {}
     assert engine.generated_user_profile == {"name": "Test User", "birthdate": "1990-01-02"}
+
+
+def test_prepare_authorize_flow_falls_back_to_chatgpt_web_entry_mode(monkeypatch):
+    _patch_blacklist_query(monkeypatch)
+    email_service = FakeEmailService([])
+    engine = RegistrationEngine(email_service)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "src.core.register.get_settings",
+        lambda: SimpleNamespace(
+            registration_entry_mode="direct_auth",
+            registration_entry_mode_fallback="chatgpt_web",
+            registration_chatgpt_base="https://chatgpt.example.test",
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_init_session",
+        lambda: (_ for _ in ()).throw(AssertionError("should route through auth entry helpers")),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_prepare_authorize_flow_via_direct_auth",
+        lambda label: calls.append("direct_auth") or (None, None),
+        raising=False,
+    )
+
+    def _fallback(label):
+        calls.append("chatgpt_web")
+        engine._auth_entry_mode_used = "chatgpt_web"  # noqa: SLF001
+        engine._auth_entry_mode_fallback_hit = True  # noqa: SLF001
+        return "did-fallback", "sentinel-fallback"
+
+    monkeypatch.setattr(
+        engine,
+        "_prepare_authorize_flow_via_chatgpt_web",
+        _fallback,
+        raising=False,
+    )
+
+    did, sentinel_token = engine._prepare_authorize_flow("首次授权")  # noqa: SLF001
+
+    assert calls == ["direct_auth", "chatgpt_web"]
+    assert did == "did-fallback"
+    assert sentinel_token == "sentinel-fallback"
+    assert engine._auth_entry_mode_used == "chatgpt_web"  # noqa: SLF001
+    assert engine._auth_entry_mode_fallback_hit is True  # noqa: SLF001
 
 
 def test_run_registers_then_relogs_to_fetch_token(monkeypatch):
@@ -321,6 +376,90 @@ def test_run_registers_then_relogs_to_fetch_token(monkeypatch):
     password_verify_body = json.loads(session_two.calls[2]["kwargs"]["data"])
     assert password_verify_body == {"password": result.password}
     assert result.metadata["token_acquired_via_relogin"] is True
+
+
+def test_run_registers_and_captures_tokens_without_relogin(monkeypatch):
+    _patch_blacklist_query(monkeypatch)
+    access_token = _build_test_jwt(
+        {
+            "email": "tester@example.com",
+            "exp": 1760000000,
+            "https://api.openai.com/auth": {"chatgpt_account_id": "acct-captured"},
+        }
+    )
+    session = QueueSession([
+        ("GET", "https://auth.example.test/flow/1", _response_with_did("did-1")),
+        (
+            "POST",
+            OPENAI_API_ENDPOINTS["signup"],
+            DummyResponse(payload={"page": {"type": OPENAI_PAGE_TYPES["PASSWORD_REGISTRATION"]}}),
+        ),
+        ("POST", OPENAI_API_ENDPOINTS["register"], DummyResponse(payload={})),
+        ("GET", OPENAI_API_ENDPOINTS["send_otp"], DummyResponse(payload={})),
+        ("POST", OPENAI_API_ENDPOINTS["validate_otp"], DummyResponse(payload={})),
+        (
+            "POST",
+            OPENAI_API_ENDPOINTS["create_account"],
+            DummyResponse(
+                payload={
+                    "continue_url": (
+                        "https://chatgpt.com/api/auth/callback/openai"
+                        "?code=oauth-captured-code"
+                        "&scope=openid+email+profile+offline_access"
+                        "&state=oauth-captured-state"
+                    ),
+                    "page": {"type": "external_url"},
+                }
+            ),
+        ),
+        (
+            "GET",
+            (
+                "https://chatgpt.com/api/auth/callback/openai"
+                "?code=oauth-captured-code"
+                "&scope=openid+email+profile+offline_access"
+                "&state=oauth-captured-state"
+            ),
+            DummyResponse(
+                status_code=200,
+                payload={},
+                on_return=lambda session_obj: session_obj.cookies.__setitem__(
+                    "__Secure-next-auth.session-token", "session-captured"
+                ),
+            ),
+        ),
+        (
+            "GET",
+            "https://chatgpt.com/api/auth/session",
+            DummyResponse(
+                payload={
+                    "accessToken": access_token,
+                    "sessionToken": "session-captured",
+                    "user": {"email": "tester@example.com"},
+                }
+            ),
+        ),
+    ])
+
+    email_service = FakeEmailService(["123456"])
+    engine = RegistrationEngine(email_service)
+    fake_oauth = FakeOAuthManager()
+    engine.http_client = FakeOpenAIClient([session], ["sentinel-1"])
+    engine.oauth_manager = fake_oauth
+
+    result = engine.run()
+
+    assert result.success is True
+    assert result.source == "register"
+    assert result.account_id == "acct-captured"
+    assert result.access_token == access_token
+    assert result.session_token == "session-captured"
+    assert fake_oauth.start_calls == 1
+    assert len(email_service.otp_requests) == 1
+    assert result.metadata["token_acquired_via_relogin"] is False
+    assert result.metadata["token_source"] == "registration_capture"
+    assert result.token_source == "registration_capture"
+    assert sum(1 for call in session.calls if call["url"] == OPENAI_API_ENDPOINTS["signup"]) == 1
 
 
 def test_existing_account_login_uses_auto_sent_otp_without_manual_send(monkeypatch):

@@ -11,7 +11,9 @@ from .email_suffix_blacklist import RegistrationDisallowedSuffixError, extract_e
 from .registration_failure_records import build_failure_write_payload, redact_result_payload, write_registration_failure_record
 from .time import utc_now_naive
 from .pipeline import PipelineContext, PipelineRunner
+from .pipeline.errors import PipelineStepExecutionError
 from .pipeline.registry import get_pipeline
+from .pipeline.steps.current import build_current_runtime
 from .pipeline.steps.codexgen import build_codexgen_runtime
 from .register import RegistrationEngine
 from ..database import crud
@@ -234,155 +236,63 @@ def run_registration_job(
             runtime_context_logged = True
 
             email_service = EmailServiceFactory.create(service_type, config)
-            if pipeline_key == "codexgen_pipeline":
-                runtime_ref = {}
-                account, result_payload = _run_pipeline_registration(
+            runtime_ref = {}
+            account, result_payload = _run_pipeline_registration(
+                db=db,
+                pipeline_key=pipeline_key,
+                email_service=email_service,
+                proxy=proxy,
+                callback_logger=callback_logger,
+                task_step_callback=task_step_callback,
+                task_uuid=task_uuid,
+                resolved_service_id=resolved_service_id,
+                runtime_ref=runtime_ref,
+            )
+            pipeline_runtime = runtime_ref.get("runtime")
+            attempt_runtime = pipeline_runtime
+            result_payload = redact_result_payload(result_payload or {})
+            attempt_result_payload = result_payload
+            known_email = (result_payload or {}).get("email") or known_email
+            known_result_payload = result_payload
+            if not account:
+                _write_failure_attempt(
                     db=db,
-                    pipeline_key=pipeline_key,
-                    email_service=email_service,
-                    proxy=proxy,
-                    callback_logger=callback_logger,
-                    task_step_callback=task_step_callback,
                     task_uuid=task_uuid,
-                    resolved_service_id=resolved_service_id,
-                    runtime_ref=runtime_ref,
+                    attempt_no=attempt_no,
+                    batch_id=batch_id,
+                    pipeline_key=pipeline_key,
+                    registration_mode=registration_mode,
+                    email_service_type=email_service_type,
+                    email_service_id=resolved_service_id,
+                    email=(result_payload or {}).get("email"),
+                    proxy=proxy,
+                    error_message=(result_payload or {}).get("error_message") or "注册失败",
+                    result_payload=result_payload,
+                    engine=pipeline_runtime,
+                    exc=None,
                 )
-                pipeline_runtime = runtime_ref.get("runtime")
-                attempt_runtime = pipeline_runtime
-                result_payload = redact_result_payload(result_payload or {})
-                attempt_result_payload = result_payload
-                known_email = (result_payload or {}).get("email") or known_email
-                known_result_payload = result_payload
-                if not account:
-                    _write_failure_attempt(
-                        db=db,
-                        task_uuid=task_uuid,
-                        attempt_no=attempt_no,
-                        batch_id=batch_id,
-                        pipeline_key=pipeline_key,
-                        registration_mode=registration_mode,
-                        email_service_type=email_service_type,
-                        email_service_id=resolved_service_id,
-                        email=(result_payload or {}).get("email"),
-                        proxy=proxy,
-                        error_message=(result_payload or {}).get("error_message") or "注册失败",
-                        result_payload=result_payload,
-                        engine=pipeline_runtime,
-                        exc=None,
-                    )
-                    _update_registration_task_failure(
-                        db,
-                        task_uuid=task_uuid,
-                        error_message=(result_payload or {}).get("error_message") or "注册失败",
-                        email=(result_payload or {}).get("email"),
-                        result_payload=result_payload,
-                        email_service_id=resolved_service_id,
-                    )
-                    return RegistrationJobResult(
-                        success=False,
-                        email=(result_payload or {}).get("email"),
-                        error_message=(result_payload or {}).get("error_message") or "注册失败",
-                        email_service_id=resolved_service_id,
-                        result_payload=result_payload,
-                    )
-                _update_registration_task_success(
+                _update_registration_task_failure(
                     db,
                     task_uuid=task_uuid,
-                    email=account.email,
+                    error_message=(result_payload or {}).get("error_message") or "注册失败",
+                    email=(result_payload or {}).get("email"),
                     result_payload=result_payload,
                     email_service_id=resolved_service_id,
                 )
-            else:
-                engine = RegistrationEngine(
-                    email_service=email_service,
-                    proxy_url=proxy,
-                    callback_logger=callback_logger,
-                    task_uuid=task_uuid,
+                return RegistrationJobResult(
+                    success=False,
+                    email=(result_payload or {}).get("email"),
+                    error_message=(result_payload or {}).get("error_message") or "注册失败",
+                    email_service_id=resolved_service_id,
+                    result_payload=result_payload,
                 )
-                attempt_runtime = engine
-                result = engine.run()
-                result_payload = result.to_dict()
-                attempt_result_payload = result_payload
-                known_email = result.email or known_email
-                known_result_payload = result_payload
-
-                if not result.success:
-                    engine.flush_task_logs()
-                    _write_failure_attempt(
-                        db=db,
-                        task_uuid=task_uuid,
-                        attempt_no=attempt_no,
-                        batch_id=batch_id,
-                        pipeline_key=pipeline_key,
-                        registration_mode=registration_mode,
-                        email_service_type=email_service_type,
-                        email_service_id=resolved_service_id,
-                        email=result.email or None,
-                        proxy=proxy,
-                        error_message=result.error_message or "注册失败",
-                        result_payload=result_payload,
-                        engine=engine,
-                        exc=None,
-                    )
-                    return RegistrationJobResult(
-                        success=False,
-                        email=result.email or None,
-                        error_message=result.error_message or "注册失败",
-                        email_service_id=resolved_service_id,
-                        result_payload=result_payload,
-                    )
-
-                if not engine.save_to_database(result):
-                    _write_failure_attempt(
-                        db=db,
-                        task_uuid=task_uuid,
-                        attempt_no=attempt_no,
-                        batch_id=batch_id,
-                        pipeline_key=pipeline_key,
-                        registration_mode=registration_mode,
-                        email_service_type=email_service_type,
-                        email_service_id=resolved_service_id,
-                        email=result.email or None,
-                        proxy=proxy,
-                        error_message="保存注册账号到数据库失败",
-                        result_payload=result_payload,
-                        engine=engine,
-                        exc=None,
-                    )
-                    return RegistrationJobResult(
-                        success=False,
-                        email=result.email or None,
-                        error_message="保存注册账号到数据库失败",
-                        email_service_id=resolved_service_id,
-                        result_payload=result_payload,
-                    )
-
-                db.expire_all()
-                account = db.query(Account).filter(Account.email == result.email).first()
-                if not account:
-                    _write_failure_attempt(
-                        db=db,
-                        task_uuid=task_uuid,
-                        attempt_no=attempt_no,
-                        batch_id=batch_id,
-                        pipeline_key=pipeline_key,
-                        registration_mode=registration_mode,
-                        email_service_type=email_service_type,
-                        email_service_id=resolved_service_id,
-                        email=result.email or None,
-                        proxy=proxy,
-                        error_message="注册成功但未找到已保存账号",
-                        result_payload=result_payload,
-                        engine=engine,
-                        exc=None,
-                    )
-                    return RegistrationJobResult(
-                        success=False,
-                        email=result.email or None,
-                        error_message="注册成功但未找到已保存账号",
-                        email_service_id=resolved_service_id,
-                        result_payload=result_payload,
-                    )
+            _update_registration_task_success(
+                db,
+                task_uuid=task_uuid,
+                email=account.email,
+                result_payload=result_payload,
+                email_service_id=resolved_service_id,
+            )
 
             if auto_upload:
                 logger.info("auto_upload is enabled but handled by caller")
@@ -397,6 +307,8 @@ def run_registration_job(
         except RegistrationDisallowedSuffixError as exc:
             if engine is not None:
                 engine.flush_task_logs()
+            if pipeline_runtime is None and runtime_ref is not None:
+                pipeline_runtime = runtime_ref.get("runtime")
             db.rollback()
             known_email = exc.email or known_email
             error_message = str(exc.detail or exc) or "注册异常"
@@ -414,7 +326,7 @@ def run_registration_job(
                 proxy=proxy,
                 error_message=error_message,
                 result_payload=known_result_payload,
-                engine=pipeline_runtime if pipeline_key == "codexgen_pipeline" else engine,
+                engine=pipeline_runtime or engine,
                 exc=exc,
             )
 
@@ -456,6 +368,65 @@ def run_registration_job(
                 error_message=error_message,
                 result_payload=known_result_payload,
             )
+        except PipelineStepExecutionError as exc:
+            logger.exception(
+                "run_registration_job pipeline step failed: task_uuid=%s attempt_no=%s pipeline_key=%s step_key=%s error=%s",
+                task_uuid,
+                attempt_no,
+                pipeline_key,
+                exc.context.step_key,
+                exc,
+            )
+            if pipeline_runtime is None and runtime_ref is not None:
+                pipeline_runtime = runtime_ref.get("runtime")
+            db.rollback()
+            structured_payload = {
+                "success": False,
+                "email": known_email,
+                "error_message": str(exc),
+                "metadata": {
+                    "failure_stage": exc.context.failure_stage,
+                    "step_key": exc.context.step_key,
+                    "retryable": exc.context.retryable,
+                    "attempt_count": exc.context.attempt_count,
+                },
+            }
+            attempt_result_payload = structured_payload
+            known_result_payload = structured_payload
+            _write_failure_attempt(
+                db=db,
+                task_uuid=task_uuid,
+                attempt_no=attempt_no,
+                batch_id=batch_id,
+                pipeline_key=pipeline_key,
+                registration_mode=registration_mode,
+                email_service_type=email_service_type,
+                email_service_id=known_service_id,
+                email=known_email,
+                proxy=proxy,
+                error_message=str(exc) or "注册异常",
+                result_payload=structured_payload,
+                engine=pipeline_runtime or engine,
+                failure_stage=exc.context.failure_stage,
+                step_key=exc.context.step_key,
+                retryable=exc.context.retryable,
+                exc=exc,
+            )
+            _update_registration_task_failure(
+                db,
+                task_uuid=task_uuid,
+                error_message=str(exc) or "注册异常",
+                email=known_email,
+                result_payload=structured_payload,
+                email_service_id=known_service_id,
+            )
+            return RegistrationJobResult(
+                success=False,
+                email=known_email,
+                email_service_id=known_service_id,
+                error_message=str(exc) or "注册异常",
+                result_payload=structured_payload,
+            )
         except Exception as exc:
             logger.exception(
                 "run_registration_job failed: task_uuid=%s attempt_no=%s pipeline_key=%s registration_mode=%s error=%s",
@@ -483,7 +454,7 @@ def run_registration_job(
                 proxy=proxy,
                 error_message=str(exc) or "注册异常",
                 result_payload=known_result_payload,
-                engine=pipeline_runtime if pipeline_key == "codexgen_pipeline" else engine,
+                engine=pipeline_runtime or engine,
                 exc=exc,
             )
             _update_registration_task_failure(
@@ -527,6 +498,9 @@ def _write_failure_attempt(
     error_message: str | None,
     result_payload: dict[str, Any] | None,
     engine: Any | None,
+    failure_stage: str | None = None,
+    step_key: str | None = None,
+    retryable: bool = False,
     exc: Exception | None,
 ) -> None:
     payload = build_failure_write_payload(
@@ -542,6 +516,9 @@ def _write_failure_attempt(
         error_message=error_message,
         result_payload=result_payload,
         engine=engine,
+        failure_stage=failure_stage,
+        step_key=step_key,
+        retryable=retryable,
         exc=exc,
         failed_at=utc_now_naive(),
     )
@@ -566,9 +543,10 @@ def _run_pipeline_registration(
     if not pipeline:
         raise RuntimeError(f"pipeline not found: {pipeline_key}")
 
-    runtime = build_codexgen_runtime(
+    runtime = _build_pipeline_runtime(
+        pipeline_key=pipeline_key,
         email_service=email_service,
-        proxy_url=proxy,
+        proxy=proxy,
         callback_logger=callback_logger,
         task_uuid=task_uuid,
     )
@@ -595,6 +573,32 @@ def _run_pipeline_registration(
     return account, result_payload
 
 
+def _build_pipeline_runtime(
+    *,
+    pipeline_key: str,
+    email_service,
+    proxy: str | None,
+    callback_logger: Callable[[str], None] | None,
+    task_uuid: str | None,
+):
+    if pipeline_key == "current_pipeline":
+        return build_current_runtime(
+            email_service=email_service,
+            proxy_url=proxy,
+            callback_logger=callback_logger,
+            task_uuid=task_uuid,
+            engine_cls=RegistrationEngine,
+        )
+    if pipeline_key == "codexgen_pipeline":
+        return build_codexgen_runtime(
+            email_service=email_service,
+            proxy_url=proxy,
+            callback_logger=callback_logger,
+            task_uuid=task_uuid,
+        )
+    raise RuntimeError(f"pipeline runtime not found: {pipeline_key}")
+
+
 def _build_pipeline_result_payload(ctx: PipelineContext) -> dict[str, Any]:
     metadata = _sanitize_metadata(ctx.metadata or {})
     runtime = (ctx.metadata or {}).get("registration_engine")
@@ -617,6 +621,7 @@ def _build_pipeline_result_payload(ctx: PipelineContext) -> dict[str, Any]:
         "session_token": metadata.get("session_token", ""),
         "error_message": "",
         "logs": [],
+        "token_source": metadata.get("token_source", ""),
         "metadata": metadata,
         "source": "login" if metadata.get("is_existing_account") else "register",
     }

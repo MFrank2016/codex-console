@@ -9,6 +9,12 @@ def test_registration_template_contains_failure_analysis_panel_hooks():
     assert 'id="registration-failure-filter-form"' in template
     assert 'id="registration-failure-table-body"' in template
     assert 'id="registration-failure-detail-dialog"' in template
+    assert 'id="failure-filter-failure-stage"' in template
+    assert 'id="failure-filter-step-key"' in template
+    assert 'id="failure-filter-retryable"' in template
+    assert 'id="failure-top-failure-stages"' in template
+    assert 'id="failure-top-step-keys"' in template
+    assert 'id="failure-retryable-breakdown"' in template
 
 
 
@@ -16,6 +22,8 @@ def test_registration_workbench_stylesheet_contains_failure_analysis_layout_rule
     stylesheet = Path("static/css/registration_workbench.css").read_text(encoding="utf-8")
     assert ".failure-summary-grid" in stylesheet
     assert ".failure-analysis-table" in stylesheet
+    assert ".failure-structured-cell" in stylesheet
+    assert ".failure-retryable-badge" in stylesheet
 
 
 
@@ -23,8 +31,15 @@ def test_app_js_loads_failure_summary_and_table_with_current_filters():
     result = run_app_js_scenario("load_registration_failures")
     assert "/registration/failures/summary" in result["api_get_paths"][0]
     assert "pipeline_key=codexgen_pipeline" in result["api_get_paths"][0]
+    assert "failure_stage=submit_login_password" in result["api_get_paths"][0]
+    assert "step_key=submit_login_password" in result["api_get_paths"][0]
+    assert "retryable=true" in result["api_get_paths"][0]
     assert result["summary_total_text"] == "12"
+    assert "submit_login_password" in result["top_failure_stages_html"]
+    assert "retryable" in result["retryable_breakdown_html"]
     assert "blocked.test" in result["table_html"]
+    assert "submit_login_password" in result["table_html"]
+    assert "可重试" in result["table_html"]
 
 
 
@@ -33,3 +48,5 @@ def test_app_js_failure_table_escapes_html_and_opens_detail_dialog():
     assert "<script>" not in result["table_html"]
     assert "&lt;script&gt;" in result["table_html"] or result["detail_uses_text_content"] is True
     assert result["detail_dialog_open"] is True
+    assert "submit_login_password" in result["table_html"]
+    assert "可重试" in result["table_html"]

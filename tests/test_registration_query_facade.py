@@ -56,6 +56,9 @@ def _create_failure(
     proxy_ip: str | None = None,
     error_code: str = "registration_disallowed",
     error_detail: str = "registration_disallowed detail",
+    failure_stage: str | None = None,
+    step_key: str | None = None,
+    retryable: bool = False,
 ):
     row = failure_repo.upsert_registration_failure_record(
         db,
@@ -72,6 +75,9 @@ def _create_failure(
         birthdate="1994-02-03",
         proxy="http://proxy-a",
         proxy_ip=proxy_ip,
+        failure_stage=failure_stage,
+        step_key=step_key,
+        retryable=retryable,
         error_code=error_code,
         error_detail=error_detail,
         failed_at=failed_at,
@@ -420,6 +426,48 @@ def test_registration_query_facade_build_failure_summary_uses_single_now_for_win
     assert provider_call_count == 1
 
 
+def test_registration_query_facade_build_failure_summary_supports_structured_filters(
+    db_factory, temp_db
+):
+    _create_failure(
+        temp_db,
+        task_uuid="task-structured-hit",
+        failed_at=datetime(2026, 3, 28, 3, 0, 0),
+        email="hit@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+    _create_failure(
+        temp_db,
+        task_uuid="task-structured-miss",
+        failed_at=datetime(2026, 3, 28, 3, 1, 0),
+        email="miss@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="exchange_oauth_token",
+        step_key="exchange_oauth_token",
+        retryable=False,
+    )
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+        utc_now_provider=lambda: datetime(2026, 3, 28, 4, 0, 0, tzinfo=UTC),
+    )
+
+    summary = facade.build_failure_summary(
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+
+    assert summary.total_failed_attempts == 1
+    assert summary.today_failed_attempts == 1
+    assert summary.top_failure_stages == [{"value": "submit_login_password", "count": 1}]
+    assert summary.top_step_keys == [{"value": "submit_login_password", "count": 1}]
+    assert summary.retryable_breakdown == [{"value": "retryable", "count": 1}]
+
+
 def test_registration_query_facade_list_failures_treats_naive_datetime_as_asia_shanghai(
     db_factory, temp_db
 ):
@@ -449,6 +497,47 @@ def test_registration_query_facade_list_failures_treats_naive_datetime_as_asia_s
 
     assert result.total == 1
     assert result.items[0]["task_uuid"] == "task-shanghai-hit"
+
+
+def test_registration_query_facade_list_failures_supports_structured_filters(
+    db_factory, temp_db
+):
+    _create_failure(
+        temp_db,
+        task_uuid="task-structured-hit",
+        failed_at=datetime(2026, 3, 28, 3, 0, 0),
+        email="hit@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+    _create_failure(
+        temp_db,
+        task_uuid="task-structured-miss",
+        failed_at=datetime(2026, 3, 28, 3, 1, 0),
+        email="miss@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="exchange_oauth_token",
+        step_key="exchange_oauth_token",
+        retryable=False,
+    )
+    facade = RegistrationQueryFacade(
+        db_factory=db_factory,
+        task_manager=FakeTaskManager(),
+    )
+
+    result = facade.list_failures(
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+
+    assert result.total == 1
+    assert result.items[0]["task_uuid"] == "task-structured-hit"
+    assert result.items[0]["failure_stage"] == "submit_login_password"
+    assert result.items[0]["step_key"] == "submit_login_password"
+    assert result.items[0]["retryable"] is True
 
 
 def test_registration_query_facade_list_failures_rejects_failed_from_greater_than_failed_to(

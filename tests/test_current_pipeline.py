@@ -1,6 +1,7 @@
 import pytest
 
 from src.core.pipeline.context import PipelineContext
+from src.core.pipeline.errors import PipelineStepExecutionError
 from src.core.pipeline.registry import PIPELINE_REGISTRY, get_pipeline
 from src.core.pipeline.runner import PipelineRunner
 from src.core.pipeline.steps import common as common_steps
@@ -206,5 +207,25 @@ def test_current_submit_login_email_step_does_not_swallow_typeerror(fake_db):
         },
     )
 
-    with pytest.raises(TypeError, match="boom in login email step"):
+    with pytest.raises(PipelineStepExecutionError) as exc_info:
         PipelineRunner(fake_db).run(pipeline, ctx)
+
+    assert "boom in login email step" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_current_pipeline_configures_retry_for_transient_network_steps():
+    pipeline = get_pipeline("current_pipeline")
+    assert pipeline is not None
+    steps = {item.step_key: item for item in pipeline.steps}
+
+    for step_key in (
+        "init_auth_session",
+        "prepare_authorize_flow",
+        "submit_signup_email",
+        "submit_login_email",
+        "submit_login_password",
+        "exchange_oauth_token",
+    ):
+        assert steps[step_key].retry_attempts > 1
+        assert "timed out" in steps[step_key].transient_markers

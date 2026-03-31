@@ -26,6 +26,12 @@ def _apply_filters(query: Query, *, filters: RegistrationFailureQuery | None) ->
         query = query.filter(RegistrationFailureRecord.email_suffix.ilike(f"%{filters.email_suffix}%"))
     if filters.proxy_ip:
         query = query.filter(RegistrationFailureRecord.proxy_ip.ilike(f"%{filters.proxy_ip}%"))
+    if filters.failure_stage:
+        query = query.filter(RegistrationFailureRecord.failure_stage == filters.failure_stage)
+    if filters.step_key:
+        query = query.filter(RegistrationFailureRecord.step_key == filters.step_key)
+    if filters.retryable is not None:
+        query = query.filter(RegistrationFailureRecord.retryable == filters.retryable)
     if filters.error_keyword:
         keyword = f"%{str(filters.error_keyword).strip().lower()}%"
         haystack = func.lower(
@@ -156,4 +162,9 @@ def build_registration_failure_summary(
         "top_email_suffixes": _top_counts([row.email_suffix for row in rows]),
         "top_error_codes": _top_counts([row.error_code for row in rows]),
         "top_proxy_ips": _top_counts([row.proxy_ip for row in rows]),
+        "top_failure_stages": _top_counts([row.failure_stage for row in rows]),
+        "top_step_keys": _top_counts([row.step_key for row in rows]),
+        "retryable_breakdown": _top_counts(
+            ["retryable" if bool(row.retryable) else "non_retryable" for row in rows]
+        ),
     }

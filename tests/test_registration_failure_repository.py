@@ -35,6 +35,9 @@ def _upsert(
     proxy_ip: str | None,
     error_code: str,
     error_detail: str,
+    failure_stage: str | None = None,
+    step_key: str | None = None,
+    retryable: bool = False,
 ):
     return repo.upsert_registration_failure_record(
         temp_db,
@@ -52,6 +55,9 @@ def _upsert(
         proxy_ip=proxy_ip,
         error_code=error_code,
         error_detail=error_detail,
+        failure_stage=failure_stage,
+        step_key=step_key,
+        retryable=retryable,
         failed_at=failed_at,
         extra_json={"step": "create_account_profile"},
     )
@@ -88,6 +94,69 @@ def test_upsert_registration_failure_record_overwrites_same_attempt(temp_db):
     assert second.id == first.id
     assert rows[0].email == "retry@blocked.test"
     assert rows[0].proxy_ip == "2.2.2.2"
+
+
+def test_upsert_registration_failure_record_persists_structured_failure_fields(temp_db):
+    row = _upsert(
+        temp_db,
+        task_uuid="task-structured",
+        attempt_no=1,
+        failed_at=datetime(2026, 3, 28, 2, 0, 0),
+        email="user@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="3.3.3.3",
+        error_code="registration_disallowed",
+        error_detail="structured error",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+
+    assert row.failure_stage == "submit_login_password"
+    assert row.step_key == "submit_login_password"
+    assert row.retryable is True
+
+
+def test_list_registration_failure_records_filters_structured_failure_fields(temp_db):
+    _upsert(
+        temp_db,
+        task_uuid="task-structured-1",
+        attempt_no=1,
+        failed_at=datetime(2026, 3, 28, 2, 1, 0),
+        email="one@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="3.3.3.1",
+        error_code="registration_disallowed",
+        error_detail="structured error 1",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+    _upsert(
+        temp_db,
+        task_uuid="task-structured-2",
+        attempt_no=1,
+        failed_at=datetime(2026, 3, 28, 2, 2, 0),
+        email="two@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="3.3.3.2",
+        error_code="oauth_failed",
+        error_detail="structured error 2",
+        failure_stage="exchange_oauth_token",
+        step_key="exchange_oauth_token",
+        retryable=False,
+    )
+
+    rows = repo.list_registration_failure_records(
+        temp_db,
+        filters=RegistrationFailureQuery(
+            failure_stage="submit_login_password",
+            step_key="submit_login_password",
+            retryable=True,
+        ),
+    )
+
+    assert [row.task_uuid for row in rows] == ["task-structured-1"]
 
 
 def test_list_registration_failure_records_orders_failed_at_desc_then_id_desc(temp_db):
@@ -150,6 +219,60 @@ def test_build_registration_failure_summary_groups_unknown_proxy_and_sorts_stabl
     assert len(summary["top_email_suffixes"]) == 5
     assert len(summary["top_error_codes"]) == 5
     assert len(summary["top_proxy_ips"]) == 5
+
+
+def test_build_registration_failure_summary_includes_structured_dimensions(temp_db):
+    _upsert(
+        temp_db,
+        task_uuid="task-structured-a",
+        attempt_no=1,
+        failed_at=datetime(2026, 3, 28, 4, 0, 0),
+        email="a@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="8.8.8.8",
+        error_code="oauth_failed",
+        error_detail="oauth timeout",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+    _upsert(
+        temp_db,
+        task_uuid="task-structured-b",
+        attempt_no=1,
+        failed_at=datetime(2026, 3, 28, 4, 1, 0),
+        email="b@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="8.8.4.4",
+        error_code="oauth_failed",
+        error_detail="oauth timeout",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+    _upsert(
+        temp_db,
+        task_uuid="task-structured-c",
+        attempt_no=1,
+        failed_at=datetime(2026, 3, 28, 4, 2, 0),
+        email="c@blocked.test",
+        email_suffix="blocked.test",
+        proxy_ip="1.1.1.1",
+        error_code="proxy_error",
+        error_detail="network timeout",
+        failure_stage="exchange_oauth_token",
+        step_key="exchange_oauth_token",
+        retryable=False,
+    )
+
+    summary = repo.build_registration_failure_summary(temp_db, filters=None)
+
+    assert summary["top_failure_stages"][0] == {"value": "submit_login_password", "count": 2}
+    assert summary["top_step_keys"][0] == {"value": "submit_login_password", "count": 2}
+    assert summary["retryable_breakdown"] == [
+        {"value": "retryable", "count": 2},
+        {"value": "non_retryable", "count": 1},
+    ]
 
 
 def test_list_registration_failure_records_applies_suffix_contains_and_error_keyword_case_insensitive(temp_db):

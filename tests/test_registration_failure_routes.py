@@ -69,6 +69,9 @@ def _create_failure(
     error_code: str = "registration_disallowed",
     error_detail: str = "registration_disallowed detail",
     proxy_ip: str | None = None,
+    failure_stage: str | None = None,
+    step_key: str | None = None,
+    retryable: bool = False,
 ):
     row = failure_repo.upsert_registration_failure_record(
         db,
@@ -85,6 +88,9 @@ def _create_failure(
         birthdate="1994-02-03",
         proxy="http://proxy-a",
         proxy_ip=proxy_ip,
+        failure_stage=failure_stage,
+        step_key=step_key,
+        retryable=retryable,
         error_code=error_code,
         error_detail=error_detail,
         failed_at=failed_at,
@@ -408,6 +414,44 @@ def test_registration_failures_summary_filters_by_proxy_ip_and_email_service_id(
     assert body["top_proxy_ips"][0] == {"value": "8.8.4.4", "count": 2}
 
 
+def test_registration_failures_summary_supports_structured_filters_and_fields(client, auth_cookie, route_db):
+    _create_failure(
+        route_db,
+        task_uuid="task-structured-hit",
+        failed_at=datetime(2026, 3, 28, 3, 0, 0),
+        email="one@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+    _create_failure(
+        route_db,
+        task_uuid="task-structured-miss",
+        failed_at=datetime(2026, 3, 28, 3, 1, 0),
+        email="two@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="exchange_oauth_token",
+        step_key="exchange_oauth_token",
+        retryable=False,
+    )
+
+    response = client.get(
+        "/api/registration/failures/summary"
+        "?failure_stage=submit_login_password"
+        "&step_key=submit_login_password"
+        "&retryable=true",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_failed_attempts"] == 1
+    assert body["top_failure_stages"] == [{"value": "submit_login_password", "count": 1}]
+    assert body["top_step_keys"] == [{"value": "submit_login_password", "count": 1}]
+    assert body["retryable_breakdown"] == [{"value": "retryable", "count": 1}]
+
+
 def test_registration_failures_summary_route_delegates_to_facade(client, auth_cookie, monkeypatch):
     captured: dict[str, object] = {}
 
@@ -420,6 +464,9 @@ def test_registration_failures_summary_route_delegates_to_facade(client, auth_co
                 top_email_suffixes=[{"value": "blocked.test", "count": 3}],
                 top_error_codes=[{"value": "registration_disallowed", "count": 3}],
                 top_proxy_ips=[{"value": "8.8.8.8", "count": 3}],
+                top_failure_stages=[{"value": "submit_login_password", "count": 2}],
+                top_step_keys=[{"value": "submit_login_password", "count": 2}],
+                retryable_breakdown=[{"value": "retryable", "count": 2}],
             )
 
     def _boom_get_db():
@@ -431,6 +478,9 @@ def test_registration_failures_summary_route_delegates_to_facade(client, auth_co
     response = client.get(
         "/api/registration/failures/summary"
         "?pipeline_key=current_pipeline"
+        "&failure_stage=submit_login_password"
+        "&step_key=submit_login_password"
+        "&retryable=true"
         "&failed_from=2026-03-28T00:00:00"
         "&failed_to=2026-03-28T10:00:00",
         cookies=auth_cookie,
@@ -439,6 +489,9 @@ def test_registration_failures_summary_route_delegates_to_facade(client, auth_co
     assert response.status_code == 200
     assert response.json()["today_failed_attempts"] == 2
     assert captured["pipeline_key"] == "current_pipeline"
+    assert captured["failure_stage"] == "submit_login_password"
+    assert captured["step_key"] == "submit_login_password"
+    assert captured["retryable"] is True
     assert captured["failed_from"] == "2026-03-28T00:00:00"
     assert captured["failed_to"] == "2026-03-28T10:00:00"
 
@@ -472,6 +525,47 @@ def test_registration_failures_list_route_delegates_to_facade_without_page_norma
     assert captured["page"] == 0
     assert captured["page_size"] == 999
     assert captured["failed_from"] == "2026-03-28T00:00:00"
+
+
+def test_registration_failures_list_supports_structured_filters_and_response_fields(
+    client, auth_cookie, route_db
+):
+    _create_failure(
+        route_db,
+        task_uuid="task-structured-hit",
+        failed_at=datetime(2026, 3, 28, 3, 0, 0),
+        email="one@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="submit_login_password",
+        step_key="submit_login_password",
+        retryable=True,
+    )
+    _create_failure(
+        route_db,
+        task_uuid="task-structured-miss",
+        failed_at=datetime(2026, 3, 28, 3, 1, 0),
+        email="two@blocked.test",
+        email_suffix="blocked.test",
+        failure_stage="exchange_oauth_token",
+        step_key="exchange_oauth_token",
+        retryable=False,
+    )
+
+    response = client.get(
+        "/api/registration/failures"
+        "?failure_stage=submit_login_password"
+        "&step_key=submit_login_password"
+        "&retryable=true",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["task_uuid"] == "task-structured-hit"
+    assert body["items"][0]["failure_stage"] == "submit_login_password"
+    assert body["items"][0]["step_key"] == "submit_login_password"
+    assert body["items"][0]["retryable"] is True
 
 
 def test_registration_failures_routes_convert_facade_value_error_to_http_400(

@@ -320,6 +320,24 @@ SETTING_DEFINITIONS: Dict[str, SettingDefinition] = {
         category=SettingCategory.REGISTRATION,
         description="注册间隔最大值（秒）"
     ),
+    "registration_entry_mode": SettingDefinition(
+        db_key="registration.entry_mode",
+        default_value="direct_auth",
+        category=SettingCategory.REGISTRATION,
+        description="注册授权入口模式（direct_auth/chatgpt_web）"
+    ),
+    "registration_entry_mode_fallback": SettingDefinition(
+        db_key="registration.entry_mode_fallback",
+        default_value="chatgpt_web",
+        category=SettingCategory.REGISTRATION,
+        description="注册授权入口回退模式（direct_auth/chatgpt_web）"
+    ),
+    "registration_chatgpt_base": SettingDefinition(
+        db_key="registration.chatgpt_base",
+        default_value="https://chatgpt.com",
+        category=SettingCategory.REGISTRATION,
+        description="注册期 ChatGPT Web 基础地址"
+    ),
 
     # 邮箱服务配置
     "email_service_priority": SettingDefinition(
@@ -742,6 +760,9 @@ class Settings(BaseModel):
     registration_default_password_length: int = 12
     registration_sleep_min: int = 5
     registration_sleep_max: int = 30
+    registration_entry_mode: str = "direct_auth"
+    registration_entry_mode_fallback: str = "chatgpt_web"
+    registration_chatgpt_base: str = "https://chatgpt.com"
 
     # 邮箱服务配置
     email_service_priority: Dict[str, int] = {"tempmail": 0, "outlook": 1, "moe_mail": 2}

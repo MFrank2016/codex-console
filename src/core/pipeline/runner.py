@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import fields
 from datetime import UTC, datetime
 from typing import Any
@@ -10,7 +11,8 @@ from src.database import crud
 from src.database.models import PipelineStepRun
 
 from .context import PipelineContext
-from .definitions import PipelineDefinition
+from .definitions import PipelineDefinition, StepDefinition
+from .errors import PipelineStepExecutionError, PipelineStepFailureContext
 
 
 class PipelineRunner:
@@ -67,10 +69,23 @@ class PipelineRunner:
             )
 
             try:
-                payload = step.handler(ctx) or {}
+                payload, retry_metadata = self._execute_step_with_retry(step, ctx)
                 self._apply_payload(ctx, payload)
             except Exception as exc:
-                self._finalize_step(step_run, started_at, status="failed", error_message=str(exc))
+                retry_metadata = getattr(exc, "_pipeline_retry_metadata", None) or self._build_default_retry_metadata(step)
+                failure_metadata = {
+                    **retry_metadata,
+                    "failure_stage": step.step_key,
+                    "step_key": step.step_key,
+                    "retryable": bool(retry_metadata.get("retry_attempts_used")),
+                }
+                self._finalize_step(
+                    step_run,
+                    started_at,
+                    status="failed",
+                    error_message=str(exc),
+                    metadata_json=failure_metadata,
+                )
                 step_snapshot.update(
                     {
                         "status": "failed",
@@ -94,9 +109,25 @@ class PipelineRunner:
                     pipeline_started_at=pipeline_started_at,
                     total_steps=len(pipeline.steps),
                 )
-                raise
+                raise PipelineStepExecutionError(
+                    PipelineStepFailureContext(
+                        pipeline_key=pipeline.pipeline_key,
+                        step_key=step.step_key,
+                        failure_stage=step.step_key,
+                        error_message=str(exc),
+                        retryable=bool(retry_metadata.get("retry_attempts_used")),
+                        attempt_count=int(retry_metadata.get("attempt_count") or 1),
+                        retry_reasons=list(retry_metadata.get("retry_reasons") or []),
+                        metadata=failure_metadata,
+                    )
+                ) from exc
 
-            self._finalize_step(step_run, started_at, status="completed")
+            self._finalize_step(
+                step_run,
+                started_at,
+                status="completed",
+                metadata_json=retry_metadata,
+            )
             step_snapshot.update(
                 {
                     "status": "completed",
@@ -152,6 +183,73 @@ class PipelineRunner:
             }
         )
 
+    def _normalize_transient_markers(self, markers: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            str(marker).strip().lower()
+            for marker in markers
+            if str(marker).strip()
+        )
+
+    def _build_default_retry_metadata(self, step: StepDefinition) -> dict[str, Any]:
+        return {
+            "attempt_count": 1,
+            "retry_attempts_used": 0,
+            "retry_reasons": [],
+            "matched_transient_marker": None,
+        }
+
+    def _should_retry_step(self, exc: Exception, step: StepDefinition) -> tuple[bool, str | None]:
+        markers = self._normalize_transient_markers(step.transient_markers)
+        if int(step.retry_attempts or 1) <= 1 or not markers:
+            return False, None
+
+        error_text = str(exc).lower()
+        matched_marker = next((marker for marker in markers if marker in error_text), None)
+        return matched_marker is not None, matched_marker
+
+    def _execute_step_with_retry(
+        self,
+        step: StepDefinition,
+        ctx: PipelineContext,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        max_attempts = max(1, int(step.retry_attempts or 1))
+        retry_backoff_seconds = max(0.0, float(step.retry_backoff_seconds or 0.0))
+        retry_reasons: list[str] = []
+        matched_transient_marker: str | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                payload = step.handler(ctx) or {}
+                return payload, {
+                    "attempt_count": attempt,
+                    "retry_attempts_used": attempt - 1,
+                    "retry_reasons": retry_reasons,
+                    "matched_transient_marker": matched_transient_marker,
+                }
+            except Exception as exc:
+                should_retry, current_marker = self._should_retry_step(exc, step)
+                if current_marker is not None:
+                    matched_transient_marker = current_marker
+
+                if not should_retry or attempt >= max_attempts:
+                    setattr(
+                        exc,
+                        "_pipeline_retry_metadata",
+                        {
+                            "attempt_count": attempt,
+                            "retry_attempts_used": len(retry_reasons),
+                            "retry_reasons": retry_reasons,
+                            "matched_transient_marker": matched_transient_marker,
+                        },
+                    )
+                    raise
+
+                retry_reasons.append(str(exc))
+                if retry_backoff_seconds > 0:
+                    time.sleep(retry_backoff_seconds)
+
+        raise RuntimeError(f"step retry loop exhausted unexpectedly: {step.step_key}")
+
     def _finalize_step(
         self,
         step_run: PipelineStepRun,
@@ -159,12 +257,14 @@ class PipelineRunner:
         *,
         status: str,
         error_message: str | None = None,
+        metadata_json: dict[str, Any] | None = None,
     ) -> None:
         completed_at = self._utc_now()
         step_run.status = status
         step_run.completed_at = completed_at
         step_run.duration_ms = self._duration_ms(started_at, completed_at)
         step_run.error_message = error_message
+        step_run.metadata_json = metadata_json or {}
         self.db.commit()
         self.db.refresh(step_run)
 

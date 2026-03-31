@@ -4,7 +4,9 @@ import pytest
 
 from src.config.constants import EmailServiceType
 from src.core.email_suffix_blacklist import RegistrationDisallowedSuffixError
-from src.core.registration_job import _resolve_email_service, run_registration_job
+from src.core.pipeline.errors import PipelineStepExecutionError, PipelineStepFailureContext
+from src.core.pipeline.context import PipelineContext
+from src.core.registration_job import _build_pipeline_result_payload, _resolve_email_service, run_registration_job
 from src.database import crud
 from src.database.models import Base, EmailService, EmailSuffixBlacklist
 from src.database.repositories import registration_failure_repository as failure_repo
@@ -24,47 +26,7 @@ def temp_db(tmp_path):
 
 def test_run_registration_job_retries_full_round_after_auto_blacklisting(temp_db, monkeypatch):
     logs: list[str] = []
-    stats = {"service_create": 0, "engine_init": 0, "engine_run": 0}
-
-    class FakeResult:
-        def __init__(self, *, success: bool, email: str, error_message: str | None = None):
-            self.success = success
-            self.email = email
-            self.error_message = error_message
-
-        def to_dict(self):
-            return {
-                "success": self.success,
-                "email": self.email,
-                "error_message": self.error_message,
-            }
-
-    class FakeEngine:
-        def __init__(self, **_kwargs):
-            stats["engine_init"] += 1
-
-        def run(self):
-            stats["engine_run"] += 1
-            if stats["engine_run"] == 1:
-                raise RegistrationDisallowedSuffixError(
-                    email="first@blocked.test",
-                    suffix="blocked.test",
-                    detail="registration disallowed: blocked.test",
-                )
-            return FakeResult(success=True, email="second@ok.test")
-
-        def save_to_database(self, result):
-            crud.create_account(
-                temp_db,
-                email=result.email,
-                email_service="tempmail",
-                password="p",
-                client_id="cid",
-            )
-            return True
-
-        def flush_task_logs(self):
-            return None
+    stats = {"service_create": 0, "pipeline_runs": 0}
 
     monkeypatch.setattr(
         "src.core.registration_job._resolve_email_service",
@@ -74,7 +36,23 @@ def test_run_registration_job_retries_full_round_after_auto_blacklisting(temp_db
         "src.core.registration_job.EmailServiceFactory.create",
         lambda *_args, **_kwargs: stats.__setitem__("service_create", stats["service_create"] + 1) or object(),
     )
-    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FakeEngine)
+    
+    def fake_run_pipeline_registration(*, runtime_ref=None, **_kwargs):
+        stats["pipeline_runs"] += 1
+        if runtime_ref is not None:
+            runtime_ref["runtime"] = types.SimpleNamespace(proxy_ip=None)
+        if stats["pipeline_runs"] == 1:
+            raise RegistrationDisallowedSuffixError(
+                email="first@blocked.test",
+                suffix="blocked.test",
+                detail="registration disallowed: blocked.test",
+            )
+        return (
+            types.SimpleNamespace(id=101, email="second@ok.test"),
+            {"success": True, "email": "second@ok.test"},
+        )
+
+    monkeypatch.setattr("src.core.registration_job._run_pipeline_registration", fake_run_pipeline_registration)
     monkeypatch.setattr(
         "src.core.registration_job.get_settings",
         lambda: types.SimpleNamespace(registration_max_retries=1),
@@ -92,8 +70,7 @@ def test_run_registration_job_retries_full_round_after_auto_blacklisting(temp_db
     assert result.success is True
     assert result.email == "second@ok.test"
     assert stats["service_create"] == 2
-    assert stats["engine_init"] == 2
-    assert stats["engine_run"] == 2
+    assert stats["pipeline_runs"] == 2
 
     row = temp_db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.suffix == "blocked.test").first()
     assert row is not None
@@ -134,40 +111,6 @@ def test_resolve_email_service_auto_selected_outlook_injects_proxy_url(temp_db):
 def test_run_registration_job_logs_runtime_context_for_current_pipeline(temp_db, monkeypatch):
     logs: list[str] = []
 
-    class FakeResult:
-        success = True
-        email = "logger@test.dev"
-        error_message = None
-
-        def to_dict(self):
-            return {
-                "success": True,
-                "email": self.email,
-                "metadata": {
-                    "proxy_ip": "8.8.8.8",
-                },
-            }
-
-    class FakeEngine:
-        def __init__(self, **_kwargs):
-            self.proxy_ip = "8.8.8.8"
-
-        def run(self):
-            return FakeResult()
-
-        def save_to_database(self, result):
-            crud.create_account(
-                temp_db,
-                email=result.email,
-                email_service="tempmail",
-                password="p",
-                client_id="cid",
-            )
-            return True
-
-        def flush_task_logs(self):
-            return None
-
     monkeypatch.setattr(
         "src.core.registration_job._resolve_email_service",
         lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, 33),
@@ -176,7 +119,20 @@ def test_run_registration_job_logs_runtime_context_for_current_pipeline(temp_db,
         "src.core.registration_job.EmailServiceFactory.create",
         lambda *_args, **_kwargs: object(),
     )
-    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FakeEngine)
+    
+    def fake_run_pipeline_registration(*, runtime_ref=None, **_kwargs):
+        if runtime_ref is not None:
+            runtime_ref["runtime"] = types.SimpleNamespace(proxy_ip="8.8.8.8")
+        return (
+            types.SimpleNamespace(id=303, email="logger@test.dev"),
+            {
+                "success": True,
+                "email": "logger@test.dev",
+                "metadata": {"proxy_ip": "8.8.8.8"},
+            },
+        )
+
+    monkeypatch.setattr("src.core.registration_job._run_pipeline_registration", fake_run_pipeline_registration)
     monkeypatch.setattr(
         "src.core.registration_job.get_settings",
         lambda: types.SimpleNamespace(registration_max_retries=0),
@@ -250,6 +206,131 @@ def test_run_registration_job_logs_runtime_context_for_codexgen_pipeline(temp_db
     assert any("[运行上下文]" in item and "proxy_ip=9.9.9.9" in item for item in logs)
 
 
+def test_run_registration_job_dispatches_current_pipeline_through_shared_pipeline_runner(temp_db, monkeypatch):
+    task_uuid = "task-current-dispatch"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job._run_pipeline_registration",
+        lambda **kwargs: captured.update({"pipeline_key": kwargs["pipeline_key"]}) or (
+            types.SimpleNamespace(id=202, email="current@test.dev"),
+            {
+                "success": True,
+                "email": "current@test.dev",
+                "metadata": {"proxy_ip": "7.7.7.7"},
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.get_settings",
+        lambda: types.SimpleNamespace(registration_max_retries=0),
+    )
+
+    class LegacyEngineShouldNotRun:
+        def __init__(self, **_kwargs):
+            raise AssertionError("legacy RegistrationEngine path should not run for current_pipeline")
+
+    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", LegacyEngineShouldNotRun)
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-current",
+        email_service_config={},
+        pipeline_key="current_pipeline",
+        task_uuid=task_uuid,
+    )
+
+    assert result.success is True
+    assert result.email == "current@test.dev"
+    assert captured["pipeline_key"] == "current_pipeline"
+
+
+def test_run_registration_job_records_structured_pipeline_failure_fields(temp_db, monkeypatch):
+    task_uuid = "task-structured-pipeline-failure"
+    crud.create_registration_task(temp_db, task_uuid=task_uuid)
+
+    monkeypatch.setattr(
+        "src.core.registration_job._resolve_email_service",
+        lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
+    )
+    monkeypatch.setattr(
+        "src.core.registration_job.EmailServiceFactory.create",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    def fake_run_pipeline_registration(*, runtime_ref=None, **_kwargs):
+        if runtime_ref is not None:
+            runtime_ref["runtime"] = types.SimpleNamespace(proxy_ip="4.4.4.4")
+        raise PipelineStepExecutionError(
+            PipelineStepFailureContext(
+                pipeline_key="current_pipeline",
+                step_key="submit_login_password",
+                failure_stage="submit_login_password",
+                error_message="unexpected login page type",
+                retryable=True,
+                attempt_count=2,
+                retry_reasons=["timed out"],
+                metadata={"foo": "bar"},
+            )
+        )
+
+    monkeypatch.setattr("src.core.registration_job._run_pipeline_registration", fake_run_pipeline_registration)
+    monkeypatch.setattr(
+        "src.core.registration_job.get_settings",
+        lambda: types.SimpleNamespace(registration_max_retries=0),
+    )
+
+    result = run_registration_job(
+        db=temp_db,
+        email_service_type="tempmail",
+        email_service_id=None,
+        proxy="http://proxy-structured",
+        email_service_config={},
+        pipeline_key="current_pipeline",
+        task_uuid=task_uuid,
+    )
+
+    rows = failure_repo.list_registration_failure_records(temp_db)
+
+    assert result.success is False
+    assert len(rows) == 1
+    assert rows[0].failure_stage == "submit_login_password"
+    assert rows[0].step_key == "submit_login_password"
+    assert rows[0].retryable is True
+
+
+def test_build_pipeline_result_payload_promotes_token_source_to_top_level():
+    ctx = PipelineContext(
+        task_uuid="task-token-source",
+        pipeline_key="current_pipeline",
+        email="tester@example.com",
+        password="StrongPass123!",
+        metadata={
+            "token_source": "registration_capture",
+            "account_id": "acct-captured",
+            "access_token": "access-captured",
+            "session_token": "session-captured",
+        },
+    )
+
+    payload = _build_pipeline_result_payload(ctx)
+
+    assert payload["metadata"]["token_source"] == "registration_capture"
+    assert payload["token_source"] == "registration_capture"
+
+
 def test_run_registration_job_logs_unknown_proxy_ip_when_failure_has_no_ip(temp_db, monkeypatch):
     logs: list[str] = []
 
@@ -297,22 +378,7 @@ def test_run_registration_job_logs_unknown_proxy_ip_when_failure_has_no_ip(temp_
 
 
 def test_run_registration_job_fails_after_exceeding_max_retries(temp_db, monkeypatch):
-    stats = {"service_create": 0, "engine_run": 0}
-
-    class AlwaysDisallowedEngine:
-        def __init__(self, **_kwargs):
-            return None
-
-        def run(self):
-            stats["engine_run"] += 1
-            raise RegistrationDisallowedSuffixError(
-                email=f"u{stats['engine_run']}@blocked.test",
-                suffix="blocked.test",
-                detail="registration disallowed forever",
-            )
-
-        def flush_task_logs(self):
-            return None
+    stats = {"service_create": 0, "pipeline_runs": 0}
 
     monkeypatch.setattr(
         "src.core.registration_job._resolve_email_service",
@@ -322,7 +388,18 @@ def test_run_registration_job_fails_after_exceeding_max_retries(temp_db, monkeyp
         "src.core.registration_job.EmailServiceFactory.create",
         lambda *_args, **_kwargs: stats.__setitem__("service_create", stats["service_create"] + 1) or object(),
     )
-    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", AlwaysDisallowedEngine)
+    
+    def fake_run_pipeline_registration(*, runtime_ref=None, **_kwargs):
+        stats["pipeline_runs"] += 1
+        if runtime_ref is not None:
+            runtime_ref["runtime"] = types.SimpleNamespace(proxy_ip=None)
+        raise RegistrationDisallowedSuffixError(
+            email=f"u{stats['pipeline_runs']}@blocked.test",
+            suffix="blocked.test",
+            detail="registration disallowed forever",
+        )
+
+    monkeypatch.setattr("src.core.registration_job._run_pipeline_registration", fake_run_pipeline_registration)
     monkeypatch.setattr(
         "src.core.registration_job.get_settings",
         lambda: types.SimpleNamespace(registration_max_retries=1),
@@ -338,7 +415,7 @@ def test_run_registration_job_fails_after_exceeding_max_retries(temp_db, monkeyp
 
     assert result.success is False
     assert "registration disallowed forever" in (result.error_message or "")
-    assert stats["engine_run"] == 2
+    assert stats["pipeline_runs"] == 2
     assert stats["service_create"] == 2
 
     row = temp_db.query(EmailSuffixBlacklist).filter(EmailSuffixBlacklist.suffix == "blocked.test").first()
@@ -355,41 +432,6 @@ def test_run_registration_job_auto_blacklist_uses_email_suffix_fallback_and_rese
     stats = {"engine_run": 0, "rollback": 0}
     update_calls: list[dict] = []
 
-    class FakeResult:
-        success = True
-        email = "retry-ok@test.dev"
-        error_message = None
-
-        def to_dict(self):
-            return {"success": True, "email": self.email}
-
-    class FallbackSuffixEngine:
-        def __init__(self, **_kwargs):
-            return None
-
-        def run(self):
-            stats["engine_run"] += 1
-            if stats["engine_run"] == 1:
-                raise RegistrationDisallowedSuffixError(
-                    email="u@blocked.test",
-                    suffix=None,
-                    detail="registration disallowed without suffix",
-                )
-            return FakeResult()
-
-        def save_to_database(self, result):
-            crud.create_account(
-                temp_db,
-                email=result.email,
-                email_service="tempmail",
-                password="p",
-                client_id="cid",
-            )
-            return True
-
-        def flush_task_logs(self):
-            return None
-
     monkeypatch.setattr(
         "src.core.registration_job._resolve_email_service",
         lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
@@ -398,7 +440,23 @@ def test_run_registration_job_auto_blacklist_uses_email_suffix_fallback_and_rese
         "src.core.registration_job.EmailServiceFactory.create",
         lambda *_args, **_kwargs: object(),
     )
-    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FallbackSuffixEngine)
+
+    def fake_run_pipeline_registration(*, runtime_ref=None, **_kwargs):
+        stats["engine_run"] += 1
+        if runtime_ref is not None:
+            runtime_ref["runtime"] = types.SimpleNamespace(proxy_ip=None)
+        if stats["engine_run"] == 1:
+            raise RegistrationDisallowedSuffixError(
+                email="u@blocked.test",
+                suffix=None,
+                detail="registration disallowed without suffix",
+            )
+        return (
+            types.SimpleNamespace(id=404, email="retry-ok@test.dev"),
+            {"success": True, "email": "retry-ok@test.dev"},
+        )
+
+    monkeypatch.setattr("src.core.registration_job._run_pipeline_registration", fake_run_pipeline_registration)
     monkeypatch.setattr(
         "src.core.registration_job.get_settings",
         lambda: types.SimpleNamespace(registration_max_retries=1),
@@ -442,42 +500,6 @@ def test_run_registration_job_records_failure_attempt_before_retry_success(temp_
     crud.create_registration_task(temp_db, task_uuid=task_uuid)
     stats = {"run_calls": 0}
 
-    class FakeResult:
-        success = True
-        email = "second@ok.test"
-        error_message = None
-
-        def to_dict(self):
-            return {"success": True, "email": self.email}
-
-    class FakeEngine:
-        def __init__(self, **_kwargs):
-            self.generated_user_profile = {"name": "Alice Smith", "birthdate": "1994-02-03"}
-            self.proxy_ip = "1.1.1.1"
-
-        def run(self):
-            stats["run_calls"] += 1
-            if stats["run_calls"] == 1:
-                raise RegistrationDisallowedSuffixError(
-                    email="first@blocked.test",
-                    suffix="blocked.test",
-                    detail="registration disallowed: blocked.test",
-                )
-            return FakeResult()
-
-        def save_to_database(self, result):
-            crud.create_account(
-                temp_db,
-                email=result.email,
-                email_service="tempmail",
-                password="p",
-                client_id="cid",
-            )
-            return True
-
-        def flush_task_logs(self):
-            return None
-
     monkeypatch.setattr(
         "src.core.registration_job._resolve_email_service",
         lambda **_kwargs: (EmailServiceType.TEMPMAIL, {}, None),
@@ -486,7 +508,26 @@ def test_run_registration_job_records_failure_attempt_before_retry_success(temp_
         "src.core.registration_job.EmailServiceFactory.create",
         lambda *_args, **_kwargs: object(),
     )
-    monkeypatch.setattr("src.core.registration_job.RegistrationEngine", FakeEngine)
+
+    def fake_run_pipeline_registration(*, runtime_ref=None, **_kwargs):
+        stats["run_calls"] += 1
+        if runtime_ref is not None:
+            runtime_ref["runtime"] = types.SimpleNamespace(
+                generated_user_profile={"name": "Alice Smith", "birthdate": "1994-02-03"},
+                proxy_ip="1.1.1.1",
+            )
+        if stats["run_calls"] == 1:
+            raise RegistrationDisallowedSuffixError(
+                email="first@blocked.test",
+                suffix="blocked.test",
+                detail="registration disallowed: blocked.test",
+            )
+        return (
+            types.SimpleNamespace(id=505, email="second@ok.test"),
+            {"success": True, "email": "second@ok.test"},
+        )
+
+    monkeypatch.setattr("src.core.registration_job._run_pipeline_registration", fake_run_pipeline_registration)
     monkeypatch.setattr(
         "src.core.registration_job.get_settings",
         lambda: types.SimpleNamespace(registration_max_retries=1),

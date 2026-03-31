@@ -434,3 +434,107 @@ def test_codexgen_fallback_caches_generated_user_profile(monkeypatch):
 
     assert ok is True
     assert runtime._engine.generated_user_profile == {"name": "Codex User", "birthdate": "1990-01-02"}  # noqa: SLF001
+
+
+def test_codexgen_pipeline_configures_retry_for_transient_network_steps():
+    pipeline = get_pipeline("codexgen_pipeline")
+    assert pipeline is not None
+    steps = {item.step_key: item for item in pipeline.steps}
+
+    for step_key in (
+        "init_auth_session",
+        "prepare_authorize_flow",
+        "submit_signup_email",
+        "submit_login_email",
+        "submit_login_password",
+        "exchange_oauth_token",
+    ):
+        assert steps[step_key].retry_attempts > 1
+        assert "timed out" in steps[step_key].transient_markers
+
+
+def test_codexgen_runtime_prepare_authorize_flow_uses_shared_engine_metadata(monkeypatch):
+    runtime = CodexgenPipelineRuntime(email_service=FakeSharedEmailService(), proxy_url=None, callback_logger=None, task_uuid=None)
+
+    monkeypatch.setattr(
+        runtime._engine,
+        "_init_session",
+        lambda: (_ for _ in ()).throw(AssertionError("should use shared prepare_authorize_flow helper")),
+    )
+
+    def _fake_prepare(label):
+        runtime._engine._auth_entry_mode_used = "chatgpt_web"  # noqa: SLF001
+        runtime._engine._auth_entry_mode_fallback_hit = True  # noqa: SLF001
+        return "did-fallback", "sentinel-fallback"
+
+    monkeypatch.setattr(
+        runtime._engine,
+        "_prepare_authorize_flow",
+        _fake_prepare,
+    )
+
+    payload = runtime.run_prepare_authorize_flow_step()
+
+    assert payload["metadata"]["auth_device_id"] == "did-fallback"
+    assert payload["metadata"]["auth_sentinel_token"] == "sentinel-fallback"
+    assert payload["metadata"]["auth_entry_mode_used"] == "chatgpt_web"
+    assert payload["metadata"]["auth_entry_mode_fallback_hit"] is True
+
+
+def test_codexgen_runtime_prepare_token_acquisition_prefers_registration_capture(monkeypatch):
+    runtime = CodexgenPipelineRuntime(email_service=FakeSharedEmailService(), proxy_url=None, callback_logger=None, task_uuid=None)
+    runtime._engine._is_existing_account = False  # noqa: SLF001
+
+    def _fake_capture():
+        runtime._engine._registration_tokens = {  # noqa: SLF001
+            "account_id": "acct-captured",
+            "access_token": "access-captured",
+            "refresh_token": "",
+            "id_token": "",
+            "session_token": "session-captured",
+        }
+        runtime._engine._token_source = "registration_capture"  # noqa: SLF001
+        return True
+
+    monkeypatch.setattr(
+        runtime._engine,
+        "_try_capture_registration_tokens",
+        _fake_capture,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runtime._engine,
+        "_prepare_authorize_flow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not relogin when registration capture succeeds")),
+    )
+
+    payload = runtime.run_prepare_token_acquisition_step()
+
+    assert payload["metadata"]["token_source"] == "registration_capture"
+    assert payload["metadata"]["token_acquired_via_relogin"] is False
+
+
+def test_codexgen_runtime_exchange_oauth_token_uses_cached_registration_tokens_without_callback(monkeypatch):
+    runtime = CodexgenPipelineRuntime(email_service=FakeSharedEmailService(), proxy_url=None, callback_logger=None, task_uuid=None)
+    runtime._engine._registration_tokens = {  # noqa: SLF001
+        "account_id": "acct-captured",
+        "access_token": "access-captured",
+        "refresh_token": "",
+        "id_token": "",
+        "session_token": "session-captured",
+    }
+    runtime._engine._token_source = "registration_capture"  # noqa: SLF001
+
+    monkeypatch.setattr(
+        runtime._engine,
+        "_handle_oauth_callback",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not exchange oauth callback when capture already has tokens")),
+    )
+
+    payload = runtime.run_exchange_oauth_token_step(callback_url=None)
+
+    assert payload["metadata"]["account_id"] == "acct-captured"
+    assert payload["metadata"]["access_token"] == "access-captured"
+    assert payload["metadata"]["session_token"] == "session-captured"
+    assert payload["metadata"]["token_source"] == "registration_capture"
+    assert payload["metadata"]["token_acquired_via_relogin"] is False

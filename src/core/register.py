@@ -7,11 +7,13 @@ import re
 import json
 import time
 import logging
+import base64
 import secrets
 import string
 from typing import Optional, Dict, Any, Tuple, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import parse_qsl, urlencode, unquote, urljoin, urlparse
 
 from curl_cffi import requests as cffi_requests
 
@@ -57,6 +59,7 @@ class RegistrationResult:
     logs: list = None
     metadata: dict = None
     source: str = "register"  # 'register' 或 'login'，区分账号来源
+    token_source: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -74,6 +77,7 @@ class RegistrationResult:
             "logs": self.logs or [],
             "metadata": self.metadata or {},
             "source": self.source,
+            "token_source": self.token_source,
         }
 
 
@@ -145,6 +149,12 @@ class RegistrationEngine:
         self._step_token_info: Dict[str, Any] = {}
         self._auth_continue_url: Optional[str] = None
         self._auth_page_type: Optional[str] = None
+        self._auth_entry_mode_used: Optional[str] = None
+        self._auth_entry_mode_fallback_hit: bool = False
+        self._registration_tokens: Optional[Dict[str, Any]] = None
+        self._registration_callback_url: Optional[str] = None
+        self._last_registration_response_payload: Dict[str, Any] | None = None
+        self._token_source: Optional[str] = None
         self.generated_user_profile: Optional[Dict[str, Any]] = None
         self.proxy_ip: Optional[str] = None
         self.ip_location: Optional[str] = None
@@ -548,6 +558,475 @@ class RegistrationEngine:
         else:
             self._auth_continue_url = None
 
+    def _get_chatgpt_base(self) -> str:
+        settings = get_settings()
+        base = str(getattr(settings, "registration_chatgpt_base", "") or "https://chatgpt.com").strip()
+        return base.rstrip("/") or "https://chatgpt.com"
+
+    def _normalize_auth_entry_mode(self, value: str | None) -> str:
+        normalized = str(value or "").strip().lower().replace("-", "_")
+        if normalized in {"chatgpt", "chatgpt.com", "chatgpt_web"}:
+            return "chatgpt_web"
+        return "direct_auth"
+
+    def _iter_auth_entry_modes(self) -> tuple[str, ...]:
+        settings = get_settings()
+        primary = self._normalize_auth_entry_mode(getattr(settings, "registration_entry_mode", "direct_auth"))
+        fallback = self._normalize_auth_entry_mode(getattr(settings, "registration_entry_mode_fallback", "chatgpt_web"))
+
+        ordered: list[str] = []
+        for mode in (primary, fallback):
+            if mode not in ordered:
+                ordered.append(mode)
+        return tuple(ordered or ["direct_auth"])
+
+    def _prepare_authorize_flow_via_direct_auth(self, label: str) -> Tuple[Optional[str], Optional[str]]:
+        """经由 auth.openai.com 直接准备 OAuth 授权。"""
+        self._log(f"{label}: 先把会话热热身...")
+        if not self.session and not self._init_session():
+            return None, None
+
+        self._log(f"{label}: OAuth 流程准备开跑，系好鞋带...")
+        if not self._start_oauth():
+            return None, None
+
+        self._log(f"{label}: 领取 Device ID 通行证...")
+        did = self._get_device_id()
+        if not did:
+            return None, None
+
+        self._log(f"{label}: 解一道 Sentinel POW 小题，答对才给进...")
+        sen_token = self._check_sentinel(did)
+        if not sen_token:
+            return did, None
+
+        self._log(f"{label}: Sentinel 点头放行，继续前进")
+        return did, sen_token
+
+    def _bootstrap_session_via_chatgpt_web(self, label: str) -> bool:
+        """先经由 ChatGPT Web 预热 cookies，再切回 auth 链路。"""
+        if not self.session and not self._init_session():
+            return False
+
+        base = self._get_chatgpt_base()
+        try:
+            self._log(f"{label}: 先去 ChatGPT Web 热启动一下会话...")
+            response = self.session.get(
+                f"{base}/",
+                timeout=20,
+                allow_redirects=True,
+            )
+            self._log(f"{label}: ChatGPT Web 预热状态: {response.status_code}")
+            return response.status_code < 500
+        except Exception as exc:
+            self._log(f"{label}: ChatGPT Web 预热失败: {exc}", "warning")
+            return False
+
+    def _prepare_authorize_flow_via_chatgpt_web(self, label: str) -> Tuple[Optional[str], Optional[str]]:
+        """经由 ChatGPT Web 预热后，再走 auth.openai.com OAuth 准备。"""
+        if not self._bootstrap_session_via_chatgpt_web(label):
+            return None, None
+        return self._prepare_authorize_flow_via_direct_auth(label)
+
+    def _extract_oauth_callback_params_from_url(self, value: str | None) -> Optional[Dict[str, str]]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+
+        if text.startswith("/api/auth/callback/openai"):
+            text = f"{self._get_chatgpt_base()}{text}"
+
+        parsed = urlparse(text)
+        if not parsed.query:
+            return None
+
+        params = {
+            str(key): str(val)
+            for key, val in parse_qsl(parsed.query, keep_blank_values=False)
+            if str(key).strip() and str(val).strip()
+        }
+        if not params.get("code"):
+            return None
+
+        ordered: list[tuple[str, str]] = []
+        for key in ("code", "scope", "state"):
+            if params.get(key):
+                ordered.append((key, params[key]))
+        for key, value in params.items():
+            if key not in {"code", "scope", "state"}:
+                ordered.append((key, value))
+        return dict(ordered)
+
+    def _extract_oauth_callback_params_from_payload(self, payload: Any, *, _depth: int = 0) -> Optional[Dict[str, str]]:
+        if _depth > 5:
+            return None
+
+        if isinstance(payload, dict):
+            for key in ("oauth_callback", "callback", "callback_params"):
+                nested = payload.get(key)
+                if isinstance(nested, dict):
+                    normalized = {
+                        str(k): str(v)
+                        for k, v in nested.items()
+                        if str(k).strip() and str(v).strip()
+                    }
+                    if normalized.get("code"):
+                        return normalized
+
+            for key in ("continue_url", "callback_url", "url", "redirect_url"):
+                params = self._extract_oauth_callback_params_from_url(payload.get(key))
+                if params:
+                    return params
+
+            for value in payload.values():
+                params = self._extract_oauth_callback_params_from_payload(value, _depth=_depth + 1)
+                if params:
+                    return params
+            return None
+
+        if isinstance(payload, (list, tuple)):
+            for item in payload:
+                params = self._extract_oauth_callback_params_from_payload(item, _depth=_depth + 1)
+                if params:
+                    return params
+            return None
+
+        if isinstance(payload, str):
+            return self._extract_oauth_callback_params_from_url(payload)
+
+        return None
+
+    def _extract_continue_url_from_payload(self, payload: Dict[str, Any] | None) -> str:
+        if not isinstance(payload, dict):
+            return ""
+
+        for key in ("continue_url", "callback_url", "url", "redirect_url"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+
+        page_payload = (payload.get("page") or {}).get("payload") if isinstance(payload.get("page"), dict) else None
+        if isinstance(page_payload, dict):
+            value = str(page_payload.get("url") or "").strip()
+            if value:
+                return value
+
+        return ""
+
+    def _iter_session_cookie_values(self) -> list[str]:
+        jar = getattr(self.session, "cookies", None)
+        if jar is None:
+            return []
+
+        values: list[str] = []
+        try:
+            for cookie in list(jar):
+                name = str(getattr(cookie, "name", "") or "").strip().lower()
+                if name and not (
+                    name.startswith("oai-")
+                    or any(marker in name for marker in ("auth", "session", "oauth", "login", "callback", "redirect"))
+                ):
+                    continue
+                values.append(str(getattr(cookie, "value", "") or "").strip())
+        except Exception:
+            if isinstance(jar, dict):
+                values.extend(str(value or "").strip() for value in jar.values())
+        return [value for value in values if value]
+
+    def _decode_base64_json(self, text: str) -> Any:
+        candidate = text.split(".", 1)[0] if "." in text else text
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", candidate):
+            return None
+        padding = (-len(candidate)) % 4
+        try:
+            decoded = base64.urlsafe_b64decode(candidate + ("=" * padding)).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            return None
+
+    def _extract_oauth_callback_params_from_session_cookies(self) -> Optional[Dict[str, str]]:
+        for raw_value in self._iter_session_cookie_values():
+            candidates = [str(raw_value or "").strip()]
+            decoded_url = unquote(candidates[0])
+            if decoded_url and decoded_url not in candidates:
+                candidates.append(decoded_url)
+            decoded_json = self._decode_base64_json(candidates[0])
+            if decoded_json is not None:
+                params = self._extract_oauth_callback_params_from_payload(decoded_json)
+                if params:
+                    return params
+            for candidate in candidates:
+                params = self._extract_oauth_callback_params_from_payload(candidate)
+                if params:
+                    return params
+        return None
+
+    def _extract_oauth_callback_params_from_consent_session(self, consent_url: str | None) -> Optional[Dict[str, str]]:
+        if not self.session:
+            return None
+
+        target = str(consent_url or "").strip()
+        if not target:
+            return None
+        if target.startswith("/"):
+            target = urljoin("https://auth.openai.com", target)
+
+        callback_url = self._follow_redirects(target)
+        if not callback_url:
+            workspace_id = self._parse_workspace_id_from_auth_cookie()
+            if workspace_id:
+                continue_url = self._select_workspace(workspace_id)
+                if continue_url:
+                    callback_url = self._follow_redirects(continue_url)
+
+        return self._extract_oauth_callback_params_from_url(callback_url)
+
+    def _decode_jwt_payload(self, token: str) -> Dict[str, Any]:
+        parts = str(token or "").split(".")
+        if len(parts) < 2:
+            return {}
+        payload = parts[1]
+        padding = (-len(payload)) % 4
+        try:
+            decoded = base64.urlsafe_b64decode(payload + ("=" * padding))
+            data = json.loads(decoded.decode("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _find_jwt_in_data(self, data: Any, *, _depth: int = 0) -> str:
+        if _depth > 5:
+            return ""
+        if isinstance(data, str):
+            token = str(data or "").strip()
+            payload = self._decode_jwt_payload(token)
+            if payload and any(key in payload for key in ("exp", "iat", "sub", "email")):
+                return token
+            return ""
+        if isinstance(data, dict):
+            for value in data.values():
+                token = self._find_jwt_in_data(value, _depth=_depth + 1)
+                if token:
+                    return token
+            return ""
+        if isinstance(data, (list, tuple)):
+            for item in data:
+                token = self._find_jwt_in_data(item, _depth=_depth + 1)
+                if token:
+                    return token
+            return ""
+        return ""
+
+    def _build_chatgpt_session_token_result(
+        self,
+        *,
+        auth_code: str | None,
+        callback_params: Dict[str, str] | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.session:
+            return None
+
+        base = self._get_chatgpt_base()
+        effective_callback_params = {
+            str(key): str(value)
+            for key, value in (callback_params or {}).items()
+            if str(key).strip() and str(value).strip()
+        }
+        if auth_code and "code" not in effective_callback_params:
+            effective_callback_params["code"] = str(auth_code)
+
+        if effective_callback_params.get("code"):
+            ordered_items: list[tuple[str, str]] = []
+            for key in ("code", "scope", "state"):
+                value = effective_callback_params.pop(key, "")
+                if value:
+                    ordered_items.append((key, value))
+            for key, value in effective_callback_params.items():
+                ordered_items.append((key, value))
+
+            callback_url = f"{base}/api/auth/callback/openai?{urlencode(ordered_items)}"
+            try:
+                response = self.session.get(
+                    callback_url,
+                    headers={
+                        "referer": f"{base}/",
+                        "accept": "text/html,application/xhtml+xml",
+                    },
+                    allow_redirects=True,
+                    timeout=30,
+                )
+                self._registration_callback_url = str(getattr(response, "url", "") or callback_url)
+            except Exception as exc:
+                self._log(f"注册后 ChatGPT callback 请求失败，准备回退 relogin: {exc}", "warning")
+                return None
+
+        session_referer = str(self._registration_callback_url or f"{base}/").strip() or f"{base}/"
+        try:
+            response = self.session.get(
+                f"{base}/api/auth/session",
+                headers={
+                    "accept": "application/json",
+                    "referer": session_referer,
+                },
+                timeout=30,
+            )
+        except Exception as exc:
+            self._log(f"注册后 ChatGPT session 请求失败，准备回退 relogin: {exc}", "warning")
+            return None
+
+        if response.status_code != 200:
+            self._log(f"注册后 ChatGPT session 返回异常状态: HTTP {response.status_code}", "warning")
+            return None
+
+        try:
+            session_data = response.json()
+        except Exception as exc:
+            self._log(f"注册后 ChatGPT session JSON 解析失败: {exc}", "warning")
+            return None
+
+        if not isinstance(session_data, dict):
+            return None
+
+        access_token = str(session_data.get("accessToken") or session_data.get("access_token") or "").strip()
+        if not access_token:
+            access_token = self._find_jwt_in_data(session_data)
+        if not access_token:
+            return None
+
+        payload = self._decode_jwt_payload(access_token)
+        auth_info = payload.get("https://api.openai.com/auth", {}) if isinstance(payload, dict) else {}
+        profile_info = payload.get("https://api.openai.com/profile", {}) if isinstance(payload, dict) else {}
+        if not isinstance(auth_info, dict):
+            auth_info = {}
+        if not isinstance(profile_info, dict):
+            profile_info = {}
+
+        user_info = session_data.get("user") or {}
+        if not isinstance(user_info, dict):
+            user_info = {}
+
+        account_id = str(
+            auth_info.get("chatgpt_account_id")
+            or auth_info.get("account_id")
+            or auth_info.get("chatgpt_user_id")
+            or ""
+        ).strip()
+        session_token = str(
+            session_data.get("sessionToken")
+            or session_data.get("session_token")
+            or (self.session.cookies.get("__Secure-next-auth.session-token") if self.session else "")
+            or ""
+        ).strip()
+        email = str(
+            payload.get("email")
+            or profile_info.get("email")
+            or user_info.get("email")
+            or self.email
+            or ""
+        ).strip()
+
+        return {
+            "account_id": account_id,
+            "access_token": access_token,
+            "refresh_token": "",
+            "id_token": "",
+            "session_token": session_token,
+            "email": email,
+            "exp": payload.get("exp") if isinstance(payload, dict) else None,
+        }
+
+    def _try_capture_registration_tokens(self) -> bool:
+        if self._registration_tokens:
+            self._token_source = "registration_capture"
+            return True
+
+        response_payload = self._last_registration_response_payload or {}
+        callback_params = self._extract_oauth_callback_params_from_payload(response_payload)
+        continue_url = self._extract_continue_url_from_payload(response_payload)
+
+        if not callback_params:
+            callback_params = self._extract_oauth_callback_params_from_session_cookies()
+        if not callback_params and continue_url:
+            callback_params = self._extract_oauth_callback_params_from_consent_session(continue_url)
+        if not callback_params:
+            callback_params = self._extract_oauth_callback_params_from_consent_session(
+                "https://auth.openai.com/sign-in-with-chatgpt/codex/consent"
+            )
+
+        auth_code = str((callback_params or {}).get("code") or "").strip()
+        if not auth_code:
+            return False
+
+        token_info = self._build_chatgpt_session_token_result(
+            auth_code=auth_code,
+            callback_params=callback_params,
+        )
+        if not token_info:
+            return False
+
+        self._registration_tokens = dict(token_info)
+        self._token_source = "registration_capture"
+        self._log("注册完成后直接捕获到了 token，省掉 relogin 二次折返")
+        return True
+
+    def _apply_token_info_to_result(
+        self,
+        *,
+        token_info: Dict[str, Any] | None,
+        token_source: str,
+        workspace_id: str | None = None,
+    ) -> Dict[str, Any]:
+        info = dict(token_info or {})
+        info.setdefault("email", self.email or "")
+        info.setdefault("password", self.password or "")
+        info.setdefault("source", "login" if self._is_existing_account else "register")
+
+        session_token = str(info.get("session_token") or "").strip()
+        if not session_token and self.session:
+            session_token = str(self.session.cookies.get("__Secure-next-auth.session-token") or "").strip()
+        if session_token:
+            self.session_token = session_token
+            info["session_token"] = session_token
+
+        normalized_workspace_id = str(workspace_id if workspace_id is not None else info.get("workspace_id") or "").strip()
+        self._token_source = str(token_source or self._token_source or "").strip()
+        self._step_token_info = dict(info)
+        self._step_token_info["token_source"] = self._token_source
+
+        return {
+            "account_id": str(info.get("account_id") or "").strip(),
+            "access_token": str(info.get("access_token") or "").strip(),
+            "refresh_token": str(info.get("refresh_token") or "").strip(),
+            "id_token": str(info.get("id_token") or "").strip(),
+            "session_token": str(info.get("session_token") or "").strip(),
+            "workspace_id": normalized_workspace_id,
+            "token_acquired_via_relogin": self._token_acquisition_requires_login,
+            "token_source": self._token_source,
+        }
+
+    def _populate_registration_result(
+        self,
+        result: RegistrationResult,
+        *,
+        token_info: Dict[str, Any] | None,
+        token_source: str,
+        workspace_id: str | None = None,
+    ) -> None:
+        metadata = self._apply_token_info_to_result(
+            token_info=token_info,
+            token_source=token_source,
+            workspace_id=workspace_id,
+        )
+        result.account_id = metadata.get("account_id", "")
+        result.access_token = metadata.get("access_token", "")
+        result.refresh_token = metadata.get("refresh_token", "")
+        result.id_token = metadata.get("id_token", "")
+        result.session_token = metadata.get("session_token", "")
+        result.workspace_id = metadata.get("workspace_id", "")
+        result.password = self.password or ""
+        result.source = "login" if self._is_existing_account else "register"
+        result.token_source = metadata.get("token_source", "")
+
     def _parse_workspace_id_from_auth_cookie(self) -> Optional[str]:
         """静默解析 auth cookie 中的 workspace id。"""
         if not self.session:
@@ -598,26 +1077,29 @@ class RegistrationEngine:
 
     def _prepare_authorize_flow(self, label: str) -> Tuple[Optional[str], Optional[str]]:
         """初始化当前阶段的授权流程，返回 device id 和 sentinel token。"""
-        self._log(f"{label}: 先把会话热热身...")
-        if not self._init_session():
-            return None, None
+        self._auth_entry_mode_used = None
+        self._auth_entry_mode_fallback_hit = False
+        modes = self._iter_auth_entry_modes()
+        last_result: Tuple[Optional[str], Optional[str]] = (None, None)
 
-        self._log(f"{label}: OAuth 流程准备开跑，系好鞋带...")
-        if not self._start_oauth():
-            return None, None
+        handlers = {
+            "direct_auth": self._prepare_authorize_flow_via_direct_auth,
+            "chatgpt_web": self._prepare_authorize_flow_via_chatgpt_web,
+        }
 
-        self._log(f"{label}: 领取 Device ID 通行证...")
-        did = self._get_device_id()
-        if not did:
-            return None, None
+        for index, mode in enumerate(modes):
+            if index > 0:
+                self._auth_entry_mode_fallback_hit = True
+                self._log(f"{label}: 首选授权入口没走通，切到 {mode} 再试一次...", "warning")
+                self._reset_auth_flow()
 
-        self._log(f"{label}: 解一道 Sentinel POW 小题，答对才给进...")
-        sen_token = self._check_sentinel(did)
-        if not sen_token:
-            return did, None
+            did, sen_token = handlers.get(mode, self._prepare_authorize_flow_via_direct_auth)(label)
+            last_result = (did, sen_token)
+            if did and sen_token:
+                self._auth_entry_mode_used = mode
+                return did, sen_token
 
-        self._log(f"{label}: Sentinel 点头放行，继续前进")
-        return did, sen_token
+        return last_result
 
     def _complete_token_exchange(self, result: RegistrationResult) -> bool:
         """在登录态已建立后，继续完成 workspace 和 OAuth token 获取。"""
@@ -650,13 +1132,13 @@ class RegistrationEngine:
         result.access_token = token_info.get("access_token", "")
         result.refresh_token = token_info.get("refresh_token", "")
         result.id_token = token_info.get("id_token", "")
-        result.password = self.password or ""
-        result.source = "login" if self._is_existing_account else "register"
-
-        session_cookie = self.session.cookies.get("__Secure-next-auth.session-token")
-        if session_cookie:
-            self.session_token = session_cookie
-            result.session_token = session_cookie
+        self._populate_registration_result(
+            result,
+            token_info=token_info,
+            token_source="login_existing_account" if self._is_existing_account else "login_fallback",
+            workspace_id=workspace_id or "",
+        )
+        if result.session_token:
             self._log("Session Token 也捞到了，今天这网没白连")
 
         return True
@@ -857,6 +1339,14 @@ class RegistrationEngine:
                 self._log(f"账户创建失败: {response.text[:200]}", "warning")
                 return False
 
+            try:
+                response_data = response.json()
+            except Exception:
+                response_data = None
+
+            self._last_registration_response_payload = response_data if isinstance(response_data, dict) else None
+            self._capture_auth_flow_response(response_data if isinstance(response_data, dict) else None)
+
             return True
 
         except RegistrationDisallowedSuffixError:
@@ -1031,6 +1521,8 @@ class RegistrationEngine:
             "metadata": {
                 "auth_device_id": did,
                 "auth_sentinel_token": sentinel_token,
+                "auth_entry_mode_used": self._auth_entry_mode_used,
+                "auth_entry_mode_fallback_hit": self._auth_entry_mode_fallback_hit,
             }
         }
 
@@ -1083,9 +1575,25 @@ class RegistrationEngine:
     def run_prepare_token_acquisition_step(self) -> dict[str, Any]:
         if self._is_existing_account:
             self._token_acquisition_requires_login = False
-            return {"metadata": {"token_acquired_via_relogin": False}}
+            self._token_source = "login_existing_account"
+            return {
+                "metadata": {
+                    "token_acquired_via_relogin": False,
+                    "token_source": self._token_source,
+                }
+            }
+
+        if self._try_capture_registration_tokens():
+            self._token_acquisition_requires_login = False
+            return {
+                "metadata": self._apply_token_info_to_result(
+                    token_info=self._registration_tokens,
+                    token_source="registration_capture",
+                )
+            }
 
         self._token_acquisition_requires_login = True
+        self._token_source = "login_fallback"
         self._reset_auth_flow()
 
         did, sentinel_token = self._prepare_authorize_flow("重新登录")
@@ -1099,10 +1607,13 @@ class RegistrationEngine:
                 "token_acquired_via_relogin": True,
                 "relogin_device_id": did,
                 "relogin_sentinel_token": sentinel_token,
+                "token_source": self._token_source,
             }
         }
 
     def run_submit_login_email_step(self, *, did: str, sentinel_token: str) -> dict[str, Any]:
+        if self._token_source == "registration_capture" and self._registration_tokens:
+            return {"metadata": {"submit_login_email_skipped": True, "token_source": self._token_source}}
         if self._is_existing_account:
             return {"metadata": {"submit_login_email_skipped": True}}
         if not did or not sentinel_token:
@@ -1115,6 +1626,8 @@ class RegistrationEngine:
         return {}
 
     def run_submit_login_password_step(self) -> dict[str, Any]:
+        if self._token_source == "registration_capture" and self._registration_tokens:
+            return {"metadata": {"submit_login_password_skipped": True, "token_source": self._token_source}}
         if self._is_existing_account:
             return {"metadata": {"submit_login_password_skipped": True}}
         result = self._submit_login_password()
@@ -1125,6 +1638,8 @@ class RegistrationEngine:
         return {}
 
     def run_wait_login_otp_step(self) -> dict[str, Any]:
+        if self._token_source == "registration_capture" and self._registration_tokens:
+            return {"metadata": {"wait_login_otp_skipped": True, "token_source": self._token_source}}
         code = self._get_verification_code()
         if not code:
             raise RuntimeError("wait login otp failed")
@@ -1132,6 +1647,8 @@ class RegistrationEngine:
         return {}
 
     def run_validate_login_otp_step(self) -> dict[str, Any]:
+        if self._token_source == "registration_capture" and self._registration_tokens:
+            return {"metadata": {"validate_login_otp_skipped": True, "token_source": self._token_source}}
         if not self._login_otp_code:
             raise RuntimeError("login otp missing")
         if not self._validate_verification_code(self._login_otp_code):
@@ -1139,6 +1656,8 @@ class RegistrationEngine:
         return {}
 
     def run_resolve_consent_and_workspace_step(self) -> dict[str, Any]:
+        if self._token_source == "registration_capture" and self._registration_tokens:
+            return {"metadata": {"resolve_consent_and_workspace_skipped": True, "token_source": self._token_source}}
         workspace_id, callback_url = self._resolve_workspace_and_callback()
         if not callback_url:
             raise RuntimeError("oauth callback url missing")
@@ -1151,31 +1670,24 @@ class RegistrationEngine:
         }
 
     def run_exchange_oauth_token_step(self, *, callback_url: Optional[str]) -> dict[str, Any]:
+        if self._token_source == "registration_capture" and self._registration_tokens:
+            return {
+                "metadata": self._apply_token_info_to_result(
+                    token_info=self._registration_tokens,
+                    token_source="registration_capture",
+                )
+            }
         if not callback_url:
             raise RuntimeError("oauth callback url missing")
         token_info = self._handle_oauth_callback(callback_url)
         if not token_info:
             raise RuntimeError("exchange oauth token failed")
 
-        self._step_token_info = dict(token_info)
-        self._step_token_info.setdefault("email", self.email)
-        self._step_token_info.setdefault("password", self.password)
-        self._step_token_info.setdefault("source", "login" if self._is_existing_account else "register")
-
-        session_cookie = self.session.cookies.get("__Secure-next-auth.session-token") if self.session else None
-        if session_cookie:
-            self.session_token = session_cookie
-            self._step_token_info["session_token"] = session_cookie
-
         return {
-            "metadata": {
-                "account_id": token_info.get("account_id"),
-                "access_token": token_info.get("access_token"),
-                "refresh_token": token_info.get("refresh_token"),
-                "id_token": token_info.get("id_token"),
-                "session_token": self._step_token_info.get("session_token"),
-                "token_acquired_via_relogin": self._token_acquisition_requires_login,
-            }
+            "metadata": self._apply_token_info_to_result(
+                token_info=token_info,
+                token_source="login_existing_account" if self._is_existing_account else "login_fallback",
+            )
         }
 
     def run(self) -> RegistrationResult:
@@ -1198,6 +1710,12 @@ class RegistrationEngine:
             self._otp_sent_at = None
             self._auth_continue_url = None
             self._auth_page_type = None
+            self._auth_entry_mode_used = None
+            self._auth_entry_mode_fallback_hit = False
+            self._registration_tokens = None
+            self._registration_callback_url = None
+            self._last_registration_response_payload = None
+            self._token_source = None
 
             self._log("=" * 60)
             self._log("注册流程启动，开始替你敲门")
@@ -1267,12 +1785,20 @@ class RegistrationEngine:
                     result.error_message = "创建用户账户失败"
                     return result
 
-                login_ready, login_error = self._restart_login_flow()
-                if not login_ready:
-                    result.error_message = login_error
-                    return result
+                if self._try_capture_registration_tokens():
+                    self._token_acquisition_requires_login = False
+                    self._populate_registration_result(
+                        result,
+                        token_info=self._registration_tokens,
+                        token_source="registration_capture",
+                    )
+                else:
+                    login_ready, login_error = self._restart_login_flow()
+                    if not login_ready:
+                        result.error_message = login_error
+                        return result
 
-            if not self._complete_token_exchange(result):
+            if not result.access_token and not self._complete_token_exchange(result):
                 return result
 
             # 10. 完成
@@ -1294,6 +1820,7 @@ class RegistrationEngine:
                 "registered_at": datetime.now().isoformat(),
                 "is_existing_account": self._is_existing_account,
                 "token_acquired_via_relogin": self._token_acquisition_requires_login,
+                "token_source": result.token_source or self._token_source,
                 "user_profile": self.generated_user_profile or {},
             }
 

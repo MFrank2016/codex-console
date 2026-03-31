@@ -578,6 +578,24 @@
                                         <li>—</li>
                                     </ul>
                                 </div>
+                                <div class="metric-card failure-top-card">
+                                    <span class="metric-label">Top 失败阶段</span>
+                                    <ul id="failure-top-failure-stages" class="failure-top-list">
+                                        <li>—</li>
+                                    </ul>
+                                </div>
+                                <div class="metric-card failure-top-card">
+                                    <span class="metric-label">Top Step Key</span>
+                                    <ul id="failure-top-step-keys" class="failure-top-list">
+                                        <li>—</li>
+                                    </ul>
+                                </div>
+                                <div class="metric-card failure-top-card">
+                                    <span class="metric-label">可重试分布</span>
+                                    <ul id="failure-retryable-breakdown" class="failure-top-list">
+                                        <li>—</li>
+                                    </ul>
+                                </div>
                             </div>
 
                             <form id="registration-failure-filter-form" class="filter-panel failure-filter-panel">
@@ -613,6 +631,22 @@
                                         <input type="text" id="failure-filter-proxy-ip" name="proxy_ip" placeholder="如 8.8.8.8">
                                     </div>
                                     <div class="form-group">
+                                        <label for="failure-filter-failure-stage">失败阶段</label>
+                                        <input type="text" id="failure-filter-failure-stage" name="failure_stage" placeholder="如 submit_login_password">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="failure-filter-step-key">Step Key</label>
+                                        <input type="text" id="failure-filter-step-key" name="step_key" placeholder="如 submit_login_password">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="failure-filter-retryable">是否可重试</label>
+                                        <select id="failure-filter-retryable" name="retryable">
+                                            <option value="">全部</option>
+                                            <option value="true">可重试</option>
+                                            <option value="false">不可重试</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
                                         <label for="failure-filter-error-keyword">错误关键词</label>
                                         <input type="text" id="failure-filter-error-keyword" name="error_keyword" placeholder="如 registration_disallowed">
                                     </div>
@@ -640,13 +674,15 @@
                                             <th>模式</th>
                                             <th>服务 ID</th>
                                             <th>代理 IP</th>
+                                            <th>阶段 / Step</th>
+                                            <th>重试</th>
                                             <th>错误码</th>
                                             <th>详情</th>
                                         </tr>
                                     </thead>
                                     <tbody id="registration-failure-table-body">
                                         <tr>
-                                            <td colspan="8">暂无失败记录</td>
+                                            <td colspan="10">暂无失败记录</td>
                                         </tr>
                                     </tbody>
                                 </table>

@@ -37,10 +37,13 @@ class RegistrationTaskListView:
 @dataclass(frozen=True)
 class RegistrationFailureSummaryView:
     total_failed_attempts: int
-    top_email_suffixes: List[Dict[str, Any]]
-    top_error_codes: List[Dict[str, Any]]
-    top_proxy_ips: List[Dict[str, Any]]
-    today_failed_attempts: int
+    top_email_suffixes: List[Dict[str, Any]] = field(default_factory=list)
+    top_error_codes: List[Dict[str, Any]] = field(default_factory=list)
+    top_proxy_ips: List[Dict[str, Any]] = field(default_factory=list)
+    today_failed_attempts: int = 0
+    top_failure_stages: List[Dict[str, Any]] = field(default_factory=list)
+    top_step_keys: List[Dict[str, Any]] = field(default_factory=list)
+    retryable_breakdown: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

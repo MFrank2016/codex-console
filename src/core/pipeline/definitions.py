@@ -11,6 +11,9 @@ class StepDefinition:
     step_key: str
     handler: Callable[[PipelineContext], dict[str, Any] | None]
     impl_key: str | None = None
+    retry_attempts: int = 1
+    retry_backoff_seconds: float = 0.0
+    transient_markers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

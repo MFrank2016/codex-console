@@ -2,6 +2,7 @@ import pytest
 
 from src.core.pipeline.context import PipelineContext
 from src.core.pipeline.definitions import PipelineDefinition, StepDefinition
+from src.core.pipeline.errors import PipelineStepExecutionError
 from src.core.pipeline.runner import PipelineRunner
 from src.database import crud
 from src.database.models import Base, PipelineStepRun
@@ -160,8 +161,11 @@ def test_runner_rejects_unknown_payload_keys(fake_db):
     )
     ctx = PipelineContext(task_uuid=task_uuid, pipeline_key="demo")
 
-    with pytest.raises(ValueError, match="unknown_key"):
+    with pytest.raises(PipelineStepExecutionError) as exc_info:
         PipelineRunner(fake_db).run(pipeline, ctx)
+
+    assert "unknown_key" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
     assert not hasattr(ctx, "unknown_key")
 
@@ -211,3 +215,99 @@ def test_runner_emits_current_step_snapshot(fake_db):
 
     assert emitted[0]["current_step"]["step_key"] == "create_email"
     assert emitted[-1]["steps"][-1]["status"] == "completed"
+
+
+def test_runner_retries_transient_step_failure_before_succeeding(fake_db):
+    task_uuid = "task-retry-success"
+    crud.create_registration_task(fake_db, task_uuid=task_uuid)
+    attempts = {"count": 0}
+
+    def flaky_step(_ctx):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("timed out while talking to upstream")
+        return {"email": "retry@example.com"}
+
+    pipeline = PipelineDefinition(
+        pipeline_key="demo",
+        steps=[
+            StepDefinition(
+                "flaky",
+                flaky_step,
+                retry_attempts=2,
+                retry_backoff_seconds=0.0,
+                transient_markers=("timed out",),
+            )
+        ],
+    )
+    ctx = PipelineContext(task_uuid=task_uuid, pipeline_key="demo")
+
+    PipelineRunner(fake_db).run(pipeline, ctx)
+
+    rows = _get_step_rows(fake_db, task_uuid)
+    assert attempts["count"] == 2
+    assert rows[0].status == "completed"
+    assert rows[0].metadata_json["attempt_count"] == 2
+    assert rows[0].metadata_json["retry_attempts_used"] == 1
+
+
+def test_runner_does_not_retry_non_transient_step_failure(fake_db):
+    task_uuid = "task-retry-fail"
+    crud.create_registration_task(fake_db, task_uuid=task_uuid)
+    attempts = {"count": 0}
+
+    def bad_step(_ctx):
+        attempts["count"] += 1
+        raise RuntimeError("validation failed")
+
+    pipeline = PipelineDefinition(
+        pipeline_key="demo",
+        steps=[
+            StepDefinition(
+                "bad",
+                bad_step,
+                retry_attempts=3,
+                retry_backoff_seconds=0.0,
+                transient_markers=("timed out",),
+            )
+        ],
+    )
+    ctx = PipelineContext(task_uuid=task_uuid, pipeline_key="demo")
+
+    with pytest.raises(RuntimeError, match="validation failed"):
+        PipelineRunner(fake_db).run(pipeline, ctx)
+
+    rows = _get_step_rows(fake_db, task_uuid)
+    assert attempts["count"] == 1
+    assert rows[0].status == "failed"
+    assert rows[0].metadata_json["attempt_count"] == 1
+
+
+def test_runner_raises_structured_pipeline_step_execution_error(fake_db):
+    task_uuid = "task-structured-failure"
+    crud.create_registration_task(fake_db, task_uuid=task_uuid)
+
+    def bad_step(_ctx):
+        raise RuntimeError("timed out while submitting signup email")
+
+    pipeline = PipelineDefinition(
+        pipeline_key="demo",
+        steps=[
+            StepDefinition(
+                "submit_signup_email",
+                bad_step,
+                retry_attempts=2,
+                retry_backoff_seconds=0.0,
+                transient_markers=("timed out",),
+            )
+        ],
+    )
+    ctx = PipelineContext(task_uuid=task_uuid, pipeline_key="demo")
+
+    with pytest.raises(PipelineStepExecutionError) as exc_info:
+        PipelineRunner(fake_db).run(pipeline, ctx)
+
+    assert exc_info.value.context.step_key == "submit_signup_email"
+    assert exc_info.value.context.failure_stage == "submit_signup_email"
+    assert exc_info.value.context.retryable is True
+    assert exc_info.value.context.attempt_count == 2

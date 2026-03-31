@@ -46,6 +46,9 @@ SQLITE_MIGRATIONS = [
     ("scheduled_runs", "last_log_at", "DATETIME"),
     ("scheduled_runs", "log_version", "INTEGER DEFAULT 0"),
     ("registration_failure_records", "email_service_id", "INTEGER"),
+    ("registration_failure_records", "failure_stage", "VARCHAR(64)"),
+    ("registration_failure_records", "step_key", "VARCHAR(64)"),
+    ("registration_failure_records", "retryable", "BOOLEAN DEFAULT 0"),
 ]
 
 POSTGRESQL_MIGRATIONS = [
@@ -72,6 +75,9 @@ POSTGRESQL_MIGRATIONS = [
     ("scheduled_runs", "last_log_at", "TIMESTAMP"),
     ("scheduled_runs", "log_version", "INTEGER DEFAULT 0"),
     ("registration_failure_records", "email_service_id", "INTEGER"),
+    ("registration_failure_records", "failure_stage", "VARCHAR(64)"),
+    ("registration_failure_records", "step_key", "VARCHAR(64)"),
+    ("registration_failure_records", "retryable", "BOOLEAN DEFAULT FALSE"),
 ]
 
 # 为升级数据库补齐 registration_tasks 在 Task 1 中新增的索引字段。
@@ -86,6 +92,9 @@ SQLITE_INDEX_MIGRATIONS = [
     ("registration_tasks", "ix_registration_tasks_proxy_check_run_id", "proxy_check_run_id"),
     ("registration_tasks", "ix_registration_tasks_pipeline_status", "pipeline_status"),
     ("registration_failure_records", "ix_registration_failure_records_email_service_id", "email_service_id"),
+    ("registration_failure_records", "ix_registration_failure_records_failure_stage", "failure_stage"),
+    ("registration_failure_records", "ix_registration_failure_records_step_key", "step_key"),
+    ("registration_failure_records", "ix_registration_failure_records_retryable", "retryable"),
 ]
 
 POSTGRESQL_INDEX_MIGRATIONS = [
@@ -97,6 +106,9 @@ POSTGRESQL_INDEX_MIGRATIONS = [
     ("registration_tasks", "ix_registration_tasks_proxy_check_run_id", "proxy_check_run_id"),
     ("registration_tasks", "ix_registration_tasks_pipeline_status", "pipeline_status"),
     ("registration_failure_records", "ix_registration_failure_records_email_service_id", "email_service_id"),
+    ("registration_failure_records", "ix_registration_failure_records_failure_stage", "failure_stage"),
+    ("registration_failure_records", "ix_registration_failure_records_step_key", "step_key"),
+    ("registration_failure_records", "ix_registration_failure_records_retryable", "retryable"),
 ]
 
 
